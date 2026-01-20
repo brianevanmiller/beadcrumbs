@@ -1,0 +1,52 @@
+{
+  "name": "@beadcrumbs/bdc",
+  "version": "0.1.0",
+  "description": "beadcrumbs - capture how understanding evolves through dialogues",
+  "main": "bin/bdc.js",
+  "bin": {
+    "bdc": "bin/bdc.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "keywords": [
+    "intent-tracking",
+    "ai-agent",
+    "coding-agent",
+    "dialogue",
+    "insights",
+    "narrative",
+    "git",
+    "beads",
+    "beadcrumbs"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/brianevanmiller/beadcrumbs.git",
+    "directory": "npm-package"
+  },
+  "bugs": {
+    "url": "https://github.com/brianevanmiller/beadcrumbs/issues"
+  },
+  "homepage": "https://github.com/brianevanmiller/beadcrumbs#readme",
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "files": [
+    "bin/",
+    "scripts/",
+    "README.md",
+    "LICENSE"
+  ]
+}
