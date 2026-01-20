@@ -1,17 +1,13 @@
-# beadcrumbs
+# Beadcrumbs
 
 **Git-backed insight tracking for AI agents and developers.**
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/brianevanmiller/beadcrumbs)](https://goreportcard.com/report/github.com/brianevanmiller/beadcrumbs)
 
-## The Metaphor
+Beadcrumbs provides a persistent, structured memory of insights and understandings derived through human and agentic dialogue. It gives your coding agents access to the critical discoveries, insights and decisions powering the product.
 
-**beadcrumbs** captures the small pieces of understanding—the crumbs—that lead to the bigger tasks (beads) in your workflow.
-
-Like breadcrumbs leaving a trail through the forest, beadcrumbs records the journey of discovery: the hypotheses you explored, the pivots you made, the decisions you reached. When you need to retrace your steps—or explain to others how you got here—the trail is waiting.
-
-While [beads](https://github.com/steveyegge/beads) tracks **what** needs to be done, beadcrumbs tracks **how** you came to understand the problem.
+[Beads](https://github.com/steveyegge/beads) tracks tasks without losing **work context** of what was done and what needs to be done. Beadcrumbs tracks the **understanding context** and ultimate intent behind these tasks.
 
 ## Quick Start
 
@@ -48,7 +44,7 @@ bdc capture "Found: the bug is in JWT validation, not sessions" --pivot
 
 ## Insight Types & Mental Model
 
-beadcrumbs tracks how understanding evolves through dialogues. Each insight type represents a moment in the journey:
+Beadcrumbs tracks how understanding evolves through dialogues. Each insight type represents a moment in the journey:
 
 ```
 hypothesis → discovery → question → feedback → pivot → decision
