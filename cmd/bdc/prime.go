@@ -2,128 +2,158 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 )
 
+var (
+	primeStealthMode bool
+	primeExportMode  bool
+)
+
 var primeCmd = &cobra.Command{
 	Use:   "prime",
-	Short: "Set up git hooks and verify database",
-	Long: `Prime sets up the beadcrumbs environment:
-  - Installs git hooks (post-commit, post-merge, post-checkout)
-  - Verifies and repairs the database if needed
-  - Ensures all required tables exist
+	Short: "Output AI-optimized beadcrumbs workflow context",
+	Long: `Output essential beadcrumbs workflow context in AI-optimized markdown format.
 
-Run this after init or when moving to a new machine.
-In stealth mode, hooks are skipped since changes aren't tracked in git.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		s, err := getStore()
-		if err != nil {
-			return fmt.Errorf("failed to open store: %w", err)
+Designed for Claude Code hooks (SessionStart, PreCompact) to inject
+beadcrumbs workflow instructions into AI agent context automatically.
+
+When .beadcrumbs/ is not found, exits silently (exit 0, no output).
+This enables safe cross-project hook integration.
+
+Place a .beadcrumbs/PRIME.md file to override the default output entirely.
+Use --export to dump the default content for customization.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		bcDir := findBeadcrumbsDir()
+		if bcDir == "" {
+			// Not in a beadcrumbs project -- silent exit
+			// CRITICAL: No stderr output, exit 0
+			os.Exit(0)
 		}
-		defer closeStore()
 
-		// Check if in stealth mode
-		stealthMode, _ := s.GetConfig("stealth_mode")
-		if stealthMode == "true" {
-			fmt.Println("Stealth mode enabled - skipping git hooks installation")
-		} else {
-			// Install git hooks
-			if err := installGitHooks(); err != nil {
-				fmt.Printf("Warning: failed to install git hooks: %v\n", err)
-				fmt.Println("Git hooks are optional - beadcrumbs will work without them")
-			} else {
-				fmt.Println("Git hooks installed successfully")
+		// Check for custom PRIME.md override (unless --export flag)
+		if !primeExportMode {
+			primePath := filepath.Join(bcDir, "PRIME.md")
+			if content, err := os.ReadFile(primePath); err == nil {
+				fmt.Print(string(content))
+				return
 			}
 		}
 
-		// Verify database
-		if err := s.Verify(); err != nil {
-			return fmt.Errorf("database verification failed: %w", err)
-		}
-		fmt.Println("Database verified successfully")
-
-		fmt.Println("\nbeadcrumbs is primed and ready!")
-		return nil
+		// Output default workflow context
+		outputPrimeContext(os.Stdout, primeStealthMode)
 	},
 }
 
-// installGitHooks installs git hooks for beadcrumbs.
-func installGitHooks() error {
-	gitDir, err := getGitDir()
-	if err != nil {
-		return fmt.Errorf("not a git repository: %w", err)
+// findBeadcrumbsDir checks for .beadcrumbs/ in the current directory.
+// Returns the path if found, empty string otherwise.
+func findBeadcrumbsDir() string {
+	if info, err := os.Stat(".beadcrumbs"); err == nil && info.IsDir() {
+		return ".beadcrumbs"
 	}
-
-	hooksDir := filepath.Join(gitDir, "hooks")
-	if err := os.MkdirAll(hooksDir, 0755); err != nil {
-		return fmt.Errorf("failed to create hooks directory: %w", err)
-	}
-
-	// Define hooks to install
-	hooks := map[string]string{
-		"post-commit": `#!/bin/sh
-# beadcrumbs: Export insights after commit
-# This hook exports local insights to JSONL for version control
-if command -v bdc >/dev/null 2>&1; then
-    bdc export --quiet 2>/dev/null || true
-fi
-`,
-		"post-merge": `#!/bin/sh
-# beadcrumbs: Import insights after merge/pull
-# This hook imports JSONL changes from other collaborators
-if command -v bdc >/dev/null 2>&1; then
-    bdc import --auto --quiet 2>/dev/null || true
-fi
-`,
-		"post-checkout": `#!/bin/sh
-# beadcrumbs: Import insights after checkout
-# This hook imports JSONL changes when switching branches
-if command -v bdc >/dev/null 2>&1; then
-    bdc import --auto --quiet 2>/dev/null || true
-fi
-`,
-	}
-
-	for hookName, hookContent := range hooks {
-		hookPath := filepath.Join(hooksDir, hookName)
-
-		// Check if hook already exists
-		if _, err := os.Stat(hookPath); err == nil {
-			// Read existing hook
-			existing, err := os.ReadFile(hookPath)
-			if err != nil {
-				return fmt.Errorf("failed to read existing %s hook: %w", hookName, err)
-			}
-
-			// Check if our hook is already there
-			if strings.Contains(string(existing), "beadcrumbs") {
-				continue // Already installed
-			}
-
-			// Append to existing hook
-			hookContent = string(existing) + "\n" + hookContent
-		}
-
-		// Write hook
-		if err := os.WriteFile(hookPath, []byte(hookContent), 0755); err != nil {
-			return fmt.Errorf("failed to write %s hook: %w", hookName, err)
-		}
-	}
-
-	return nil
+	return ""
 }
 
-// isGitRepo checks if the current directory is in a git repository.
-func isGitRepo() bool {
-	cmd := exec.Command("git", "rev-parse", "--git-dir")
-	return cmd.Run() == nil
+// outputPrimeContext outputs beadcrumbs workflow context in markdown format.
+func outputPrimeContext(w io.Writer, stealthMode bool) {
+	context := `# Beadcrumbs Insight Tracker Active
+
+> **Context Recovery**: Run ` + "`bdc prime`" + ` after compaction, clear, or new session
+> Hooks auto-call this in Claude Code when .beadcrumbs/ detected
+
+## Core Rules
+- **Use bdc (beadcrumbs)** for ALL reasoning and understanding tracking
+- **Use bd (beads)** for task tracking -- they are complementary tools
+- bd tracks *what* you're doing; bdc tracks *why*
+- Always use ` + "`--thread`" + ` to associate captures with context
+- Always use ` + "`--author cc:<model>`" + ` for AI agent attribution (e.g., ` + "`cc:opus-4.5`" + `)
+- Do NOT capture routine tool calls, simple acknowledgments, or mechanical steps
+
+## Session Protocol
+
+**Session start:**
+` + "```bash" + `
+bdc thread new "Brief description of this session's goal"
+bdc capture --thread <ref> --hypothesis "Initial approach" --author cc:<model>
+` + "```" + `
+
+**During session** (capture as reasoning evolves):
+` + "```bash" + `
+bdc capture --thread <ref> --hypothesis "Weighing approach X" --author cc:<model>
+bdc capture --thread <ref> --discovery "Found evidence for Y" --author cc:<model>
+bdc capture --thread <ref> --question "Should we use Z?" --author cc:<model>
+bdc capture --thread <ref> --feedback "Human adjusted specs" --author brian
+bdc capture --thread <ref> --pivot "Switching approach because..." --author cc:<model>
+bdc capture --thread <ref> --decision "Committed to approach" --author cc:<model>
+` + "```" + `
+
+**Session end:**
+` + "```bash" + `
+bdc capture --thread <ref> --decision "Final outcome summary" --author cc:<model>
+bdc thread close <thread-id>
+` + "```" + `
+
+## Insight Types
+
+| Type | When to Use | Symbol |
+|------|------------|--------|
+| hypothesis | Speculation before evidence | ` + "`--hypothesis`" + ` |
+| discovery | Evidence-based finding | ` + "`--discovery`" + ` |
+| question | Open uncertainty | ` + "`--question`" + ` |
+| feedback | External/human input received | ` + "`--feedback`" + ` |
+| pivot | Direction changed | ` + "`--pivot`" + ` |
+| decision | Committed to approach | ` + "`--decision`" + ` |
+
+## Essential Commands
+
+### Threads
+- ` + "`bdc thread new \"<title>\"`" + ` - Start a narrative thread
+- ` + "`bdc thread list --status=active`" + ` - See open threads
+- ` + "`bdc thread close <id>`" + ` - Conclude a thread
+
+### Capturing
+- ` + "`bdc capture --thread <ref> --<type> \"...\" --author cc:<model>`" + `
+- Thread ref accepts: thread ID (thr-xxx), bead ID (bd-xxx), or external ref (linear:ENG-456)
+
+### Viewing
+- ` + "`bdc timeline [thread-id]`" + ` - Chronological view
+- ` + "`bdc decisions [thread-id]`" + ` - Filter to decisions only
+- ` + "`bdc questions --unresolved`" + ` - Open questions needing answers
+- ` + "`bdc list --thread=<id> --type=<type>`" + ` - Filtered insight list
+
+### Beads Integration
+- ` + "`bdc link <id> --spawns=<bead-id>`" + ` - Link insight to task it spawned
+- ` + "`bdc trace <bead-id>`" + ` - Trace reasoning chain for a task
+- ` + "`bdc spawn <insight-id> --title=\"...\"`" + ` - Create task from insight
+
+## What to Capture
+
+| Scenario | Type | Author |
+|----------|------|--------|
+| AI weighs a possible approach | --hypothesis | --author cc:<model> |
+| AI finds evidence for/against something | --discovery | --author cc:<model> |
+| Open uncertainty or question | --question | either |
+| Human explains reasoning or adjusts specs | --feedback | --author brian |
+| Direction changes | --pivot | whoever initiated it |
+| Committed approach or final call | --decision | whoever made the call |
+
+## What NOT to Capture
+- Routine tool calls (file reads, grep, glob, running builds)
+- Minor formatting or whitespace changes
+- Simple acknowledgments ("OK", "got it", "done")
+- Restating what the user said without adding new reasoning
+- Mechanical steps unless the result reveals something unexpected
+- Single-line bug fixes with obvious cause and solution
+`
+	_, _ = fmt.Fprint(w, context)
 }
 
 func init() {
+	primeCmd.Flags().BoolVar(&primeStealthMode, "stealth", false, "Stealth mode (minimal output)")
+	primeCmd.Flags().BoolVar(&primeExportMode, "export", false, "Output default content (ignores PRIME.md override)")
 	rootCmd.AddCommand(primeCmd)
 }

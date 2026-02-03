@@ -71,9 +71,17 @@ This is useful when you want to use beadcrumbs without committing files to the r
 			f.Close()
 		}
 
+		// Install git hooks (non-stealth mode only)
+		if !initStealth {
+			if err := installGitHooks(); err != nil {
+				fmt.Printf("Warning: failed to install git hooks: %v\n", err)
+				fmt.Println("Git hooks are optional - beadcrumbs will work without them")
+			}
+		}
+
 		fmt.Printf("Initialized beadcrumbs repository at %s\n", dir)
 		if !initStealth {
-			fmt.Println("Tip: Run 'bdc prime' to install git hooks for auto-sync")
+			fmt.Println("Tip: Run 'bdc setup claude' to integrate with Claude Code")
 		}
 		return nil
 	},
@@ -147,6 +155,78 @@ func containsExactPattern(content, pattern string) bool {
 		}
 	}
 	return false
+}
+
+// installGitHooks installs git hooks for beadcrumbs.
+func installGitHooks() error {
+	gitDir, err := getGitDir()
+	if err != nil {
+		return fmt.Errorf("not a git repository: %w", err)
+	}
+
+	hooksDir := filepath.Join(gitDir, "hooks")
+	if err := os.MkdirAll(hooksDir, 0755); err != nil {
+		return fmt.Errorf("failed to create hooks directory: %w", err)
+	}
+
+	// Define hooks to install
+	hooks := map[string]string{
+		"post-commit": `#!/bin/sh
+# beadcrumbs: Export insights after commit
+# This hook exports local insights to JSONL for version control
+if command -v bdc >/dev/null 2>&1; then
+    bdc export --quiet 2>/dev/null || true
+fi
+`,
+		"post-merge": `#!/bin/sh
+# beadcrumbs: Import insights after merge/pull
+# This hook imports JSONL changes from other collaborators
+if command -v bdc >/dev/null 2>&1; then
+    bdc import --auto --quiet 2>/dev/null || true
+fi
+`,
+		"post-checkout": `#!/bin/sh
+# beadcrumbs: Import insights after checkout
+# This hook imports JSONL changes when switching branches
+if command -v bdc >/dev/null 2>&1; then
+    bdc import --auto --quiet 2>/dev/null || true
+fi
+`,
+	}
+
+	for hookName, hookContent := range hooks {
+		hookPath := filepath.Join(hooksDir, hookName)
+
+		// Check if hook already exists
+		if _, err := os.Stat(hookPath); err == nil {
+			// Read existing hook
+			existing, err := os.ReadFile(hookPath)
+			if err != nil {
+				return fmt.Errorf("failed to read existing %s hook: %w", hookName, err)
+			}
+
+			// Check if our hook is already there
+			if strings.Contains(string(existing), "beadcrumbs") {
+				continue // Already installed
+			}
+
+			// Append to existing hook
+			hookContent = string(existing) + "\n" + hookContent
+		}
+
+		// Write hook
+		if err := os.WriteFile(hookPath, []byte(hookContent), 0755); err != nil {
+			return fmt.Errorf("failed to write %s hook: %w", hookName, err)
+		}
+	}
+
+	return nil
+}
+
+// isGitRepo checks if the current directory is in a git repository.
+func isGitRepo() bool {
+	cmd := exec.Command("git", "rev-parse", "--git-dir")
+	return cmd.Run() == nil
 }
 
 func init() {
