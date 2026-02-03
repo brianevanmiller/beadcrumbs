@@ -14,7 +14,6 @@ var (
 	setupProject bool
 	setupCheck   bool
 	setupRemove  bool
-	setupStealth bool
 )
 
 var setupCmd = &cobra.Command{
@@ -28,7 +27,6 @@ Currently supported editors:
 Examples:
   bdc setup claude             # Install Claude Code integration (global)
   bdc setup claude --project   # Install for this project only
-  bdc setup claude --stealth   # Use stealth mode (no git operations)
   bdc setup claude --check     # Verify installation status
   bdc setup claude --remove    # Uninstall integration`,
 	Args: cobra.ExactArgs(1),
@@ -47,7 +45,7 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	if setupRemove {
 		return removeClaudeHooks(setupProject)
 	}
-	return installClaudeHooks(setupProject, setupStealth)
+	return installClaudeHooks(setupProject)
 }
 
 func setupProjectSettingsPath(base string) string {
@@ -58,7 +56,7 @@ func setupGlobalSettingsPath(home string) string {
 	return filepath.Join(home, ".claude", "settings.json")
 }
 
-func installClaudeHooks(project bool, stealth bool) error {
+func installClaudeHooks(project bool) error {
 	var settingsPath string
 	if project {
 		workDir, err := os.Getwd()
@@ -104,9 +102,6 @@ func installClaudeHooks(project bool, stealth bool) error {
 	}
 
 	command := "bdc prime"
-	if stealth {
-		command = "bdc prime --stealth"
-	}
 
 	if addHookCommand(hooks, "SessionStart", command) {
 		fmt.Println("  Registered SessionStart hook")
@@ -195,8 +190,6 @@ func removeClaudeHooks(project bool) error {
 
 	removeHookCommand(hooks, "SessionStart", "bdc prime")
 	removeHookCommand(hooks, "PreCompact", "bdc prime")
-	removeHookCommand(hooks, "SessionStart", "bdc prime --stealth")
-	removeHookCommand(hooks, "PreCompact", "bdc prime --stealth")
 
 	data, err = json.MarshalIndent(settings, "", "  ")
 	if err != nil {
@@ -341,8 +334,7 @@ func hasBeadcrumbsHooks(settingsPath string) bool {
 				if !ok {
 					continue
 				}
-				c := cmdMap["command"]
-				if c == "bdc prime" || c == "bdc prime --stealth" {
+				if cmdMap["command"] == "bdc prime" {
 					return true
 				}
 			}
@@ -357,5 +349,4 @@ func init() {
 	setupCmd.Flags().BoolVar(&setupCheck, "check", false, "Check if integration is installed")
 	setupCmd.Flags().BoolVar(&setupRemove, "remove", false, "Remove the integration")
 	setupCmd.Flags().BoolVar(&setupProject, "project", false, "Install for this project only")
-	setupCmd.Flags().BoolVar(&setupStealth, "stealth", false, "Use stealth mode (no git operations)")
 }

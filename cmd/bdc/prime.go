@@ -9,10 +9,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	primeStealthMode bool
-	primeExportMode  bool
-)
+var primeExportMode bool
 
 var primeCmd = &cobra.Command{
 	Use:   "prime",
@@ -45,7 +42,7 @@ Use --export to dump the default content for customization.`,
 		}
 
 		// Output default workflow context
-		outputPrimeContext(os.Stdout, primeStealthMode)
+		outputPrimeContext(os.Stdout)
 	},
 }
 
@@ -59,7 +56,7 @@ func findBeadcrumbsDir() string {
 }
 
 // outputPrimeContext outputs beadcrumbs workflow context in markdown format.
-func outputPrimeContext(w io.Writer, stealthMode bool) {
+func outputPrimeContext(w io.Writer) {
 	context := `# Beadcrumbs Insight Tracker Active
 
 > **Context Recovery**: Run ` + "`bdc prime`" + ` after compaction, clear, or new session
@@ -153,7 +150,6 @@ bdc thread close <thread-id>
 }
 
 func init() {
-	primeCmd.Flags().BoolVar(&primeStealthMode, "stealth", false, "Stealth mode (minimal output)")
 	primeCmd.Flags().BoolVar(&primeExportMode, "export", false, "Output default content (ignores PRIME.md override)")
 	rootCmd.AddCommand(primeCmd)
 }
