@@ -149,6 +149,8 @@ Git-backed like beads: JSONL exports on commit, imports on merge.
 bdc init                              # Initialize repository
 bdc capture "..." [--type=X]          # Capture insight
 bdc thread new "title"                # Create narrative thread
+bdc thread new "title" --linear ENG-456 --bead bd-abc1  # Multi-system linking
+bdc thread link <id> <ref>            # Link thread to any external ref
 bdc thread show <id>                  # Show thread details
 bdc thread list [--status=active]     # List threads
 bdc thread close <id>                 # Close thread

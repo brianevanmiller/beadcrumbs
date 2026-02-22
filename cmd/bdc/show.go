@@ -92,6 +92,14 @@ func showThread(s *store.Store, id string) error {
 	fmt.Printf("Created: %s\n", thread.CreatedAt.Format("2006-01-02 15:04:05"))
 	fmt.Printf("Updated: %s\n", thread.UpdatedAt.Format("2006-01-02 15:04:05"))
 
+	// Show linked external refs
+	mappings, _ := s.GetExternalRefMappingsByThread(id)
+	if len(mappings) > 0 {
+		for _, m := range mappings {
+			fmt.Printf("Linked: %s (%s)\n", m.ExternalID, m.System)
+		}
+	}
+
 	if thread.CurrentUnderstanding != "" {
 		fmt.Printf("\nCurrent Understanding:\n%s\n", thread.CurrentUnderstanding)
 	}

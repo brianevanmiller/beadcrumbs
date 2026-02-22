@@ -75,7 +75,16 @@ func runTrace(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if len(spawningInsights) == 0 {
+	// Also find insights linked via thread-to-bead mappings
+	externalRef := beads.BeadIDToExternalRef(beadID)
+	mapping, _ := s.GetExternalRefMappingByRef(externalRef)
+
+	var threadInsights []*types.Insight
+	if mapping != nil {
+		threadInsights, _ = s.ListInsights(mapping.ThreadID, "", time.Time{})
+	}
+
+	if len(spawningInsights) == 0 && len(threadInsights) == 0 {
 		fmt.Printf("No insights found that spawn %s\n", beadID)
 		if !beads.BeadsPresent() {
 			fmt.Println("\nNote: No .beads/ directory found. The bead may exist in another project.")
@@ -85,32 +94,72 @@ func runTrace(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Trace for %s:\n\n", beadID)
 
-	// For each spawning insight, trace backwards
+	// Build chains once to avoid redundant traceChain calls
+	chains := make(map[string][]chainItem)
 	for _, spawnID := range spawningInsights {
-		chain := traceChain(spawnID, insightMap, s)
+		chains[spawnID] = traceChain(spawnID, insightMap, s)
+	}
 
-		// Print the chain
-		for i, item := range chain {
-			ins := insightMap[item.insightID]
-			if ins == nil {
-				continue
+	// Show dependency chain (spawns relationships)
+	if len(spawningInsights) > 0 {
+		fmt.Println("Dependency chain:")
+		for _, spawnID := range spawningInsights {
+			chain := chains[spawnID]
+
+			// Print the chain
+			for i, item := range chain {
+				ins := insightMap[item.insightID]
+				if ins == nil {
+					continue
+				}
+
+				symbol := getInsightSymbol(ins.Type)
+				typeStr := string(ins.Type)
+				if ins.Type == types.InsightPivot || ins.Type == types.InsightDecision {
+					typeStr = strings.ToUpper(typeStr)
+				}
+
+				fmt.Printf("%s \"%s\" [%s]\n", symbol, truncateForTrace(ins.Content, 50), typeStr)
+
+				if i < len(chain)-1 {
+					fmt.Printf("  └── %s\n", chain[i+1].relationFromPrev)
+				} else {
+					fmt.Printf("  └── spawns → %s\n", beadID)
+				}
 			}
+			fmt.Println()
+		}
+	}
 
-			symbol := getInsightSymbol(ins.Type)
-			typeStr := string(ins.Type)
-			if ins.Type == types.InsightPivot || ins.Type == types.InsightDecision {
-				typeStr = strings.ToUpper(typeStr)
-			}
-
-			fmt.Printf("%s \"%s\" [%s]\n", symbol, truncateForTrace(ins.Content, 50), typeStr)
-
-			if i < len(chain)-1 {
-				fmt.Printf("  └── %s\n", chain[i+1].relationFromPrev)
-			} else {
-				fmt.Printf("  └── spawns → %s\n", beadID)
+	// Show thread-linked insights (via external_ref_mappings)
+	if len(threadInsights) > 0 {
+		// Collect IDs already shown in dependency chains to avoid duplication
+		shownIDs := make(map[string]bool)
+		for _, spawnID := range spawningInsights {
+			for _, item := range chains[spawnID] {
+				shownIDs[item.insightID] = true
 			}
 		}
-		fmt.Println()
+
+		var newInsights []*types.Insight
+		for _, ins := range threadInsights {
+			if !shownIDs[ins.ID] {
+				newInsights = append(newInsights, ins)
+			}
+		}
+
+		if len(newInsights) > 0 {
+			fmt.Printf("Thread insights (thread %s):\n", mapping.ThreadID)
+			for _, ins := range newInsights {
+				symbol := getInsightSymbol(ins.Type)
+				typeStr := string(ins.Type)
+				if ins.Type == types.InsightPivot || ins.Type == types.InsightDecision {
+					typeStr = strings.ToUpper(typeStr)
+				}
+				fmt.Printf("  %s %s \"%s\" [%s]\n", symbol, ins.ID, truncateForTrace(ins.Content, 50), typeStr)
+			}
+			fmt.Println()
+		}
 	}
 
 	return nil

@@ -99,6 +99,21 @@ bdc thread new "Batch import pipeline" --linear ENG-456
 
 ```bash
 bdc linear link <thread-id> ENG-456
+
+# Or use the generic thread link command (works with any system)
+bdc thread link <thread-id> linear:ENG-456
+```
+
+### Link a thread to both Linear and a bead
+
+A thread can be linked to multiple external systems simultaneously:
+
+```bash
+# At creation time
+bdc thread new "My feature" --linear ENG-456 --bead bd-abc1
+
+# Or incrementally
+bdc thread link <thread-id> bd-abc1
 ```
 
 ### Push a summary to Linear

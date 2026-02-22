@@ -28,6 +28,9 @@ var (
 
 	// notion:page-id
 	notionPattern = regexp.MustCompile(`^notion:([a-f0-9-]+)$`)
+
+	// bead:abc1 (canonical bead external ref format)
+	beadPattern = regexp.MustCompile(`^bead:(.+)$`)
 )
 
 // BeadsPresent checks if a .beads/ directory exists in the current directory
@@ -80,7 +83,7 @@ func GetBeadsDir() string {
 
 // IsBeadID checks if an ID looks like a bead ID (starts with "bead-" or "bd-").
 func IsBeadID(id string) bool {
-	return len(id) > 5 && (id[:5] == "bead-" || id[:3] == "bd-")
+	return strings.HasPrefix(id, "bead-") || strings.HasPrefix(id, "bd-")
 }
 
 // IsInsightID checks if an ID looks like an insight ID (starts with "ins-").
@@ -109,6 +112,7 @@ func IsExternalRef(ref string) bool {
 //   - github:owner/repo#123 (or gh:owner/repo#123)
 //   - jira:PROJECT-123
 //   - notion:page-id
+//   - bead:abc1
 //   - system:anything (generic fallback)
 func ParseExternalRef(ref string) (*ExternalRef, error) {
 	ref = strings.TrimSpace(ref)
@@ -141,6 +145,14 @@ func ParseExternalRef(ref string) (*ExternalRef, error) {
 	if matches := notionPattern.FindStringSubmatch(ref); matches != nil {
 		return &ExternalRef{
 			System: "notion",
+			ID:     matches[1],
+			Raw:    ref,
+		}, nil
+	}
+
+	if matches := beadPattern.FindStringSubmatch(ref); matches != nil {
+		return &ExternalRef{
+			System: "bead",
 			ID:     matches[1],
 			Raw:    ref,
 		}, nil
@@ -179,9 +191,23 @@ func FormatExternalRef(ref *ExternalRef) string {
 		return "Jira: " + ref.ID
 	case "notion":
 		return "Notion: " + ref.ID
+	case "bead":
+		return "Bead: bd-" + ref.ID
 	default:
 		return ref.System + ": " + ref.ID
 	}
+}
+
+// BeadIDToExternalRef normalizes a bead ID to canonical external ref format.
+// "bd-abc1" → "bead:abc1", "bead-abc1" → "bead:abc1"
+func BeadIDToExternalRef(beadID string) string {
+	if strings.HasPrefix(beadID, "bead-") {
+		return "bead:" + beadID[5:]
+	}
+	if strings.HasPrefix(beadID, "bd-") {
+		return "bead:" + beadID[3:]
+	}
+	return "bead:" + beadID
 }
 
 // ResolveRef determines the type of reference and returns categorization.

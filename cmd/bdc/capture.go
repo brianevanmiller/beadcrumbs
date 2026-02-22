@@ -247,9 +247,9 @@ func resolveThreadRef(ref string) (string, error) {
 		return resolveExternalThreadRef(ref)
 	}
 
-	// Bead ID — pass through for now
+	// Bead ID — normalize to external ref and create/find thread
 	if beads.IsBeadID(ref) {
-		return ref, nil
+		return resolveExternalThreadRef(beads.BeadIDToExternalRef(ref))
 	}
 
 	return ref, nil
@@ -281,6 +281,11 @@ func resolveExternalThreadRef(ref string) (string, error) {
 	// For Linear refs, try to fetch issue details
 	if extRef.System == "linear" {
 		return resolveLinearRef(s, extRef)
+	}
+
+	// For bead refs, use the user-facing bd-xxx format as title
+	if extRef.System == "bead" {
+		return createThreadForExternalRef(s, extRef, "bd-"+extRef.ID)
 	}
 
 	// For other systems, create thread with the ref as title

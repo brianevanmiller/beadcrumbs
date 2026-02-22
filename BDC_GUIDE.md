@@ -60,8 +60,27 @@ The `--thread` flag accepts multiple reference formats. Prefer in this order:
 1. **Task tracker ref** if using an external tracker: `--thread linear:ENG-456`, `--thread jira:PROJ-123`, `--thread gh:42`
    - For Linear refs, bdc auto-creates a thread linked to the issue and fetches the issue title
 2. **Bead ID** if a bd issue exists: `--thread bd-a1b2`
+   - Creates a real thread with an external ref mapping (system: "bead")
 3. **Thread ID** if resuming existing: `--thread thr-xxxx`
 4. **Descriptive title** as fallback when creating: `bdc thread new "Fix auth timeout bug"`
+
+### Multi-System Linking
+
+A single thread can be linked to multiple external systems simultaneously. This is useful when a Linear ticket represents an epic/feature and beads represent implementation subtasks:
+
+```bash
+# Create thread linked to both Linear and a bead in one command
+bdc thread new "Implement caching layer" --linear ENG-456 --bead bd-abc1
+
+# Or link incrementally — start with one, add the other later
+bdc capture --thread linear:ENG-456 --hypothesis "..." --author cc:opus-4.6
+bdc thread link thr-xxxx bd-abc1
+
+# Individual insights can also spawn beads via dependencies (separate mechanism)
+bdc link ins-xxxx --spawns=bd-def2
+```
+
+Thread-level links (via `--thread`, `--linear`, `--bead`, or `bdc thread link`) associate the whole thread with an external system. Dependency links (via `bdc link --spawns`) create causal relationships between specific insights and specific beads. Both mechanisms coexist and serve different purposes.
 
 ### Workflow for AI Agents
 
@@ -151,8 +170,21 @@ Do not create beadcrumbs for:
 
 ### Integration with Beads (bd)
 
-Beadcrumbs tracks reasoning; Beads tracks tasks. Link them when insights spawn work:
+Beadcrumbs tracks reasoning; Beads tracks tasks. There are two ways to link them:
 
+**Thread-level linking** — associate a reasoning thread with a bead task:
+```bash
+# Via --thread flag (auto-creates thread and mapping)
+bdc capture --thread bd-abc1 --hypothesis "..." --author cc:opus-4.6
+
+# Via thread creation flag
+bdc thread new "Implement caching" --bead bd-abc1
+
+# Via generic thread link command
+bdc thread link thr-xxxx bd-abc1
+```
+
+**Dependency linking** — connect a specific insight to a bead it spawned:
 ```bash
 # An insight led to creating a task
 bdc link ins-7f2a --spawns=bd-abc1
@@ -163,6 +195,8 @@ bdc trace bd-abc1
 # Create a task directly from an insight
 bdc spawn ins-7f2a --title="Implement exponential backoff for retries"
 ```
+
+Both mechanisms work together. Thread links say "this reasoning is about bd-abc1". Dependency links say "this specific insight produced bd-abc1".
 
 ### Essential Commands
 
@@ -184,9 +218,10 @@ bdc pivots [thread-id]                      # Filter to pivots only
 bdc questions --unresolved                  # Open questions needing answers
 
 # Linking to beads
-bdc link <id> --spawns=<bead-id>            # Link insight to task
+bdc link <id> --spawns=<bead-id>            # Link insight to task (dependency)
 bdc trace <bead-id>                         # Trace reasoning chain for a task
 bdc spawn <insight-id> --title="..."        # Create task from insight
+bdc thread link <thread-id> <ref>           # Link thread to any external ref
 
 # Setup
 bdc init                                    # Initialize in a new repo
