@@ -291,9 +291,7 @@ func resolveExternalThreadRef(ref string) (string, error) {
 // fetching the issue title if a Linear CLI is available.
 func resolveLinearRef(s *store.Store, extRef *beads.ExternalRef) (string, error) {
 	// Load config for adapter detection
-	configTool, _ := s.GetConfig("linear.cli_tool")
-	configPath, _ := s.GetConfig("linear.cli_path")
-	apiKey, _ := s.GetConfig("linear.api_key")
+	configTool, configPath, apiKey := getLinearConfig(s)
 
 	adapter, err := linear.Detect(configTool, configPath, apiKey)
 	if err != nil {

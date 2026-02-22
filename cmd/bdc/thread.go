@@ -72,9 +72,7 @@ func linkThreadToLinear(s *store.Store, thread *types.InsightThread, linearRef s
 	}
 
 	// Try to fetch issue title from Linear CLI to enrich thread title
-	configTool, _ := s.GetConfig("linear.cli_tool")
-	configPath, _ := s.GetConfig("linear.cli_path")
-	apiKey, _ := s.GetConfig("linear.api_key")
+	configTool, configPath, apiKey := getLinearConfig(s)
 
 	adapter, adapterErr := linear.Detect(configTool, configPath, apiKey)
 	if adapterErr == nil {
@@ -274,9 +272,7 @@ func pushLinearSummaryOnClose(s *store.Store, thread *types.InsightThread) {
 	}
 
 	// Get adapter
-	configTool, _ := s.GetConfig("linear.cli_tool")
-	configPath, _ := s.GetConfig("linear.cli_path")
-	apiKey, _ := s.GetConfig("linear.api_key")
+	configTool, configPath, apiKey := getLinearConfig(s)
 
 	adapter, err := linear.Detect(configTool, configPath, apiKey)
 	if err != nil {
