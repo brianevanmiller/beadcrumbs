@@ -1,0 +1,20 @@
+# Beadcrumbs pre-commit framework configuration
+#
+# If your project uses the pre-commit framework (https://pre-commit.com),
+# add this to your .pre-commit-config.yaml as an ALTERNATIVE to the
+# built-in git hooks installed by `bdc init`.
+#
+# Note: If you use this, you may want to skip the built-in hooks:
+#   bdc init --stealth  (skips hook installation)
+#
+# Then add this to your .pre-commit-config.yaml under `repos:`:
+
+- repo: local
+  hooks:
+    - id: beadcrumbs-auto-stage
+      name: beadcrumbs-auto-stage
+      entry: bash -c 'bdc export --quiet 2>/dev/null || true; for f in .beadcrumbs/insights.jsonl .beadcrumbs/threads.jsonl .beadcrumbs/deps.jsonl; do [ -f "$f" ] && (git diff --quiet -- "$f" 2>/dev/null && git diff --cached --quiet -- "$f" 2>/dev/null || git add "$f" 2>/dev/null) || true; done'
+      language: system
+      always_run: true
+      pass_filenames: false
+      stages: [pre-commit]

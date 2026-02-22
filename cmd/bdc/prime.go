@@ -67,7 +67,7 @@ func outputPrimeContext(w io.Writer) {
 - **Use bd (beads)** for task tracking -- they are complementary tools
 - bd tracks *what* you're doing; bdc tracks *why*
 - Always use ` + "`--thread`" + ` to associate captures with context
-- Always use ` + "`--author cc:<model>`" + ` for AI agent attribution (e.g., ` + "`cc:opus-4.5`" + `)
+- Always use ` + "`--author cc:<model>`" + ` for AI agent attribution (e.g., ` + "`cc:opus-4.6`" + `)
 - Do NOT capture routine tool calls, simple acknowledgments, or mechanical steps
 
 ## Session Protocol
@@ -94,6 +94,13 @@ bdc capture --thread <ref> --decision "Final outcome summary" --author cc:<model
 bdc thread close <thread-id>
 ` + "```" + `
 
+**Resuming a previous session:**
+` + "```bash" + `
+bdc thread list --status=active
+bdc timeline <thread-id>
+bdc questions --unresolved
+` + "```" + `
+
 ## Insight Types
 
 | Type | When to Use | Symbol |
@@ -114,7 +121,7 @@ bdc thread close <thread-id>
 
 ### Capturing
 - ` + "`bdc capture --thread <ref> --<type> \"...\" --author cc:<model>`" + `
-- Thread ref accepts: thread ID (thr-xxx), bead ID (bd-xxx), or external ref (linear:ENG-456)
+- Thread ref accepts: thread ID (thr-xxx), bead ID (bd-xxx), or external ref (linear:ENG-456, jira:PROJ-123, gh:42)
 
 ### Viewing
 - ` + "`bdc timeline [thread-id]`" + ` - Chronological view

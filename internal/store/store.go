@@ -661,6 +661,35 @@ func (s *Store) GetDependents(toID string) ([]*types.Dependency, error) {
 	return deps, nil
 }
 
+// ListAllDependencies retrieves all dependencies.
+func (s *Store) ListAllDependencies() ([]*types.Dependency, error) {
+	rows, err := s.db.Query(`
+		SELECT from_id, to_id, type, created_at
+		FROM dependencies
+		ORDER BY created_at
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query all dependencies: %w", err)
+	}
+	defer rows.Close()
+
+	var deps []*types.Dependency
+	for rows.Next() {
+		var dep types.Dependency
+		err := rows.Scan(&dep.From, &dep.To, &dep.Type, &dep.CreatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan dependency: %w", err)
+		}
+		deps = append(deps, &dep)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating dependencies: %w", err)
+	}
+
+	return deps, nil
+}
+
 // ListInsightsByAuthor retrieves all insights by an author (exact match on author_id).
 func (s *Store) ListInsightsByAuthor(authorID string) ([]*types.Insight, error) {
 	query := `

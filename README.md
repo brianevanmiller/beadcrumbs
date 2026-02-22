@@ -20,6 +20,9 @@ bdc init
 
 # Capture insights
 bdc capture "Found: the bug is in JWT validation, not sessions" --pivot
+
+# Set up Claude Code integration (optional)
+bdc setup claude
 ```
 
 ## Features
@@ -134,6 +137,8 @@ bdc spawn ins-7f2a --title="Implement exponential backoff"
 
 Git-backed like beads: JSONL exports on commit, imports on merge.
 
+> **Note:** `bdc init` automatically adds .gitignore entries to track JSONL files but ignore the SQLite database.
+
 ## Full Command Reference
 
 ### Capture & Thread Management
@@ -185,6 +190,14 @@ bdc spawn <insight-id> --title="..."  # Create task from insight
 * **Extract insights from exploration** — Turn vibe-coding sessions into structured knowledge
 * **Aid onboarding** — Show newcomers how understanding evolved
 * **Long-term memory** — Understand how the product came to be
+
+## Project Setup Guides
+
+* **[AI Agent Guide](BDC_GUIDE.md)** — Copy into your CLAUDE.md or AI agent config for automatic bdc usage
+* **[Lifecycle Guide](docs/guides/lifecycle.md)** — 6-phase workflow from session start to cross-session resumption
+* **[Project Config Template](docs/guides/project-config.md)** — Author naming, thread conventions, signal vs noise guidance
+* **[Insight Types Deep Dive](docs/insight-types.md)** — When to use each of the 6 insight types
+* **[Pre-commit Framework Config](docs/guides/pre-commit-config.yaml)** — Alternative hook config for pre-commit users
 
 ## License
 

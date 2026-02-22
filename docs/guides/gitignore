@@ -1,0 +1,16 @@
+# Beadcrumbs .gitignore entries
+#
+# These entries are automatically added by `bdc init`.
+# Add them manually if you initialized beadcrumbs without `bdc init`.
+#
+# Track JSONL files (reasoning data, versioned with code):
+#   .beadcrumbs/insights.jsonl
+#   .beadcrumbs/threads.jsonl
+#   .beadcrumbs/deps.jsonl
+#
+# Ignore SQLite database (ephemeral, rebuilt from JSONL):
+
+.beadcrumbs/beadcrumbs.db
+.beadcrumbs/beadcrumbs.db-journal
+.beadcrumbs/beadcrumbs.db-wal
+.beadcrumbs/beadcrumbs.db-shm
