@@ -52,14 +52,14 @@ func ParseAISessionWithTimestamp(content string, baseTimestamp time.Time) ([]*ty
 		}
 
 		// Detect insight type based on content
-		insightType := detectInsightType(line)
+		insightType := DetectInsightType(line)
 
 		// Create insight
 		insight := &types.Insight{
 			ID:         types.GenerateID("ins"),
 			Timestamp:  insightTimestamp, // When the insight occurred (historical)
 			Content:    line,
-			Summary:    truncate(line, 80),
+			Summary:    Truncate(line, 80),
 			Type:       insightType,
 			Confidence: 0.7, // Default confidence for auto-extracted
 			Source: types.InsightSource{
@@ -105,7 +105,7 @@ func ParseConversationWithTimestamp(content string, baseTimestamp time.Time) ([]
 		if currentTurn.Len() > 0 && currentSpeaker != "" {
 			text := strings.TrimSpace(currentTurn.String())
 			if len(text) >= 10 {
-				insightType := detectInsightType(text)
+				insightType := DetectInsightType(text)
 
 				participant := currentSpeaker
 				if strings.EqualFold(participant, "human") || strings.EqualFold(participant, "user") {
@@ -118,7 +118,7 @@ func ParseConversationWithTimestamp(content string, baseTimestamp time.Time) ([]
 					ID:         types.GenerateID("ins"),
 					Timestamp:  insightTimestamp, // When the insight occurred
 					Content:    text,
-					Summary:    truncate(text, 80),
+					Summary:    Truncate(text, 80),
 					Type:       insightType,
 					Confidence: 0.7,
 					Source: types.InsightSource{
@@ -150,8 +150,8 @@ func ParseConversationWithTimestamp(content string, baseTimestamp time.Time) ([]
 	return insights, nil
 }
 
-// detectInsightType determines the type of insight based on content patterns.
-func detectInsightType(text string) types.InsightType {
+// DetectInsightType determines the type of insight based on content patterns.
+func DetectInsightType(text string) types.InsightType {
 	lower := strings.ToLower(text)
 
 	// Check for questions first
@@ -184,8 +184,8 @@ func detectInsightType(text string) types.InsightType {
 	return types.InsightHypothesis
 }
 
-// truncate shortens a string to maxLen characters, adding "..." if truncated.
-func truncate(s string, maxLen int) string {
+// Truncate shortens a string to maxLen characters, adding "..." if truncated.
+func Truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
 	}

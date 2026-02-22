@@ -28,6 +28,9 @@ var (
 
 	// notion:page-id
 	notionPattern = regexp.MustCompile(`^notion:([a-f0-9-]+)$`)
+
+	// slack:C0123456 (channel ID) or slack:#channel-name
+	slackPattern = regexp.MustCompile(`^slack:(?:#?([\w-]+)|([A-Z][A-Z0-9]+))$`)
 )
 
 // BeadsPresent checks if a .beads/ directory exists in the current directory
@@ -146,6 +149,18 @@ func ParseExternalRef(ref string) (*ExternalRef, error) {
 		}, nil
 	}
 
+	if matches := slackPattern.FindStringSubmatch(ref); matches != nil {
+		id := matches[1]
+		if id == "" {
+			id = matches[2]
+		}
+		return &ExternalRef{
+			System: "slack",
+			ID:     id,
+			Raw:    ref,
+		}, nil
+	}
+
 	// Generic fallback: system:anything
 	parts := strings.SplitN(ref, ":", 2)
 	if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
@@ -179,6 +194,8 @@ func FormatExternalRef(ref *ExternalRef) string {
 		return "Jira: " + ref.ID
 	case "notion":
 		return "Notion: " + ref.ID
+	case "slack":
+		return "Slack: " + ref.ID
 	default:
 		return ref.System + ": " + ref.ID
 	}

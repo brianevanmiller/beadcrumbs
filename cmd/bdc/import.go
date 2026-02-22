@@ -18,6 +18,8 @@ var importCmd = &cobra.Command{
 	Long: `Import insights from various sources:
   - AI session transcripts (text files with conversation)
   - Slack exports (directory with JSON files)
+  - CSV files with column mapping
+  - JSONL files with column mapping
 
 The format is auto-detected, or you can specify it with flags.
 
@@ -25,6 +27,10 @@ Examples:
   bdc import session.txt                          # Auto-detect format
   bdc import session.txt --ai-session             # Force AI session format
   bdc import slack-export/ --slack                # Import Slack export
+  bdc import data.csv --csv                       # Import CSV file
+  bdc import data.jsonl --jsonl                   # Import JSONL file
+  bdc import data.csv --map-content=body          # Map 'body' column to content
+  bdc import data.csv --source-type=github-pr     # Set source type
   bdc import session.txt --thread=thr-xxx         # Add to existing thread
   bdc import session.txt --timestamp="2024-01-15" # Set timestamp for all insights
   bdc import session.txt --dry-run                # Preview without saving`,
@@ -36,20 +42,45 @@ var (
 	importThread    string
 	importAISession bool
 	importSlack     bool
+	importCSV       bool
+	importJSONL     bool
 	importDryRun    bool
 	importTimestamp string
 	importAuto      bool
 	importQuiet     bool
+	importSourceType string
+
+	// Column mapping flags
+	importMapContent   string
+	importMapType      string
+	importMapTimestamp  string
+	importMapAuthor    string
+	importMapSummary   string
+	importMapSourceRef string
+	importMapTags      string
 )
 
 func init() {
 	importCmd.Flags().StringVar(&importThread, "thread", "", "add imported insights to this thread")
 	importCmd.Flags().BoolVar(&importAISession, "ai-session", false, "force AI session format")
 	importCmd.Flags().BoolVar(&importSlack, "slack", false, "force Slack export format")
+	importCmd.Flags().BoolVar(&importCSV, "csv", false, "force CSV format")
+	importCmd.Flags().BoolVar(&importJSONL, "jsonl", false, "force JSONL format")
 	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "preview without saving")
 	importCmd.Flags().StringVar(&importTimestamp, "timestamp", "", "set timestamp for all insights (RFC3339 or date)")
 	importCmd.Flags().BoolVar(&importAuto, "auto", false, "auto-import from JSONL (for git hooks)")
 	importCmd.Flags().BoolVar(&importQuiet, "quiet", false, "suppress output (for hooks)")
+	importCmd.Flags().StringVar(&importSourceType, "source-type", "", "set source type (e.g., github-pr, notion, asana)")
+
+	// Column mapping flags
+	importCmd.Flags().StringVar(&importMapContent, "map-content", "", "CSV/JSONL column name for content field")
+	importCmd.Flags().StringVar(&importMapType, "map-type", "", "CSV/JSONL column name for insight type field")
+	importCmd.Flags().StringVar(&importMapTimestamp, "map-timestamp", "", "CSV/JSONL column name for timestamp field")
+	importCmd.Flags().StringVar(&importMapAuthor, "map-author", "", "CSV/JSONL column name for author field")
+	importCmd.Flags().StringVar(&importMapSummary, "map-summary", "", "CSV/JSONL column name for summary field")
+	importCmd.Flags().StringVar(&importMapSourceRef, "map-source-ref", "", "CSV/JSONL column name for source reference field")
+	importCmd.Flags().StringVar(&importMapTags, "map-tags", "", "CSV/JSONL column name for tags field")
+
 	rootCmd.AddCommand(importCmd)
 }
 
@@ -72,6 +103,10 @@ func runImport(cmd *cobra.Command, args []string) error {
 		format = "ai-session"
 	} else if importSlack {
 		format = "slack"
+	} else if importCSV {
+		format = "csv"
+	} else if importJSONL {
+		format = "jsonl"
 	}
 
 	// Parse insights
@@ -117,8 +152,34 @@ func runImport(cmd *cobra.Command, args []string) error {
 			}
 		}
 
+	case "csv":
+		mapping := buildColumnMapping()
+		sourceType := importSourceType
+		if sourceType == "" {
+			sourceType = "csv-import"
+		}
+		insights, err = importer.ParseCSV(path, mapping, sourceType)
+		if !baseTimestamp.IsZero() {
+			for _, insight := range insights {
+				insight.Timestamp = baseTimestamp
+			}
+		}
+
+	case "jsonl":
+		mapping := buildColumnMapping()
+		sourceType := importSourceType
+		if sourceType == "" {
+			sourceType = "jsonl-import"
+		}
+		insights, err = importer.ParseGenericJSONL(path, mapping, sourceType)
+		if !baseTimestamp.IsZero() {
+			for _, insight := range insights {
+				insight.Timestamp = baseTimestamp
+			}
+		}
+
 	default:
-		return fmt.Errorf("unknown format: %s (use --ai-session or --slack)", format)
+		return fmt.Errorf("unknown format: %s (use --ai-session, --slack, --csv, or --jsonl)", format)
 	}
 
 	if err != nil {
@@ -217,6 +278,10 @@ func detectFormat(path string) string {
 	switch ext {
 	case ".json":
 		return "slack"
+	case ".csv":
+		return "csv"
+	case ".jsonl":
+		return "jsonl"
 	case ".txt", ".md", ".log":
 		return "ai-session"
 	default:
@@ -245,6 +310,19 @@ func truncateContent(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen-3] + "..."
+}
+
+// buildColumnMapping creates a ColumnMapping from the --map-* flags.
+func buildColumnMapping() importer.ColumnMapping {
+	return importer.ColumnMapping{
+		Content:   importMapContent,
+		Type:      importMapType,
+		Timestamp: importMapTimestamp,
+		Author:    importMapAuthor,
+		Summary:   importMapSummary,
+		SourceRef: importMapSourceRef,
+		Tags:      importMapTags,
+	}
 }
 
 // parseImportTimestamp parses various timestamp formats.
