@@ -71,12 +71,26 @@ This is useful when you want to use beadcrumbs without committing files to the r
 			f.Close()
 		}
 
+		// Add .gitignore entries (non-stealth mode only)
+		if !initStealth {
+			if err := addGitignoreEntries(); err != nil {
+				fmt.Printf("Warning: failed to update .gitignore: %v\n", err)
+			} else {
+				fmt.Println("Updated .gitignore to track JSONL, ignore SQLite")
+			}
+		}
+
 		// Install git hooks (non-stealth mode only)
 		if !initStealth {
 			if err := installGitHooks(); err != nil {
 				fmt.Printf("Warning: failed to install git hooks: %v\n", err)
 				fmt.Println("Git hooks are optional - beadcrumbs will work without them")
 			}
+		}
+
+		// Tip about pre-commit framework
+		if _, err := os.Stat(".pre-commit-config.yaml"); err == nil {
+			fmt.Println("Tip: You're using the pre-commit framework. See docs/guides/pre-commit-config.yaml for an alternative hook config.")
 		}
 
 		fmt.Printf("Initialized beadcrumbs repository at %s\n", dir)
@@ -171,6 +185,20 @@ func installGitHooks() error {
 
 	// Define hooks to install
 	hooks := map[string]string{
+		"pre-commit": `#!/bin/sh
+# beadcrumbs: Export and stage JSONL before commit
+# Ensures insights are always in sync with the commit
+if command -v bdc >/dev/null 2>&1; then
+    bdc export --quiet 2>/dev/null || true
+    for f in .beadcrumbs/insights.jsonl .beadcrumbs/threads.jsonl .beadcrumbs/deps.jsonl; do
+        if [ -f "$f" ]; then
+            if ! git diff --quiet -- "$f" 2>/dev/null || ! git diff --cached --quiet -- "$f" 2>/dev/null; then
+                git add "$f" 2>/dev/null || true
+            fi
+        fi
+    done
+fi
+`,
 		"post-commit": `#!/bin/sh
 # beadcrumbs: Export insights after commit
 # This hook exports local insights to JSONL for version control
@@ -218,6 +246,48 @@ fi
 		if err := os.WriteFile(hookPath, []byte(hookContent), 0755); err != nil {
 			return fmt.Errorf("failed to write %s hook: %w", hookName, err)
 		}
+	}
+
+	return nil
+}
+
+// addGitignoreEntries adds .gitignore entries to track JSONL but ignore SQLite.
+func addGitignoreEntries() error {
+	gitignorePath := ".gitignore"
+
+	var existingContent string
+	if content, err := os.ReadFile(gitignorePath); err == nil {
+		existingContent = string(content)
+	}
+
+	// Skip if beadcrumbs DB is already ignored or entire dir is ignored
+	if strings.Contains(existingContent, "beadcrumbs.db") ||
+		containsExactPattern(existingContent, ".beadcrumbs/") ||
+		containsExactPattern(existingContent, ".beadcrumbs") {
+		return nil
+	}
+
+	entries := `
+# Beadcrumbs database (ephemeral, rebuilt from JSONL)
+.beadcrumbs/beadcrumbs.db
+.beadcrumbs/beadcrumbs.db-journal
+.beadcrumbs/beadcrumbs.db-wal
+.beadcrumbs/beadcrumbs.db-shm
+`
+
+	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open .gitignore: %w", err)
+	}
+	defer f.Close()
+
+	// Add newline separator if file has content and doesn't end with newline
+	if len(existingContent) > 0 && !strings.HasSuffix(existingContent, "\n") {
+		f.WriteString("\n")
+	}
+
+	if _, err := f.WriteString(entries); err != nil {
+		return fmt.Errorf("failed to write .gitignore entries: %w", err)
 	}
 
 	return nil

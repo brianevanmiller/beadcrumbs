@@ -37,7 +37,7 @@ context. It accepts:
 Examples:
   bdc capture --thread bd-a1b2 --decision "We'll use Redis for caching"
   bdc capture --thread linear:ENG-456 --pivot "Need to rethink the data model"
-  bdc capture --hypothesis "The bug might be in the auth middleware" --author cc:opus-4.5`,
+  bdc capture --hypothesis "The bug might be in the auth middleware" --author cc:opus-4.6`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		content := args[0]
@@ -256,6 +256,6 @@ func init() {
 	captureCmd.Flags().BoolVar(&capturePivot, "pivot", false, "mark as pivot (direction changed)")
 	captureCmd.Flags().BoolVar(&captureDecision, "decision", false, "mark as decision (committed to approach)")
 	captureCmd.Flags().StringVar(&captureTimestamp, "timestamp", "", "when the insight occurred (RFC3339, date, or relative like '2h ago')")
-	captureCmd.Flags().StringVar(&captureAuthor, "author", "", "who captured this insight (e.g., 'brian', 'cc:opus-4.5')")
+	captureCmd.Flags().StringVar(&captureAuthor, "author", "", "who captured this insight (e.g., 'brian', 'cc:opus-4.6')")
 	captureCmd.Flags().StringSliceVar(&captureEndorsedBy, "endorsed-by", nil, "who endorsed this insight (repeatable)")
 }
