@@ -100,6 +100,40 @@ To skip the hook for a single commit:
 SKIP=beadcrumbs git commit -m "message"
 ```
 
+## Linear Integration
+
+If your project uses Linear, bdc can link threads to issues and auto-post summaries.
+
+### Setup
+
+```bash
+brew install schpet/tap/linear    # Install a Linear CLI (recommended)
+linear auth login                 # Authenticate
+bdc linear setup                  # Auto-detect and configure
+```
+
+### Thread Creation
+
+```bash
+# Auto-create on first capture (recommended)
+bdc capture --thread linear:ENG-456 --hypothesis "..." --author cc:opus-4.6
+
+# Or explicit creation with --linear flag
+bdc thread new "Feature title" --linear ENG-456
+```
+
+Using `--thread linear:ENG-456` auto-creates a thread linked to the issue and fetches the issue title from Linear.
+
+### Auto-Push on Close
+
+When a concluded thread linked to a Linear issue is closed, bdc posts a summary comment containing decisions, pivots, and discoveries. Disable with:
+
+```bash
+bdc linear config auto_push false
+```
+
+For full setup and troubleshooting, see the [Linear Integration Guide](linear.md).
+
 ## Lifecycle Guide
 
 For the complete session-by-session workflow, see [lifecycle.md](../../docs/guides/lifecycle.md) or your project's adapted version.

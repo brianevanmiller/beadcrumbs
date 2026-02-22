@@ -33,7 +33,14 @@ bdc questions --unresolved
 
 ```bash
 # External tracker issue exists (most common):
+# Option A: auto-create thread on first capture (thread auto-linked, title fetched from Linear)
 bdc capture --thread linear:ENG-456 \
+  --hypothesis "Initial approach: use batch processing for import" \
+  --author cc:opus-4.6
+
+# Option B: explicit thread creation with --linear flag
+bdc thread new "Batch processing for import" --linear ENG-456
+bdc capture --thread thr-xxxx \
   --hypothesis "Initial approach: use batch processing for import" \
   --author cc:opus-4.6
 
@@ -125,6 +132,8 @@ bdc thread close thr-xxxx
 
 **Rule**: Do NOT archive or delete a git branch until the beadcrumbs thread is closed.
 
+**Auto-push**: If the thread is linked to a Linear issue, closing it automatically posts a summary comment (decisions, pivots, discoveries) to the Linear issue. Disable with `bdc linear config auto_push false`.
+
 ### Phase 5: PR & Merge
 
 At PR creation:
@@ -206,4 +215,11 @@ bdc questions --unresolved                          # Open questions
 bdc link <insight-id> --spawns=<bead-id>            # Link to task
 bdc trace <bead-id>                                 # Trace reasoning for a task
 bdc spawn <insight-id> --title="..."                # Create task from insight
+
+# Linear integration
+bdc linear setup                                    # Detect Linear CLI tools
+bdc linear status                                   # Show linked threads, config
+bdc linear push <thread-id>                         # Post summary to Linear issue
+bdc linear link <thread-id> <issue-id>              # Manually link thread to issue
+bdc thread new "Title" --linear ENG-456             # Create thread linked to Linear
 ```
