@@ -58,15 +58,25 @@ bdc thread close <thread-id>
 The `--thread` flag accepts multiple reference formats. Prefer in this order:
 
 1. **Task tracker ref** if using an external tracker: `--thread linear:ENG-456`, `--thread jira:PROJ-123`, `--thread gh:42`
+   - For Linear refs, bdc auto-creates a thread linked to the issue and fetches the issue title
 2. **Bead ID** if a bd issue exists: `--thread bd-a1b2`
-3. **Descriptive title** as fallback when creating: `bdc thread new "Fix auth timeout bug"`
+3. **Thread ID** if resuming existing: `--thread thr-xxxx`
+4. **Descriptive title** as fallback when creating: `bdc thread new "Fix auth timeout bug"`
 
 ### Workflow for AI Agents
 
 1. **Session start**: Open a thread and capture initial intent
    ```bash
+   # Option A: auto-create thread from tracker ref (recommended for Linear users)
+   bdc capture --thread linear:ENG-456 --hypothesis "Redis might be overkill, in-memory LRU could suffice" --author cc:opus-4.6
+
+   # Option B: explicit thread creation with --linear flag
+   bdc thread new "Implement caching layer for API" --linear ENG-456
+   bdc capture --thread thr-xxxx --hypothesis "Redis might be overkill" --author cc:opus-4.6
+
+   # Option C: standalone thread (no tracker)
    bdc thread new "Implement caching layer for API"
-   bdc capture --thread <ref> --hypothesis "Redis might be overkill, in-memory LRU could suffice" --author cc:opus-4.6
+   bdc capture --thread <ref> --hypothesis "Redis might be overkill" --author cc:opus-4.6
    ```
 
 2. **During session**: Capture as reasoning evolves — always use `--thread`
@@ -97,6 +107,8 @@ The `--thread` flag accepts multiple reference formats. Prefer in this order:
    ```
 
 4. **Rule**: Do NOT archive or delete a git branch until the beadcrumbs thread is closed with final insights recorded.
+
+   **Auto-push**: If the thread is linked to a Linear issue, closing it automatically posts a summary comment (decisions, pivots, discoveries) to the issue. See the [Linear Integration Guide](docs/guides/linear.md).
 
 5. **Cross-session resumption**: When resuming work in a new session
    ```bash
@@ -180,6 +192,13 @@ bdc spawn <insight-id> --title="..."        # Create task from insight
 bdc init                                    # Initialize in a new repo
 bdc init --stealth                          # Local-only (not tracked in git)
 bdc prime                                   # Install hooks, verify DB
+
+# Linear integration (see docs/guides/linear.md)
+bdc linear setup                            # Detect and configure Linear CLI
+bdc linear status                           # Show integration status
+bdc linear push <thread-id>                 # Post summary to Linear issue
+bdc linear link <thread-id> <issue-id>      # Link thread to Linear issue
+bdc thread new "title" --linear ENG-456     # Create thread linked to Linear
 ```
 
 ### Important Rules

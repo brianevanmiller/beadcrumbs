@@ -1,6 +1,6 @@
 {
   "name": "@beadcrumbs/bdc",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "beadcrumbs - capture how understanding evolves through dialogues",
   "main": "bin/bdc.js",
   "bin": {
