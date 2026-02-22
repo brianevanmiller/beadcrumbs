@@ -38,6 +38,18 @@ func NewStore(dbPath string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
+// DB returns the underlying database connection for advanced queries.
+func (s *Store) DB() *sql.DB {
+	return s.db
+}
+
+// ThreadSummary holds lightweight thread info for display purposes.
+type ThreadSummary struct {
+	ID     string
+	Title  string
+	Status string
+}
+
 // Close closes the database connection.
 func (s *Store) Close() error {
 	return s.db.Close()
@@ -800,6 +812,83 @@ func (s *Store) SetConfig(key, value string) error {
 	return nil
 }
 
+// ============================================================================
+// External Ref Mappings
+// ============================================================================
+
+// ExternalRefMapping links an external reference (e.g., "linear:ENG-456") to a thread.
+type ExternalRefMapping struct {
+	ExternalRef string
+	ThreadID    string
+	System      string
+	ExternalID  string
+	Metadata    string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+// CreateExternalRefMapping inserts a new external ref mapping.
+func (s *Store) CreateExternalRefMapping(m *ExternalRefMapping) error {
+	_, err := s.db.Exec(`
+		INSERT INTO external_ref_mappings (external_ref, thread_id, system, external_id, metadata, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, m.ExternalRef, m.ThreadID, m.System, m.ExternalID, m.Metadata, m.CreatedAt, m.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("failed to create external ref mapping: %w", err)
+	}
+	return nil
+}
+
+// GetExternalRefMappingByRef looks up a mapping by external reference string.
+// Returns nil, nil if no mapping exists.
+func (s *Store) GetExternalRefMappingByRef(externalRef string) (*ExternalRefMapping, error) {
+	var m ExternalRefMapping
+	err := s.db.QueryRow(`
+		SELECT external_ref, thread_id, system, external_id, metadata, created_at, updated_at
+		FROM external_ref_mappings WHERE external_ref = ?
+	`, externalRef).Scan(&m.ExternalRef, &m.ThreadID, &m.System, &m.ExternalID, &m.Metadata, &m.CreatedAt, &m.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get external ref mapping: %w", err)
+	}
+	return &m, nil
+}
+
+// GetExternalRefMappingsByThread returns all mappings for a given thread ID.
+func (s *Store) GetExternalRefMappingsByThread(threadID string) ([]*ExternalRefMapping, error) {
+	rows, err := s.db.Query(`
+		SELECT external_ref, thread_id, system, external_id, metadata, created_at, updated_at
+		FROM external_ref_mappings WHERE thread_id = ?
+	`, threadID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query external ref mappings: %w", err)
+	}
+	defer rows.Close()
+
+	var mappings []*ExternalRefMapping
+	for rows.Next() {
+		var m ExternalRefMapping
+		if err := rows.Scan(&m.ExternalRef, &m.ThreadID, &m.System, &m.ExternalID, &m.Metadata, &m.CreatedAt, &m.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan external ref mapping: %w", err)
+		}
+		mappings = append(mappings, &m)
+	}
+	return mappings, rows.Err()
+}
+
+// UpdateExternalRefMappingMetadata updates the cached metadata for a mapping.
+func (s *Store) UpdateExternalRefMappingMetadata(externalRef, metadata string) error {
+	_, err := s.db.Exec(`
+		UPDATE external_ref_mappings SET metadata = ?, updated_at = ? WHERE external_ref = ?
+	`, metadata, time.Now(), externalRef)
+	if err != nil {
+		return fmt.Errorf("failed to update external ref mapping metadata: %w", err)
+	}
+	return nil
+}
+
 // Verify checks the database integrity.
 func (s *Store) Verify() error {
 	// Run integrity check
@@ -813,7 +902,7 @@ func (s *Store) Verify() error {
 	}
 
 	// Verify all tables exist
-	tables := []string{"threads", "insights", "dependencies", "config"}
+	tables := []string{"threads", "insights", "dependencies", "config", "external_ref_mappings"}
 	for _, table := range tables {
 		var count int
 		err := s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&count)

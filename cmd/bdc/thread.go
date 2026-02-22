@@ -2,15 +2,20 @@ package main
 
 import (
 	"fmt"
-
+	"os"
+	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
+	"github.com/brianevanmiller/beadcrumbs/internal/beads"
+	"github.com/brianevanmiller/beadcrumbs/internal/linear"
+	"github.com/brianevanmiller/beadcrumbs/internal/store"
 	"github.com/brianevanmiller/beadcrumbs/internal/types"
+	"github.com/spf13/cobra"
 )
 
 var (
-	threadStatus string
+	threadStatus    string
+	threadLinearRef string
 )
 
 var threadCmd = &cobra.Command{
@@ -41,8 +46,64 @@ var threadNewCmd = &cobra.Command{
 		}
 
 		fmt.Printf("Created thread: %s\n", thread.ID)
+
+		// Link to Linear issue if --linear flag is set
+		if threadLinearRef != "" {
+			if err := linkThreadToLinear(s, thread, threadLinearRef); err != nil {
+				return err
+			}
+		}
+
 		return nil
 	},
+}
+
+// linkThreadToLinear links a thread to a Linear issue and optionally enriches the title.
+func linkThreadToLinear(s *store.Store, thread *types.InsightThread, linearRef string) error {
+	// Normalize: accept both "ENG-456" and "linear:ENG-456"
+	ref := linearRef
+	if !strings.Contains(ref, ":") {
+		ref = "linear:" + ref
+	}
+
+	extRef, err := beads.ParseExternalRef(ref)
+	if err != nil {
+		return fmt.Errorf("invalid Linear reference: %w", err)
+	}
+
+	// Try to fetch issue title from Linear CLI to enrich thread title
+	configTool, _ := s.GetConfig("linear.cli_tool")
+	configPath, _ := s.GetConfig("linear.cli_path")
+	apiKey, _ := s.GetConfig("linear.api_key")
+
+	adapter, adapterErr := linear.Detect(configTool, configPath, apiKey)
+	if adapterErr == nil {
+		issue, fetchErr := adapter.ViewIssue(extRef.ID)
+		if fetchErr == nil && issue.Title != "" {
+			// Enrich thread title with issue title
+			thread.Title = fmt.Sprintf("%s: %s", issue.ID, issue.Title)
+			thread.UpdatedAt = time.Now()
+			s.UpdateThread(thread)
+			fmt.Printf("  Title: %s\n", thread.Title)
+		}
+	}
+
+	// Create the mapping
+	now := time.Now()
+	mapping := &store.ExternalRefMapping{
+		ExternalRef: ref,
+		ThreadID:    thread.ID,
+		System:      extRef.System,
+		ExternalID:  extRef.ID,
+		Metadata:    "{}",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	if err := s.CreateExternalRefMapping(mapping); err != nil {
+		return fmt.Errorf("failed to link Linear issue: %w", err)
+	}
+	fmt.Printf("  Linked to Linear: %s\n", extRef.ID)
+	return nil
 }
 
 var threadShowCmd = &cobra.Command{
@@ -73,6 +134,13 @@ var threadShowCmd = &cobra.Command{
 		fmt.Printf("Status: %s\n", thread.Status)
 		fmt.Printf("Created: %s\n", thread.CreatedAt.Format("2006-01-02 15:04:05"))
 		fmt.Printf("Updated: %s\n", thread.UpdatedAt.Format("2006-01-02 15:04:05"))
+
+		// Show linked external refs
+		mappings, _ := s.GetExternalRefMappingsByThread(threadID)
+		for _, m := range mappings {
+			fmt.Printf("Linked: %s (%s)\n", m.ExternalID, m.System)
+		}
+
 		if thread.CurrentUnderstanding != "" {
 			fmt.Printf("\nCurrent Understanding:\n%s\n", thread.CurrentUnderstanding)
 		}
@@ -169,8 +237,120 @@ var threadCloseCmd = &cobra.Command{
 		}
 
 		fmt.Printf("Thread %s closed with status: %s\n", threadID, newStatus)
+
+		// Push summary to Linear on conclude
+		if newStatus == types.ThreadConcluded {
+			pushLinearSummaryOnClose(s, thread)
+		}
+
 		return nil
 	},
+}
+
+// pushLinearSummaryOnClose posts a summary comment to the linked Linear issue.
+func pushLinearSummaryOnClose(s *store.Store, thread *types.InsightThread) {
+	// Check if auto-push is disabled
+	autoPush, _ := s.GetConfig("linear.auto_push")
+	if autoPush == "false" {
+		return
+	}
+
+	// Get Linear mappings for this thread
+	mappings, err := s.GetExternalRefMappingsByThread(thread.ID)
+	if err != nil || len(mappings) == 0 {
+		return
+	}
+
+	// Find Linear mapping
+	var linearMapping *store.ExternalRefMapping
+	for _, m := range mappings {
+		if m.System == "linear" {
+			linearMapping = m
+			break
+		}
+	}
+	if linearMapping == nil {
+		return
+	}
+
+	// Get adapter
+	configTool, _ := s.GetConfig("linear.cli_tool")
+	configPath, _ := s.GetConfig("linear.cli_path")
+	apiKey, _ := s.GetConfig("linear.api_key")
+
+	adapter, err := linear.Detect(configTool, configPath, apiKey)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Linear CLI not available, skipping comment push.\n")
+		return
+	}
+
+	// Gather insights
+	insights, err := s.ListInsights(thread.ID, "", time.Time{})
+	if err != nil || len(insights) == 0 {
+		return
+	}
+
+	// Format and post
+	body := formatLinearSummary(thread, insights)
+	if err := adapter.AddComment(linearMapping.ExternalID, body); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to post summary to Linear %s: %v\n", linearMapping.ExternalID, err)
+		return
+	}
+
+	fmt.Printf("Posted insight summary to Linear %s\n", linearMapping.ExternalID)
+}
+
+// formatLinearSummary formats thread insights as a markdown comment for Linear.
+func formatLinearSummary(thread *types.InsightThread, insights []*types.Insight) string {
+	var sb strings.Builder
+
+	sb.WriteString(fmt.Sprintf("## Beadcrumbs: %s\n\n", thread.Title))
+	sb.WriteString(fmt.Sprintf("Thread `%s` concluded.\n\n", thread.ID))
+
+	// Group by type
+	var decisions, pivots, discoveries []*types.Insight
+	for _, ins := range insights {
+		switch ins.Type {
+		case types.InsightDecision:
+			decisions = append(decisions, ins)
+		case types.InsightPivot:
+			pivots = append(pivots, ins)
+		case types.InsightDiscovery:
+			discoveries = append(discoveries, ins)
+		}
+	}
+
+	if len(decisions) > 0 {
+		sb.WriteString("### Decisions\n")
+		for _, d := range decisions {
+			sb.WriteString(fmt.Sprintf("- %s\n", d.Content))
+		}
+		sb.WriteString("\n")
+	}
+
+	if len(pivots) > 0 {
+		sb.WriteString("### Pivots\n")
+		for _, p := range pivots {
+			sb.WriteString(fmt.Sprintf("- %s\n", p.Content))
+		}
+		sb.WriteString("\n")
+	}
+
+	if len(discoveries) > 0 {
+		sb.WriteString("### Key Discoveries\n")
+		for _, d := range discoveries {
+			sb.WriteString(fmt.Sprintf("- %s\n", d.Content))
+		}
+		sb.WriteString("\n")
+	}
+
+	if thread.CurrentUnderstanding != "" {
+		sb.WriteString("### Summary\n")
+		sb.WriteString(thread.CurrentUnderstanding + "\n\n")
+	}
+
+	sb.WriteString(fmt.Sprintf("*%d total insights tracked*\n", len(insights)))
+	return sb.String()
 }
 
 func init() {
@@ -180,6 +360,7 @@ func init() {
 	threadCmd.AddCommand(threadListCmd)
 	threadCmd.AddCommand(threadCloseCmd)
 
+	threadNewCmd.Flags().StringVar(&threadLinearRef, "linear", "", "link to Linear issue (e.g., ENG-456)")
 	threadListCmd.Flags().StringVar(&threadStatus, "status", "", "filter by status (active|concluded|abandoned)")
 	threadCloseCmd.Flags().StringVar(&threadStatus, "status", "concluded", "status to set (concluded|abandoned)")
 }
