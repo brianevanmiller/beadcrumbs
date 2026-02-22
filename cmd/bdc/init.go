@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/brianevanmiller/beadcrumbs/internal/linear"
 	"github.com/brianevanmiller/beadcrumbs/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -97,6 +98,10 @@ This is useful when you want to use beadcrumbs without committing files to the r
 		if !initStealth {
 			fmt.Println("Tip: Run 'bdc setup claude' to integrate with Claude Code")
 		}
+
+		// Non-blocking Linear CLI detection
+		detectLinearOnInit()
+
 		return nil
 	},
 }
@@ -297,6 +302,31 @@ func addGitignoreEntries() error {
 func isGitRepo() bool {
 	cmd := exec.Command("git", "rev-parse", "--git-dir")
 	return cmd.Run() == nil
+}
+
+// detectLinearOnInit checks for installed Linear CLI tools and reports findings.
+// This is informational only — bdc init succeeds regardless.
+func detectLinearOnInit() {
+	fmt.Println()
+	fmt.Println("Checking for Linear CLI...")
+	adapters := linear.DetectAll("")
+	if len(adapters) == 0 {
+		fmt.Println("  No Linear CLI detected. To enable Linear integration, install one:")
+		fmt.Println("    brew install schpet/tap/linear        (recommended)")
+		fmt.Println("    cargo install linear-cli              (Rust alternative)")
+		fmt.Println("    npm install -g czottmann/linearis     (Node alternative)")
+		fmt.Println("  Then run: bdc linear setup")
+		return
+	}
+
+	for _, a := range adapters {
+		authStatus := "not authenticated"
+		if err := a.CheckAuth(); err == nil {
+			authStatus = "authenticated"
+		}
+		fmt.Printf("  Found: %s (%s) — %s\n", a.Name(), a.BinPath(), authStatus)
+	}
+	fmt.Println("  Run 'bdc linear setup' to configure.")
 }
 
 func init() {

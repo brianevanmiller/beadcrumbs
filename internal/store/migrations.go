@@ -17,6 +17,7 @@ var migrationsList = []Migration{
 	{"002_insights_author_id", migrateInsightsAuthorID},
 	{"003_insights_endorsed_by", migrateInsightsEndorsedBy},
 	{"004_config_table", migrateConfigTable},
+	{"005_external_ref_mappings", migrateExternalRefMappings},
 }
 
 // RunMigrations runs all database migrations.
@@ -170,6 +171,38 @@ func migrateConfigTable(db *sql.DB) error {
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to create config table: %w", err)
+	}
+
+	return nil
+}
+
+// migrateExternalRefMappings creates the external_ref_mappings table
+// for linking threads to external issue trackers (Linear, GitHub, Jira, etc.).
+func migrateExternalRefMappings(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS external_ref_mappings (
+			external_ref TEXT PRIMARY KEY,
+			thread_id    TEXT NOT NULL,
+			system       TEXT NOT NULL,
+			external_id  TEXT NOT NULL,
+			metadata     TEXT DEFAULT '{}',
+			created_at   DATETIME NOT NULL,
+			updated_at   DATETIME NOT NULL,
+			FOREIGN KEY (thread_id) REFERENCES threads(id) ON DELETE CASCADE
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create external_ref_mappings table: %w", err)
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_ext_ref_thread_id ON external_ref_mappings(thread_id)`)
+	if err != nil {
+		return fmt.Errorf("failed to create ext_ref thread_id index: %w", err)
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_ext_ref_system ON external_ref_mappings(system)`)
+	if err != nil {
+		return fmt.Errorf("failed to create ext_ref system index: %w", err)
 	}
 
 	return nil

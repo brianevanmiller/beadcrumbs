@@ -60,6 +60,13 @@ func runTimeline(cmd *cobra.Command, args []string) error {
 		thread, err := st.GetThread(threadID)
 		if err == nil {
 			fmt.Printf("Thread: %s\n", thread.Title)
+
+			// Show linked external refs
+			mappings, _ := st.GetExternalRefMappingsByThread(threadID)
+			for _, m := range mappings {
+				fmt.Printf("Linked: %s (%s)\n", m.ExternalID, m.System)
+			}
+
 			fmt.Println()
 		}
 	}

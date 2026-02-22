@@ -2,9 +2,13 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
+	"github.com/brianevanmiller/beadcrumbs/internal/beads"
+	"github.com/brianevanmiller/beadcrumbs/internal/linear"
+	"github.com/brianevanmiller/beadcrumbs/internal/store"
 	"github.com/brianevanmiller/beadcrumbs/internal/types"
 	"github.com/spf13/cobra"
 )
@@ -238,10 +242,98 @@ func resolveThreadRef(ref string) (string, error) {
 		return ref, nil
 	}
 
-	// For now, just return the ref as-is for other formats.
-	// In Phase 4, we'll add proper resolution for bead IDs and external refs.
-	// This allows the feature to work while we build out the full integration.
+	// External ref (e.g., "linear:ENG-456")
+	if beads.IsExternalRef(ref) {
+		return resolveExternalThreadRef(ref)
+	}
+
+	// Bead ID — pass through for now
+	if beads.IsBeadID(ref) {
+		return ref, nil
+	}
+
 	return ref, nil
+}
+
+// resolveExternalThreadRef resolves an external ref to a thread ID,
+// creating the thread and mapping if needed.
+func resolveExternalThreadRef(ref string) (string, error) {
+	s, err := getStore()
+	if err != nil {
+		return "", err
+	}
+
+	// Check for existing mapping
+	mapping, err := s.GetExternalRefMappingByRef(ref)
+	if err != nil {
+		return "", fmt.Errorf("failed to look up external ref: %w", err)
+	}
+	if mapping != nil {
+		return mapping.ThreadID, nil
+	}
+
+	// No mapping — parse the ref
+	extRef, err := beads.ParseExternalRef(ref)
+	if err != nil {
+		return "", err
+	}
+
+	// For Linear refs, try to fetch issue details
+	if extRef.System == "linear" {
+		return resolveLinearRef(s, extRef)
+	}
+
+	// For other systems, create thread with the ref as title
+	return createThreadForExternalRef(s, extRef, extRef.ID)
+}
+
+// resolveLinearRef creates a thread linked to a Linear issue,
+// fetching the issue title if a Linear CLI is available.
+func resolveLinearRef(s *store.Store, extRef *beads.ExternalRef) (string, error) {
+	// Load config for adapter detection
+	configTool, _ := s.GetConfig("linear.cli_tool")
+	configPath, _ := s.GetConfig("linear.cli_path")
+	apiKey, _ := s.GetConfig("linear.api_key")
+
+	adapter, err := linear.Detect(configTool, configPath, apiKey)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Linear CLI not available (%v). Creating thread without issue details.\n", err)
+		return createThreadForExternalRef(s, extRef, extRef.ID)
+	}
+
+	issue, err := adapter.ViewIssue(extRef.ID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Could not fetch Linear issue %s: %v\n", extRef.ID, err)
+		return createThreadForExternalRef(s, extRef, extRef.ID)
+	}
+
+	title := fmt.Sprintf("%s: %s", issue.ID, issue.Title)
+	return createThreadForExternalRef(s, extRef, title)
+}
+
+// createThreadForExternalRef creates a new thread and maps it to the external ref.
+func createThreadForExternalRef(s *store.Store, extRef *beads.ExternalRef, title string) (string, error) {
+	thread := types.NewThread(title)
+	if err := s.CreateThread(thread); err != nil {
+		return "", fmt.Errorf("failed to create thread: %w", err)
+	}
+
+	now := time.Now()
+	mapping := &store.ExternalRefMapping{
+		ExternalRef: extRef.Raw,
+		ThreadID:    thread.ID,
+		System:      extRef.System,
+		ExternalID:  extRef.ID,
+		Metadata:    "{}",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	if err := s.CreateExternalRefMapping(mapping); err != nil {
+		return "", fmt.Errorf("failed to save external ref mapping: %w", err)
+	}
+
+	fmt.Printf("Created thread %s linked to %s\n", thread.ID, beads.FormatExternalRef(extRef))
+	return thread.ID, nil
 }
 
 func init() {
