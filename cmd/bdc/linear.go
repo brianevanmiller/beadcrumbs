@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -10,6 +11,22 @@ import (
 	"github.com/brianevanmiller/beadcrumbs/internal/store"
 	"github.com/spf13/cobra"
 )
+
+// getLinearConfig reads Linear configuration with env var override.
+// Precedence: BDC_LINEAR_API_KEY > LINEAR_API_KEY (env) > linear.api_key (config)
+func getLinearConfig(s *store.Store) (configTool, configPath, apiKey string) {
+	configTool, _ = s.GetConfig("linear.cli_tool")
+	configPath, _ = s.GetConfig("linear.cli_path")
+	apiKey, _ = s.GetConfig("linear.api_key")
+
+	if envKey := os.Getenv("LINEAR_API_KEY"); envKey != "" {
+		apiKey = envKey
+	}
+	if envKey := os.Getenv("BDC_LINEAR_API_KEY"); envKey != "" {
+		apiKey = envKey
+	}
+	return
+}
 
 var linearCmd = &cobra.Command{
 	Use:   "linear",
@@ -77,9 +94,7 @@ var linearStatusCmd = &cobra.Command{
 		defer closeStore()
 
 		// Show config
-		configTool, _ := s.GetConfig("linear.cli_tool")
-		configPath, _ := s.GetConfig("linear.cli_path")
-		apiKey, _ := s.GetConfig("linear.api_key")
+		configTool, configPath, apiKey := getLinearConfig(s)
 		autoPush, _ := s.GetConfig("linear.auto_push")
 
 		fmt.Println("Linear Integration Status")
@@ -95,7 +110,17 @@ var linearStatusCmd = &cobra.Command{
 			fmt.Printf("Binary path: %s\n", configPath)
 		}
 		if apiKey != "" {
-			fmt.Printf("API key: %s...%s\n", apiKey[:8], apiKey[len(apiKey)-4:])
+			source := "config"
+			if os.Getenv("BDC_LINEAR_API_KEY") != "" {
+				source = "BDC_LINEAR_API_KEY env"
+			} else if os.Getenv("LINEAR_API_KEY") != "" {
+				source = "LINEAR_API_KEY env"
+			}
+			if len(apiKey) > 12 {
+				fmt.Printf("API key: %s...%s (%s)\n", apiKey[:8], apiKey[len(apiKey)-4:], source)
+			} else {
+				fmt.Printf("API key: (set, %s)\n", source)
+			}
 		}
 		if autoPush == "false" {
 			fmt.Println("Auto-push on close: disabled")
@@ -207,9 +232,7 @@ var linearPushCmd = &cobra.Command{
 			return fmt.Errorf("thread %s is not linked to a Linear issue", threadID)
 		}
 
-		configTool, _ := s.GetConfig("linear.cli_tool")
-		configPath, _ := s.GetConfig("linear.cli_path")
-		apiKey, _ := s.GetConfig("linear.api_key")
+		configTool, configPath, apiKey := getLinearConfig(s)
 
 		adapter, err := linear.Detect(configTool, configPath, apiKey)
 		if err != nil {
@@ -303,7 +326,14 @@ Keys:
   cli_tool    Which CLI adapter to use (schpet, finesssee, linearis)
   cli_path    Override binary path (skips detection)
   api_key     API key passed as LINEAR_API_KEY env var to the CLI
-  auto_push   Post summary comment on thread close (true/false)`,
+  auto_push   Post summary comment on thread close (true/false)
+
+API key precedence (highest wins):
+  1. BDC_LINEAR_API_KEY env var
+  2. LINEAR_API_KEY env var
+  3. linear.api_key config (this command)
+
+Config is per-repository. Each project can have its own API key.`,
 	Args: cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		s, err := getStore()
