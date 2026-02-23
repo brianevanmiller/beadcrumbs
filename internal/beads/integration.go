@@ -30,7 +30,7 @@ var (
 	notionPattern = regexp.MustCompile(`^notion:([a-f0-9-]+)$`)
 
 	// bead:abc1 (canonical bead external ref format)
-	beadPattern = regexp.MustCompile(`^bead:(.+)$`)
+	beadPattern = regexp.MustCompile(`^bead:([\w-]+)$`)
 )
 
 // BeadsPresent checks if a .beads/ directory exists in the current directory

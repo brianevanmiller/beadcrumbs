@@ -114,6 +114,9 @@ func linkThreadToLinear(s *store.Store, thread *types.InsightThread, linearRef s
 
 // linkThreadToBead links a thread to a bead via an external ref mapping.
 func linkThreadToBead(s *store.Store, thread *types.InsightThread, beadRef string) error {
+	if !beads.IsBeadID(beadRef) {
+		return fmt.Errorf("invalid bead reference: %s (expected bd-xxx or bead-xxx)", beadRef)
+	}
 	ref := beads.BeadIDToExternalRef(beadRef)
 
 	extRef, err := beads.ParseExternalRef(ref)
