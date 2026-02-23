@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -27,8 +29,13 @@ Use --export to dump the default content for customization.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		bcDir := findBeadcrumbsDir()
 		if bcDir == "" {
-			// Not in a beadcrumbs project -- silent exit
-			// CRITICAL: No stderr output, exit 0
+			// Not in a beadcrumbs project -- but check if repo tracks
+			// beadcrumbs files (cloned repo that needs local init)
+			if repoTracksBeadcrumbs() {
+				fmt.Fprintln(os.Stderr, "# bdc: This project uses beadcrumbs but is not initialized locally.")
+				fmt.Fprintln(os.Stderr, "# Run: bdc init (then bdc setup claude if hooks are not configured)")
+				fmt.Fprintln(os.Stderr, "# See BDC_GUIDE.md for full setup instructions.")
+			}
 			os.Exit(0)
 		}
 
@@ -44,6 +51,17 @@ Use --export to dump the default content for customization.`,
 		// Output default workflow context
 		outputPrimeContext(os.Stdout)
 	},
+}
+
+// repoTracksBeadcrumbs checks if the current git repo tracks .beadcrumbs/ files.
+// This detects cloned repos that use beadcrumbs but haven't been initialized locally.
+func repoTracksBeadcrumbs() bool {
+	cmd := exec.Command("git", "ls-tree", "-r", "--name-only", "HEAD", ".beadcrumbs/")
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return len(strings.TrimSpace(string(output))) > 0
 }
 
 // findBeadcrumbsDir checks for .beadcrumbs/ in the current directory.

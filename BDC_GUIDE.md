@@ -8,6 +8,68 @@ Use bdc to capture the *reasoning* behind work — not the work itself (that's w
 
 ---
 
+## Prerequisites (Auto-Setup for AI Agents)
+
+Before using any `bdc` command, check if bdc is installed and initialized in this project:
+
+```bash
+command -v bdc >/dev/null 2>&1 && test -d .beadcrumbs && echo "bdc ready" || echo "bdc not ready"
+```
+
+If **bdc ready**, skip to the next section. If **bdc not ready**, follow these steps. Do NOT skip this. Do NOT repeatedly attempt bdc commands that fail — bootstrap once, then proceed.
+
+### Step 1: Install the bdc binary
+
+Try each method in order. Stop at the first success:
+
+```bash
+# Method A: Install script (preferred)
+curl -fsSL https://raw.githubusercontent.com/brianevanmiller/beadcrumbs/main/scripts/install.sh | bash
+
+# Method B: npm (if curl fails)
+npm install -g @beadcrumbs/bdc
+
+# Method C: Go install (if Go is available)
+go install github.com/brianevanmiller/beadcrumbs/cmd/bdc@latest
+```
+
+Verify installation: `command -v bdc && bdc --help | head -3`
+
+If all methods fail, inform the user they need Go installed (`brew install go` on macOS) and retry.
+
+### Step 2: Initialize the project
+
+**Ask the user** which mode they prefer before proceeding. Do not assume.
+
+- **Team mode** (`bdc init`): Tracks `.beadcrumbs/` JSONL files in git so other contributors can see reasoning history. Installs git hooks for auto-sync. Choose this if the team wants shared insight tracking.
+- **Local-only / stealth mode** (`bdc init --stealth`): Keeps beadcrumbs data local via `.git/info/exclude`. No git hooks installed. No changes to `.gitignore`. Choose this for personal use without affecting the repo.
+
+### Step 3: Import existing data (cloned repos only)
+
+If this repo already has beadcrumbs JSONL files tracked in git, import them to rebuild the local database:
+
+```bash
+test -f .beadcrumbs/insights.jsonl && bdc import
+```
+
+### Step 4: Configure Claude Code hooks
+
+```bash
+bdc setup claude
+```
+
+This registers `bdc prime` as a SessionStart and PreCompact hook so beadcrumbs context is automatically available in future sessions.
+
+### Step 5: Verify
+
+```bash
+bdc prime | head -3
+```
+
+You should see the "Beadcrumbs Insight Tracker Active" header. Setup is complete.
+
+---
+
 ## Insight Tracking with bdc (beadcrumbs)
 
 **IMPORTANT**: This project uses **bdc (beadcrumbs)** to track reasoning and understanding. bd tracks *what* you're doing; bdc tracks *why*.
