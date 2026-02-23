@@ -93,6 +93,7 @@ func outputPrimeContext(w io.Writer) {
 **Session start:**
 ` + "```bash" + `
 bdc thread new "Brief description of this session's goal"
+bdc origin set claude:<session-id>
 bdc capture --thread <ref> --hypothesis "Initial approach" --author cc:<model>
 ` + "```" + `
 
@@ -109,6 +110,7 @@ bdc capture --thread <ref> --decision "Committed to approach" --author cc:<model
 **Session end:**
 ` + "```bash" + `
 bdc capture --thread <ref> --decision "Final outcome summary" --author cc:<model>
+bdc origin clear
 bdc thread close <thread-id>
 ` + "```" + `
 
@@ -137,15 +139,25 @@ bdc questions --unresolved
 - ` + "`bdc thread list --status=active`" + ` - See open threads
 - ` + "`bdc thread close <id>`" + ` - Conclude a thread
 
+### Origin Tracking
+- ` + "`bdc origin set <system:id>`" + ` - Set origin for this session
+- ` + "`bdc origin show`" + ` - Show current origin
+- ` + "`bdc origin clear`" + ` - Clear origin
+- ` + "`bdc origins`" + ` - List all origins with counts
+
 ### Capturing
 - ` + "`bdc capture --thread <ref> --<type> \"...\" --author cc:<model>`" + `
+- ` + "`bdc capture --origin <system:id> --<type> \"...\" --thread <ref>`" + ` - Explicit origin
 - Thread ref accepts: thread ID (thr-xxx), bead ID (bd-xxx), or external ref (linear:ENG-456, jira:PROJ-123, gh:42)
+- Origin resolves: --origin flag > BDC_ORIGIN env > .beadcrumbs/origin file
 
 ### Viewing
 - ` + "`bdc timeline [thread-id]`" + ` - Chronological view
 - ` + "`bdc decisions [thread-id]`" + ` - Filter to decisions only
 - ` + "`bdc questions --unresolved`" + ` - Open questions needing answers
 - ` + "`bdc list --thread=<id> --type=<type>`" + ` - Filtered insight list
+- ` + "`bdc timeline --origin <system:id>`" + ` - Filter by origin
+- ` + "`bdc list --origin <system:id>`" + ` - Filter by origin
 
 ### Beads Integration
 - ` + "`bdc link <id> --spawns=<bead-id>`" + ` - Link insight to task it spawned

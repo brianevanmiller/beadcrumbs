@@ -60,7 +60,7 @@ func TestStoreBasic(t *testing.T) {
 	}
 
 	// Test listing insights
-	insights, err := s.ListInsights(thread.ID, "", time.Time{})
+	insights, err := s.ListInsights(thread.ID, "", time.Time{}, "")
 	if err != nil {
 		t.Fatalf("Failed to list insights: %v", err)
 	}

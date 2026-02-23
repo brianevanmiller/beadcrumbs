@@ -18,9 +18,12 @@ Track reasoning and decision evolution across sessions using bdc (beadcrumbs).
 
 ### Phase 1: Session Start
 
-Open a thread and capture initial intent. Do this BEFORE writing code.
+Open a thread, set origin, and capture initial intent. Do this BEFORE writing code.
 
 ```bash
+# Set origin to identify this session's insights
+bdc origin set claude:<session-id>
+
 # Check for existing active threads (may be resuming)
 bdc thread list --status=active
 
@@ -126,6 +129,9 @@ bdc capture --thread <ref> \
 # Link to Beads if a task was spawned during this work
 bdc link ins-xxxx --spawns=bd-abc1
 
+# Clear origin before ending session
+bdc origin clear
+
 # Close the thread
 bdc thread close thr-xxxx
 ```
@@ -161,11 +167,15 @@ At merge, the JSONL files auto-stage with each commit, so `.beadcrumbs/` data ri
 When resuming work in a new session on the same branch:
 
 ```bash
+# Set origin for the new session
+bdc origin set claude:<new-session-id>
+
 # Find active threads
 bdc thread list --status=active
 
-# Review prior reasoning
+# Review prior reasoning (optionally filter by prior session's origin)
 bdc timeline thr-xxxx
+bdc timeline --origin claude:<old-session-id>
 
 # Check for unresolved questions
 bdc questions --unresolved
@@ -197,9 +207,11 @@ bdc capture --thread <ref> \
 
 ```bash
 # Session lifecycle
+bdc origin set claude:<session-id>                   # Set origin at start
 bdc thread list --status=active                     # Check for prior work
 bdc capture --thread <ref> --<type> "..." --author cc:<model>  # During
-bdc thread close <id>                               # End
+bdc origin clear                                     # Clear origin at end
+bdc thread close <id>                               # Close thread
 
 # Thread references (prefer in this order)
 --thread linear:ENG-456                             # External tracker

@@ -146,8 +146,11 @@ Thread-level links (via `--thread`, `--linear`, `--bead`, or `bdc thread link`) 
 
 ### Workflow for AI Agents
 
-1. **Session start**: Open a thread and capture initial intent
+1. **Session start**: Open a thread, set origin, and capture initial intent
    ```bash
+   # Set origin to identify this session's insights
+   bdc origin set claude:<session-id>
+
    # Option A: auto-create thread from tracker ref (recommended for Linear users)
    bdc capture --thread linear:ENG-456 --hypothesis "Redis might be overkill, in-memory LRU could suffice" --author cc:opus-4.6
 
@@ -181,9 +184,10 @@ Thread-level links (via `--thread`, `--linear`, `--bead`, or `bdc thread link`) 
    bdc capture --thread <ref> --decision "Using Redis with 1-hour TTL and pub/sub invalidation" --author cc:opus-4.6
    ```
 
-3. **Session end / PR creation**: Capture outcome and close thread
+3. **Session end / PR creation**: Capture outcome, clear origin, and close thread
    ```bash
    bdc capture --thread <ref> --decision "PR #42 implements Redis caching with pub/sub invalidation" --author cc:opus-4.6
+   bdc origin clear
    bdc thread close <thread-id>
    ```
 
@@ -193,11 +197,15 @@ Thread-level links (via `--thread`, `--linear`, `--bead`, or `bdc thread link`) 
 
 5. **Cross-session resumption**: When resuming work in a new session
    ```bash
+   # Set origin for the new session
+   bdc origin set claude:<new-session-id>
+
    # Find active threads
    bdc thread list --status=active
 
-   # Review prior reasoning
+   # Review prior reasoning (optionally filter by prior session's origin)
    bdc timeline <thread-id>
+   bdc timeline --origin claude:<old-session-id>
 
    # Check for unresolved questions
    bdc questions --unresolved
@@ -268,16 +276,25 @@ bdc thread new "<title>"                    # Start a narrative thread
 bdc thread list --status=active             # See open threads
 bdc thread close <id>                       # Conclude a thread
 
+# Origin tracking
+bdc origin set <system:id>                  # Set origin for this session
+bdc origin show                             # Show current origin
+bdc origin clear                            # Clear origin
+bdc origins                                 # List all origins with counts
+
 # Capturing insights
 bdc capture --thread <ref> --<type> "..."   # Record an insight
 bdc capture --thread <ref> --hypothesis "..." --author cc:opus-4.6
 bdc capture --thread <ref> --decision "..." --author brian
+bdc capture --origin <system:id> --<type> "..."  # Explicit origin on single capture
 
 # Viewing
 bdc timeline [thread-id]                    # Chronological view
+bdc timeline --origin <system:id>           # Filter by origin
 bdc decisions [thread-id]                   # Filter to decisions only
 bdc pivots [thread-id]                      # Filter to pivots only
 bdc questions --unresolved                  # Open questions needing answers
+bdc list --origin <system:id>               # Filter by origin
 
 # Linking to beads
 bdc link <id> --spawns=<bead-id>            # Link insight to task (dependency)

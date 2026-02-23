@@ -25,6 +25,7 @@ var (
 	captureTimestamp  string
 	captureAuthor     string
 	captureEndorsedBy []string
+	captureOrigin     string
 )
 
 var captureCmd = &cobra.Command{
@@ -41,7 +42,8 @@ context. It accepts:
 Examples:
   bdc capture --thread bd-a1b2 --decision "We'll use Redis for caching"
   bdc capture --thread linear:ENG-456 --pivot "Need to rethink the data model"
-  bdc capture --hypothesis "The bug might be in the auth middleware" --author cc:opus-4.6`,
+  bdc capture --hypothesis "The bug might be in the auth middleware" --author cc:opus-4.6
+  bdc capture --origin claude:sess_abc123 --discovery "Found root cause" --thread thr-xxx`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		content := args[0]
@@ -96,6 +98,16 @@ Examples:
 			insight.CreatedBy = captureAuthor // Legacy field
 		}
 
+		// Resolve origin: --origin flag > BDC_ORIGIN env > .beadcrumbs/origin file
+		origin := resolveOrigin(cmd)
+		if origin != "" {
+			insight.Source.Ref = origin
+			insight.Source.Type = inferSourceType(origin, captureAuthor)
+		} else if strings.HasPrefix(captureAuthor, "cc:") {
+			// Author-based source_type: cc:* implies ai-session
+			insight.Source.Type = "ai-session"
+		}
+
 		if err := s.CreateInsight(insight); err != nil {
 			return fmt.Errorf("failed to save insight: %w", err)
 		}
@@ -109,6 +121,9 @@ Examples:
 		}
 		if len(insight.EndorsedBy) > 0 {
 			fmt.Printf("  Endorsed by: %s\n", strings.Join(insight.EndorsedBy, ", "))
+		}
+		if insight.Source.Ref != "" {
+			fmt.Printf("  Origin: %s (%s)\n", insight.Source.Ref, insight.Source.Type)
 		}
 		return nil
 	},
@@ -353,4 +368,35 @@ func init() {
 	captureCmd.Flags().StringVar(&captureTimestamp, "timestamp", "", "when the insight occurred (RFC3339, date, or relative like '2h ago')")
 	captureCmd.Flags().StringVar(&captureAuthor, "author", "", "who captured this insight (e.g., 'brian', 'cc:opus-4.6')")
 	captureCmd.Flags().StringSliceVar(&captureEndorsedBy, "endorsed-by", nil, "who endorsed this insight (repeatable)")
+	captureCmd.Flags().StringVar(&captureOrigin, "origin", "", "origin identifier (e.g., 'claude:sess_abc123', 'notion:page-id')")
+}
+
+// resolveOrigin resolves the origin value from flag > env > file.
+// If --origin was explicitly passed (even as empty string), that takes precedence.
+func resolveOrigin(cmd *cobra.Command) string {
+	if cmd.Flags().Changed("origin") {
+		return strings.TrimSpace(captureOrigin)
+	}
+	if envOrigin := os.Getenv("BDC_ORIGIN"); envOrigin != "" {
+		return strings.TrimSpace(envOrigin)
+	}
+	return readOriginFile()
+}
+
+// inferSourceType determines the source type based on origin prefix and author.
+// AI tool prefixes map to "ai-session", everything else defaults to "human".
+func inferSourceType(origin, author string) string {
+	aiPrefixes := []string{
+		"claude:", "cursor:", "codex:", "warp:", "gemini:", "zed:", "opencode:",
+	}
+	for _, prefix := range aiPrefixes {
+		if strings.HasPrefix(origin, prefix) {
+			return "ai-session"
+		}
+	}
+	// Author-based fallback: cc:* implies ai-session
+	if strings.HasPrefix(author, "cc:") {
+		return "ai-session"
+	}
+	return "human"
 }

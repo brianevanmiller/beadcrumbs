@@ -278,6 +278,8 @@ func addGitignoreEntries() error {
 .beadcrumbs/beadcrumbs.db-journal
 .beadcrumbs/beadcrumbs.db-wal
 .beadcrumbs/beadcrumbs.db-shm
+# Beadcrumbs origin file (session-local, not for version control)
+.beadcrumbs/origin
 `
 
 	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)

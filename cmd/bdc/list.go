@@ -13,6 +13,7 @@ var (
 	listType     string
 	listSince    string
 	listAuthor   string
+	listOrigin   string
 )
 
 var listCmd = &cobra.Command{
@@ -79,7 +80,7 @@ Examples:
 			}
 			insights = filtered
 		} else {
-			insights, err = s.ListInsights(listThreadID, insightType, sinceTime)
+			insights, err = s.ListInsights(listThreadID, insightType, sinceTime, listOrigin)
 			if err != nil {
 				return fmt.Errorf("failed to get insights: %w", err)
 			}
@@ -180,4 +181,5 @@ func init() {
 	listCmd.Flags().StringVar(&listType, "type", "", "filter by insight type")
 	listCmd.Flags().StringVar(&listSince, "since", "", "show insights since (e.g., 1w, 2d, 3h)")
 	listCmd.Flags().StringVar(&listAuthor, "author", "", "filter by author (exact match)")
+	listCmd.Flags().StringVar(&listOrigin, "origin", "", "filter by origin (exact match)")
 }

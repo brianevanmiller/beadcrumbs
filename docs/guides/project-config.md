@@ -81,6 +81,57 @@ bdc trace bd-abc1
 bdc spawn ins-7f2a --title="Add retry logic for batch insert failures"
 ```
 
+## Origin Conventions
+
+Origins identify *where* insights came from — which AI session, Notion doc, Slack thread, or other external context produced them. This enables "session reload" (finding all insights from a given session) and cross-session traceability.
+
+### Naming Format
+
+Origins follow a `system:identifier` convention:
+
+| System | Example Origin | Source Type |
+|--------|---------------|-------------|
+| Claude session | `claude:sess_abc123` | `ai-session` |
+| Cursor session | `cursor:workspace-id` | `ai-session` |
+| Codex session | `codex:run-456` | `ai-session` |
+| Warp terminal | `warp:session-789` | `ai-session` |
+| Gemini session | `gemini:conv-xyz` | `ai-session` |
+| Zed session | `zed:workspace-id` | `ai-session` |
+| OpenCode session | `opencode:sess-abc` | `ai-session` |
+| Notion page | `notion:page-xyz` | `human` |
+| Slack thread | `slack:C0123-1234567` | `human` |
+| Basecamp card | `basecamp:12345` | `human` |
+
+### Context File vs Explicit Flag
+
+**Context file** (`bdc origin set`) — best for session-scoped origins that apply to all captures in a session:
+
+```bash
+bdc origin set claude:sess_abc123
+# All subsequent captures auto-populate origin
+bdc capture --thread <ref> --hypothesis "..." --author cc:opus-4.6
+```
+
+**Explicit flag** (`--origin`) — best for one-off captures from a specific external source:
+
+```bash
+bdc capture --thread <ref> --origin notion:page-xyz \
+  --feedback "Design spec updated with new requirements" --author brian
+```
+
+**Resolution precedence**: `--origin` flag > `BDC_ORIGIN` env var > `.beadcrumbs/origin` file
+
+### Querying by Origin
+
+```bash
+# Find all insights from a specific session
+bdc list --origin claude:sess_abc123
+bdc timeline --origin claude:sess_abc123
+
+# Discover all origins with counts
+bdc origins
+```
+
 ## When bdc Adds Value vs Noise
 
 ### Capture (worth the overhead)

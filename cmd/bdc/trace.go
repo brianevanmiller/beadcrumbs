@@ -50,7 +50,7 @@ func runTrace(cmd *cobra.Command, args []string) error {
 
 	// Find insights that spawn this bead
 	// We need to search all dependencies for ones that point to this bead
-	allInsights, err := s.ListInsights("", "", time.Time{})
+	allInsights, err := s.ListInsights("", "", time.Time{}, "")
 	if err != nil {
 		return fmt.Errorf("failed to list insights: %w", err)
 	}
@@ -81,7 +81,7 @@ func runTrace(cmd *cobra.Command, args []string) error {
 
 	var threadInsights []*types.Insight
 	if mapping != nil {
-		threadInsights, _ = s.ListInsights(mapping.ThreadID, "", time.Time{})
+		threadInsights, _ = s.ListInsights(mapping.ThreadID, "", time.Time{}, "")
 	}
 
 	if len(spawningInsights) == 0 && len(threadInsights) == 0 {

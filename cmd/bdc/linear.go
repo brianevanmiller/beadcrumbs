@@ -239,7 +239,7 @@ var linearPushCmd = &cobra.Command{
 			return fmt.Errorf("linear CLI not available: %w", err)
 		}
 
-		insights, err := s.ListInsights(threadID, "", time.Time{})
+		insights, err := s.ListInsights(threadID, "", time.Time{}, "")
 		if err != nil {
 			return fmt.Errorf("failed to get insights: %w", err)
 		}
