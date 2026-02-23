@@ -8,49 +8,49 @@ import (
 )
 
 // ----------------------------------------------------------------------------
-// parseSlackTimestamp
+// ParseSlackTimestamp
 // ----------------------------------------------------------------------------
 
 func TestParseSlackTimestamp(t *testing.T) {
 	t.Run("valid epoch.micro format", func(t *testing.T) {
 		// 1609459200 = 2021-01-01 00:00:00 UTC
-		ts := parseSlackTimestamp("1609459200.000100")
+		ts := ParseSlackTimestamp("1609459200.000100")
 		want := time.Unix(1609459200, 0)
 		if !ts.Equal(want) {
-			t.Errorf("parseSlackTimestamp(\"1609459200.000100\") = %v, want %v", ts, want)
+			t.Errorf("ParseSlackTimestamp(\"1609459200.000100\") = %v, want %v", ts, want)
 		}
 	})
 
 	t.Run("empty string falls back to current time", func(t *testing.T) {
 		before := time.Now()
-		ts := parseSlackTimestamp("")
+		ts := ParseSlackTimestamp("")
 		after := time.Now()
 		if ts.Before(before) || ts.After(after) {
-			t.Errorf("parseSlackTimestamp(\"\") = %v, not within [%v, %v]", ts, before, after)
+			t.Errorf("ParseSlackTimestamp(\"\") = %v, not within [%v, %v]", ts, before, after)
 		}
 	})
 
 	t.Run("invalid string falls back to current time", func(t *testing.T) {
 		before := time.Now()
-		ts := parseSlackTimestamp("invalid")
+		ts := ParseSlackTimestamp("invalid")
 		after := time.Now()
 		if ts.Before(before) || ts.After(after) {
-			t.Errorf("parseSlackTimestamp(\"invalid\") = %v, not within [%v, %v]", ts, before, after)
+			t.Errorf("ParseSlackTimestamp(\"invalid\") = %v, not within [%v, %v]", ts, before, after)
 		}
 	})
 
 	t.Run("epoch only without dot falls back correctly", func(t *testing.T) {
 		// Just an epoch with no "." — parts[0] is the whole string, should parse fine
-		ts := parseSlackTimestamp("1609459200")
+		ts := ParseSlackTimestamp("1609459200")
 		want := time.Unix(1609459200, 0)
 		if !ts.Equal(want) {
-			t.Errorf("parseSlackTimestamp(\"1609459200\") = %v, want %v", ts, want)
+			t.Errorf("ParseSlackTimestamp(\"1609459200\") = %v, want %v", ts, want)
 		}
 	})
 }
 
 // ----------------------------------------------------------------------------
-// isSlackNoise
+// IsSlackNoise
 // ----------------------------------------------------------------------------
 
 func TestIsSlackNoise(t *testing.T) {
@@ -92,9 +92,9 @@ func TestIsSlackNoise(t *testing.T) {
 
 	for _, tc := range noiseTests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := isSlackNoise(tc.text)
+			got := IsSlackNoise(tc.text)
 			if got != tc.noise {
-				t.Errorf("isSlackNoise(%q) = %v, want %v", tc.text, got, tc.noise)
+				t.Errorf("IsSlackNoise(%q) = %v, want %v", tc.text, got, tc.noise)
 			}
 		})
 	}

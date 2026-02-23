@@ -29,6 +29,9 @@ var (
 	// notion:page-id
 	notionPattern = regexp.MustCompile(`^notion:([a-f0-9-]+)$`)
 
+	// slack:C0123456 (channel ID) or slack:#channel-name
+	slackPattern = regexp.MustCompile(`^slack:(?:#?([\w-]+)|([A-Z][A-Z0-9]+))$`)
+
 	// bead:abc1 (canonical bead external ref format)
 	beadPattern = regexp.MustCompile(`^bead:([\w-]+)$`)
 )
@@ -150,6 +153,18 @@ func ParseExternalRef(ref string) (*ExternalRef, error) {
 		}, nil
 	}
 
+	if matches := slackPattern.FindStringSubmatch(ref); matches != nil {
+		id := matches[1]
+		if id == "" {
+			id = matches[2]
+		}
+		return &ExternalRef{
+			System: "slack",
+			ID:     id,
+			Raw:    ref,
+		}, nil
+	}
+
 	if matches := beadPattern.FindStringSubmatch(ref); matches != nil {
 		return &ExternalRef{
 			System: "bead",
@@ -191,6 +206,8 @@ func FormatExternalRef(ref *ExternalRef) string {
 		return "Jira: " + ref.ID
 	case "notion":
 		return "Notion: " + ref.ID
+	case "slack":
+		return "Slack: " + ref.ID
 	case "bead":
 		return "Bead: bd-" + ref.ID
 	default:

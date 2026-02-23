@@ -85,21 +85,21 @@ func messagesToInsights(messages []SlackMessage) ([]*types.Insight, error) {
 		}
 
 		// Skip common noise
-		if isSlackNoise(text) {
+		if IsSlackNoise(text) {
 			continue
 		}
 
 		// Parse timestamp
-		ts := parseSlackTimestamp(msg.Timestamp)
+		ts := ParseSlackTimestamp(msg.Timestamp)
 
 		// Detect insight type
-		insightType := detectInsightType(text)
+		insightType := DetectInsightType(text)
 
 		insight := &types.Insight{
 			ID:         types.GenerateID("ins"),
 			Timestamp:  ts,
 			Content:    text,
-			Summary:    truncate(text, 80),
+			Summary:    Truncate(text, 80),
 			Type:       insightType,
 			Confidence: 0.6, // Lower confidence for Slack (more noise)
 			Source: types.InsightSource{
@@ -116,8 +116,8 @@ func messagesToInsights(messages []SlackMessage) ([]*types.Insight, error) {
 	return insights, nil
 }
 
-// parseSlackTimestamp converts Slack's "epoch.micro" format to time.Time.
-func parseSlackTimestamp(ts string) time.Time {
+// ParseSlackTimestamp converts Slack's "epoch.micro" format to time.Time.
+func ParseSlackTimestamp(ts string) time.Time {
 	parts := strings.Split(ts, ".")
 	if len(parts) == 0 {
 		return time.Now()
@@ -131,8 +131,8 @@ func parseSlackTimestamp(ts string) time.Time {
 	return time.Unix(epoch, 0)
 }
 
-// isSlackNoise detects common Slack messages that aren't substantive.
-func isSlackNoise(text string) bool {
+// IsSlackNoise detects common Slack messages that aren't substantive.
+func IsSlackNoise(text string) bool {
 	lower := strings.ToLower(strings.TrimSpace(text))
 
 	noisePatterns := []string{

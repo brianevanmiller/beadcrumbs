@@ -9,7 +9,7 @@ import (
 )
 
 // ----------------------------------------------------------------------------
-// detectInsightType
+// DetectInsightType
 // ----------------------------------------------------------------------------
 
 func TestDetectInsightType(t *testing.T) {
@@ -97,16 +97,16 @@ func TestDetectInsightType(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := detectInsightType(tc.text)
+			got := DetectInsightType(tc.text)
 			if got != tc.wantType {
-				t.Errorf("detectInsightType(%q) = %q, want %q", tc.text, got, tc.wantType)
+				t.Errorf("DetectInsightType(%q) = %q, want %q", tc.text, got, tc.wantType)
 			}
 		})
 	}
 }
 
 // ----------------------------------------------------------------------------
-// truncate
+// Truncate
 // ----------------------------------------------------------------------------
 
 func TestTruncate(t *testing.T) {
@@ -150,13 +150,13 @@ func TestTruncate(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := truncate(tc.input, tc.maxLen)
+			got := Truncate(tc.input, tc.maxLen)
 			if got != tc.want {
-				t.Errorf("truncate(%q, %d) = %q, want %q", tc.input, tc.maxLen, got, tc.want)
+				t.Errorf("Truncate(%q, %d) = %q, want %q", tc.input, tc.maxLen, got, tc.want)
 			}
 			// Result must never exceed maxLen
 			if len(got) > tc.maxLen {
-				t.Errorf("truncate result length %d exceeds maxLen %d", len(got), tc.maxLen)
+				t.Errorf("Truncate result length %d exceeds maxLen %d", len(got), tc.maxLen)
 			}
 		})
 	}

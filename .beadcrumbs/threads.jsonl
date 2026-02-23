@@ -1,8 +1,0 @@
-{"id":"thr-6dcd","title":"Design and implement origin tracking for beadcrumbs","status":"concluded","created_at":"2026-02-23T10:11:29.238315+02:00","updated_at":"2026-02-23T11:03:29.394983+02:00"}
-{"id":"thr-a9ec","title":"Auto-bootstrap prerequisites for AI agents","status":"concluded","created_at":"2026-02-23T09:10:56.829073+02:00","updated_at":"2026-02-23T09:11:22.296842+02:00"}
-{"id":"thr-f4ae","title":"Multi-system thread linking (bead + Linear + others)","status":"concluded","created_at":"2026-02-23T09:07:23.851503+02:00","updated_at":"2026-02-23T09:07:51.689667+02:00"}
-{"id":"thr-7b4e","title":"Slack integration and generic import for beadcrumbs","status":"concluded","created_at":"2026-02-22T16:18:23.635421+02:00","updated_at":"2026-02-22T16:18:28.456733+02:00"}
-{"id":"thr-1781","title":"Document bdc Linear integration across OSS and project docs","status":"concluded","created_at":"2026-02-22T16:14:18.893039+02:00","updated_at":"2026-02-22T16:14:45.695089+02:00"}
-{"id":"thr-16ec","title":"Multi-project Linear workspace support","status":"concluded","created_at":"2026-02-22T16:13:10.201268+02:00","updated_at":"2026-02-22T16:13:21.185108+02:00"}
-{"id":"thr-c2c1","title":"Design and implement bi-directional Linear integration for bdc","status":"concluded","created_at":"2026-02-22T16:12:52.955972+02:00","updated_at":"2026-02-22T16:13:10.188405+02:00"}
-{"id":"thr-6fee","title":"Port bdc docs, hooks, and scripts to open source repo","status":"concluded","created_at":"2026-02-22T16:08:02.151249+02:00","updated_at":"2026-02-22T16:08:02.311216+02:00"}
