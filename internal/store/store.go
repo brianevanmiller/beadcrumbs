@@ -906,7 +906,7 @@ type OriginSummary struct {
 func (s *Store) ListOrigins() ([]*OriginSummary, error) {
 	rows, err := s.db.Query(`
 		SELECT source_ref, COUNT(*) as count,
-		       GROUP_CONCAT(DISTINCT thread_id) as threads,
+		       GROUP_CONCAT(DISTINCT NULLIF(thread_id, '')) as threads,
 		       MAX(timestamp) as last_activity
 		FROM insights
 		WHERE source_ref IS NOT NULL AND source_ref != ''
@@ -922,11 +922,21 @@ func (s *Store) ListOrigins() ([]*OriginSummary, error) {
 	for rows.Next() {
 		var o OriginSummary
 		var threads sql.NullString
-		if err := rows.Scan(&o.SourceRef, &o.InsightCount, &threads, &o.LastActivity); err != nil {
+		var lastActivity string
+		if err := rows.Scan(&o.SourceRef, &o.InsightCount, &threads, &lastActivity); err != nil {
 			return nil, fmt.Errorf("failed to scan origin: %w", err)
 		}
 		if threads.Valid {
 			o.ThreadIDs = threads.String
+		}
+		if t, err := time.Parse(time.RFC3339Nano, lastActivity); err == nil {
+			o.LastActivity = t
+		} else if t, err := time.Parse(time.RFC3339, lastActivity); err == nil {
+			o.LastActivity = t
+		} else if t, err := time.Parse("2006-01-02T15:04:05Z", lastActivity); err == nil {
+			o.LastActivity = t
+		} else if t, err := time.Parse("2006-01-02 15:04:05", lastActivity); err == nil {
+			o.LastActivity = t
 		}
 		origins = append(origins, &o)
 	}
