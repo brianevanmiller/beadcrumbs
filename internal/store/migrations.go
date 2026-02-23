@@ -3,6 +3,10 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
+	"time"
+
+	"github.com/brianevanmiller/beadcrumbs/internal/types"
 )
 
 // Migration represents a single database migration.
@@ -18,6 +22,8 @@ var migrationsList = []Migration{
 	{"003_insights_endorsed_by", migrateInsightsEndorsedBy},
 	{"004_config_table", migrateConfigTable},
 	{"005_external_ref_mappings", migrateExternalRefMappings},
+	{"006_migrate_bead_thread_ids", migrateBeadThreadIDs},
+	{"007_insights_source_ref_index", migrateInsightsSourceRefIndex},
 }
 
 // RunMigrations runs all database migrations.
@@ -205,5 +211,105 @@ func migrateExternalRefMappings(db *sql.DB) error {
 		return fmt.Errorf("failed to create ext_ref system index: %w", err)
 	}
 
+	return nil
+}
+
+// migrateBeadThreadIDs converts orphaned bead IDs used as thread_id values
+// into proper threads with external_ref_mappings entries.
+// Previously, --thread bd-abc1 set insight.ThreadID = "bd-abc1" directly
+// without creating a real thread. This migration fixes those orphans.
+func migrateBeadThreadIDs(db *sql.DB) error {
+	// Find all unique bead IDs used as thread_id
+	rows, err := db.Query(`
+		SELECT DISTINCT thread_id FROM insights
+		WHERE thread_id LIKE 'bd-%' OR thread_id LIKE 'bead-%'
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to query bead thread IDs: %w", err)
+	}
+	defer rows.Close()
+
+	var beadIDs []string
+	for rows.Next() {
+		var beadID string
+		if err := rows.Scan(&beadID); err != nil {
+			return fmt.Errorf("failed to scan bead thread ID: %w", err)
+		}
+		beadIDs = append(beadIDs, beadID)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error iterating bead thread IDs: %w", err)
+	}
+
+	if len(beadIDs) == 0 {
+		return nil // Nothing to migrate
+	}
+
+	// Migrate each bead ID within a transaction
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	now := time.Now()
+
+	for _, beadID := range beadIDs {
+		// Normalize bead ID to external ref format
+		var externalID string
+		if strings.HasPrefix(beadID, "bead-") {
+			externalID = beadID[5:]
+		} else if strings.HasPrefix(beadID, "bd-") {
+			externalID = beadID[3:]
+		} else {
+			continue
+		}
+		externalRef := "bead:" + externalID
+
+		// Check if a thread already exists for this bead (shouldn't, but be safe)
+		var existingCount int
+		err := tx.QueryRow(`SELECT COUNT(*) FROM external_ref_mappings WHERE external_ref = ?`, externalRef).Scan(&existingCount)
+		if err != nil {
+			return fmt.Errorf("failed to check existing mapping for %s: %w", beadID, err)
+		}
+		if existingCount > 0 {
+			continue // Already migrated
+		}
+
+		// Create a real thread
+		threadID := types.GenerateID("thr")
+		_, err = tx.Exec(`
+			INSERT INTO threads (id, title, status, current_understanding, created_at, updated_at)
+			VALUES (?, ?, ?, '', ?, ?)
+		`, threadID, beadID, "active", now, now)
+		if err != nil {
+			return fmt.Errorf("failed to create thread for bead %s: %w", beadID, err)
+		}
+
+		// Create external ref mapping
+		_, err = tx.Exec(`
+			INSERT INTO external_ref_mappings (external_ref, thread_id, system, external_id, metadata, created_at, updated_at)
+			VALUES (?, ?, 'bead', ?, '{}', ?, ?)
+		`, externalRef, threadID, externalID, now, now)
+		if err != nil {
+			return fmt.Errorf("failed to create mapping for bead %s: %w", beadID, err)
+		}
+
+		// Update all insights to use the new thread ID
+		_, err = tx.Exec(`UPDATE insights SET thread_id = ? WHERE thread_id = ?`, threadID, beadID)
+		if err != nil {
+			return fmt.Errorf("failed to update insights for bead %s: %w", beadID, err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+// migrateInsightsSourceRefIndex adds an index on source_ref for origin-based queries.
+func migrateInsightsSourceRefIndex(db *sql.DB) error {
+	_, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_insights_source_ref ON insights(source_ref)`)
+	if err != nil {
+		return fmt.Errorf("failed to create source_ref index: %w", err)
+	}
 	return nil
 }

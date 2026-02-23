@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -27,8 +29,13 @@ Use --export to dump the default content for customization.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		bcDir := findBeadcrumbsDir()
 		if bcDir == "" {
-			// Not in a beadcrumbs project -- silent exit
-			// CRITICAL: No stderr output, exit 0
+			// Not in a beadcrumbs project -- but check if repo tracks
+			// beadcrumbs files (cloned repo that needs local init)
+			if repoTracksBeadcrumbs() {
+				fmt.Fprintln(os.Stderr, "# bdc: This project uses beadcrumbs but is not initialized locally.")
+				fmt.Fprintln(os.Stderr, "# Run: bdc init (then bdc setup claude if hooks are not configured)")
+				fmt.Fprintln(os.Stderr, "# See BDC_GUIDE.md for full setup instructions.")
+			}
 			os.Exit(0)
 		}
 
@@ -44,6 +51,17 @@ Use --export to dump the default content for customization.`,
 		// Output default workflow context
 		outputPrimeContext(os.Stdout)
 	},
+}
+
+// repoTracksBeadcrumbs checks if the current git repo tracks .beadcrumbs/ files.
+// This detects cloned repos that use beadcrumbs but haven't been initialized locally.
+func repoTracksBeadcrumbs() bool {
+	cmd := exec.Command("git", "ls-tree", "-r", "--name-only", "HEAD", ".beadcrumbs/")
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return len(strings.TrimSpace(string(output))) > 0
 }
 
 // findBeadcrumbsDir checks for .beadcrumbs/ in the current directory.
@@ -75,6 +93,7 @@ func outputPrimeContext(w io.Writer) {
 **Session start:**
 ` + "```bash" + `
 bdc thread new "Brief description of this session's goal"
+bdc origin set claude:<session-id>
 bdc capture --thread <ref> --hypothesis "Initial approach" --author cc:<model>
 ` + "```" + `
 
@@ -91,6 +110,7 @@ bdc capture --thread <ref> --decision "Committed to approach" --author cc:<model
 **Session end:**
 ` + "```bash" + `
 bdc capture --thread <ref> --decision "Final outcome summary" --author cc:<model>
+bdc origin clear
 bdc thread close <thread-id>
 ` + "```" + `
 
@@ -119,15 +139,25 @@ bdc questions --unresolved
 - ` + "`bdc thread list --status=active`" + ` - See open threads
 - ` + "`bdc thread close <id>`" + ` - Conclude a thread
 
+### Origin Tracking
+- ` + "`bdc origin set <system:id>`" + ` - Set origin for this session
+- ` + "`bdc origin show`" + ` - Show current origin
+- ` + "`bdc origin clear`" + ` - Clear origin
+- ` + "`bdc origins`" + ` - List all origins with counts
+
 ### Capturing
 - ` + "`bdc capture --thread <ref> --<type> \"...\" --author cc:<model>`" + `
+- ` + "`bdc capture --origin <system:id> --<type> \"...\" --thread <ref>`" + ` - Explicit origin
 - Thread ref accepts: thread ID (thr-xxx), bead ID (bd-xxx), or external ref (linear:ENG-456, jira:PROJ-123, gh:42)
+- Origin resolves: --origin flag > BDC_ORIGIN env > .beadcrumbs/origin file
 
 ### Viewing
 - ` + "`bdc timeline [thread-id]`" + ` - Chronological view
 - ` + "`bdc decisions [thread-id]`" + ` - Filter to decisions only
 - ` + "`bdc questions --unresolved`" + ` - Open questions needing answers
 - ` + "`bdc list --thread=<id> --type=<type>`" + ` - Filtered insight list
+- ` + "`bdc timeline --origin <system:id>`" + ` - Filter by origin
+- ` + "`bdc list --origin <system:id>`" + ` - Filter by origin
 
 ### Beads Integration
 - ` + "`bdc link <id> --spawns=<bead-id>`" + ` - Link insight to task it spawned

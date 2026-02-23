@@ -291,9 +291,9 @@ func (s *Store) DeleteInsight(id string) error {
 }
 
 // ListInsights retrieves insights based on filters.
-// Pass empty string for threadID or insightType to skip that filter.
+// Pass empty string for threadID, insightType, or sourceRef to skip that filter.
 // Pass zero time for since to skip time filter.
-func (s *Store) ListInsights(threadID string, insightType types.InsightType, since time.Time) ([]*types.Insight, error) {
+func (s *Store) ListInsights(threadID string, insightType types.InsightType, since time.Time, sourceRef string) ([]*types.Insight, error) {
 	query := "SELECT id, timestamp, content, summary, type, confidence, source_type, source_ref, source_participants, thread_id, author_id, endorsed_by, tags, created_by, created_at FROM insights WHERE 1=1"
 	args := []interface{}{}
 
@@ -310,6 +310,11 @@ func (s *Store) ListInsights(threadID string, insightType types.InsightType, sin
 	if !since.IsZero() {
 		query += " AND timestamp >= ?"
 		args = append(args, since)
+	}
+
+	if sourceRef != "" {
+		query += " AND source_ref = ?"
+		args = append(args, sourceRef)
 	}
 
 	query += " ORDER BY timestamp DESC"
@@ -886,6 +891,178 @@ func (s *Store) UpdateExternalRefMappingMetadata(externalRef, metadata string) e
 	if err != nil {
 		return fmt.Errorf("failed to update external ref mapping metadata: %w", err)
 	}
+	return nil
+}
+
+// OriginSummary holds aggregated info about a distinct origin (source_ref).
+type OriginSummary struct {
+	SourceRef    string
+	InsightCount int
+	ThreadIDs    string
+	LastActivity time.Time
+}
+
+// ListOrigins returns distinct origins with insight counts and thread associations.
+func (s *Store) ListOrigins() ([]*OriginSummary, error) {
+	rows, err := s.db.Query(`
+		SELECT source_ref, COUNT(*) as count,
+		       GROUP_CONCAT(DISTINCT NULLIF(thread_id, '')) as threads,
+		       MAX(timestamp) as last_activity
+		FROM insights
+		WHERE source_ref IS NOT NULL AND source_ref != ''
+		GROUP BY source_ref
+		ORDER BY last_activity DESC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query origins: %w", err)
+	}
+	defer rows.Close()
+
+	var origins []*OriginSummary
+	for rows.Next() {
+		var o OriginSummary
+		var threads sql.NullString
+		var lastActivity string
+		if err := rows.Scan(&o.SourceRef, &o.InsightCount, &threads, &lastActivity); err != nil {
+			return nil, fmt.Errorf("failed to scan origin: %w", err)
+		}
+		if threads.Valid {
+			o.ThreadIDs = threads.String
+		}
+		if t, err := time.Parse(time.RFC3339Nano, lastActivity); err == nil {
+			o.LastActivity = t
+		} else if t, err := time.Parse(time.RFC3339, lastActivity); err == nil {
+			o.LastActivity = t
+		} else if t, err := time.Parse("2006-01-02T15:04:05Z", lastActivity); err == nil {
+			o.LastActivity = t
+		} else if t, err := time.Parse("2006-01-02 15:04:05", lastActivity); err == nil {
+			o.LastActivity = t
+		}
+		origins = append(origins, &o)
+	}
+	return origins, rows.Err()
+}
+
+// UpsertInsight inserts or updates an insight by ID (for JSONL import).
+func (s *Store) UpsertInsight(insight *types.Insight) error {
+	sourceParticipants, err := json.Marshal(insight.Source.Participants)
+	if err != nil {
+		return fmt.Errorf("failed to marshal source participants: %w", err)
+	}
+
+	tags, err := json.Marshal(insight.Tags)
+	if err != nil {
+		return fmt.Errorf("failed to marshal tags: %w", err)
+	}
+
+	approvedBy, err := json.Marshal(insight.EndorsedBy)
+	if err != nil {
+		return fmt.Errorf("failed to marshal endorsed_by: %w", err)
+	}
+
+	var threadID interface{}
+	if insight.ThreadID == "" {
+		threadID = nil
+	} else {
+		threadID = insight.ThreadID
+	}
+
+	var authorID interface{}
+	if insight.AuthorID == "" {
+		authorID = nil
+	} else {
+		authorID = insight.AuthorID
+	}
+
+	_, err = s.db.Exec(`
+		INSERT INTO insights (
+			id, timestamp, content, summary, type, confidence,
+			source_type, source_ref, source_participants,
+			thread_id, author_id, endorsed_by, tags, created_by, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			timestamp = excluded.timestamp,
+			content = excluded.content,
+			summary = excluded.summary,
+			type = excluded.type,
+			confidence = excluded.confidence,
+			source_type = excluded.source_type,
+			source_ref = excluded.source_ref,
+			source_participants = excluded.source_participants,
+			thread_id = excluded.thread_id,
+			author_id = excluded.author_id,
+			endorsed_by = excluded.endorsed_by,
+			tags = excluded.tags,
+			created_by = excluded.created_by,
+			created_at = excluded.created_at
+	`,
+		insight.ID,
+		insight.Timestamp,
+		insight.Content,
+		insight.Summary,
+		insight.Type,
+		insight.Confidence,
+		insight.Source.Type,
+		insight.Source.Ref,
+		string(sourceParticipants),
+		threadID,
+		authorID,
+		string(approvedBy),
+		string(tags),
+		insight.CreatedBy,
+		insight.CreatedAt,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to upsert insight: %w", err)
+	}
+
+	return nil
+}
+
+// UpsertThread inserts or updates a thread by ID (for JSONL import).
+func (s *Store) UpsertThread(thread *types.InsightThread) error {
+	_, err := s.db.Exec(`
+		INSERT INTO threads (id, title, status, current_understanding, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			title = excluded.title,
+			status = excluded.status,
+			current_understanding = excluded.current_understanding,
+			updated_at = excluded.updated_at
+	`,
+		thread.ID,
+		thread.Title,
+		thread.Status,
+		thread.CurrentUnderstanding,
+		thread.CreatedAt,
+		thread.UpdatedAt,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to upsert thread: %w", err)
+	}
+
+	return nil
+}
+
+// UpsertDependency inserts a dependency, ignoring conflicts (for JSONL import).
+func (s *Store) UpsertDependency(dep *types.Dependency) error {
+	_, err := s.db.Exec(`
+		INSERT INTO dependencies (from_id, to_id, type, created_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(from_id, to_id, type) DO NOTHING
+	`,
+		dep.From,
+		dep.To,
+		dep.Type,
+		dep.CreatedAt,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to upsert dependency: %w", err)
+	}
+
 	return nil
 }
 

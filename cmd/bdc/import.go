@@ -8,6 +8,7 @@ import (
 	"time"
 
 	importer "github.com/brianevanmiller/beadcrumbs/internal/import"
+	"github.com/brianevanmiller/beadcrumbs/internal/jsonl"
 	"github.com/brianevanmiller/beadcrumbs/internal/types"
 	"github.com/spf13/cobra"
 )
@@ -34,7 +35,7 @@ Examples:
   bdc import session.txt --thread=thr-xxx         # Add to existing thread
   bdc import session.txt --timestamp="2024-01-15" # Set timestamp for all insights
   bdc import session.txt --dry-run                # Preview without saving`,
-	Args: cobra.ExactArgs(1),
+	Args: cobra.MaximumNArgs(1),
 	RunE: runImport,
 }
 
@@ -85,6 +86,15 @@ func init() {
 }
 
 func runImport(cmd *cobra.Command, args []string) error {
+	// Handle --auto: import from JSONL files in .beadcrumbs/
+	if importAuto {
+		return runAutoImport()
+	}
+
+	if len(args) == 0 {
+		return fmt.Errorf("requires a file or directory argument (or use --auto for JSONL import)")
+	}
+
 	path := args[0]
 
 	// Parse timestamp if provided
@@ -323,6 +333,90 @@ func buildColumnMapping() importer.ColumnMapping {
 		SourceRef: importMapSourceRef,
 		Tags:      importMapTags,
 	}
+}
+
+// runAutoImport imports threads, insights, and dependencies from JSONL files
+// in the .beadcrumbs/ directory. Used by git hooks to sync data across worktrees.
+func runAutoImport() error {
+	dir := filepath.Dir(dbPath)
+
+	s, err := getStore()
+	if err != nil {
+		return err
+	}
+	defer closeStore()
+
+	var totalThreads, totalInsights, totalDeps int
+
+	// Import threads first (insights reference threads via foreign key)
+	threadsPath := filepath.Join(dir, "threads.jsonl")
+	if _, err := os.Stat(threadsPath); err == nil {
+		threads, err := jsonl.ImportThreads(threadsPath)
+		if err != nil {
+			if !importQuiet {
+				fmt.Printf("Warning: failed to import threads: %v\n", err)
+			}
+		} else {
+			for _, thread := range threads {
+				if err := s.UpsertThread(thread); err != nil {
+					if !importQuiet {
+						fmt.Printf("Warning: failed to upsert thread %s: %v\n", thread.ID, err)
+					}
+					continue
+				}
+				totalThreads++
+			}
+		}
+	}
+
+	// Import insights
+	insightsPath := filepath.Join(dir, "insights.jsonl")
+	if _, err := os.Stat(insightsPath); err == nil {
+		insights, err := jsonl.ImportInsights(insightsPath)
+		if err != nil {
+			if !importQuiet {
+				fmt.Printf("Warning: failed to import insights: %v\n", err)
+			}
+		} else {
+			for _, insight := range insights {
+				if err := s.UpsertInsight(insight); err != nil {
+					if !importQuiet {
+						fmt.Printf("Warning: failed to upsert insight %s: %v\n", insight.ID, err)
+					}
+					continue
+				}
+				totalInsights++
+			}
+		}
+	}
+
+	// Import dependencies
+	depsPath := filepath.Join(dir, "deps.jsonl")
+	if _, err := os.Stat(depsPath); err == nil {
+		deps, err := jsonl.ImportDependencies(depsPath)
+		if err != nil {
+			if !importQuiet {
+				fmt.Printf("Warning: failed to import dependencies: %v\n", err)
+			}
+		} else {
+			for _, dep := range deps {
+				if err := s.UpsertDependency(dep); err != nil {
+					if !importQuiet {
+						fmt.Printf("Warning: failed to upsert dependency: %v\n", err)
+					}
+					continue
+				}
+				totalDeps++
+			}
+		}
+	}
+
+	if !importQuiet {
+		fmt.Printf("Auto-imported %d threads, %d insights, %d dependencies\n",
+			totalThreads, totalInsights, totalDeps)
+	}
+
+	return nil
 }
 
 // parseImportTimestamp parses various timestamp formats.

@@ -9,6 +9,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var timelineOrigin string
+
 var timelineCmd = &cobra.Command{
 	Use:   "timeline [thread-id]",
 	Short: "Show insights in chronological order",
@@ -41,7 +43,7 @@ func runTimeline(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get insights
-	insights, err := st.ListInsights(threadID, "", time.Time{})
+	insights, err := st.ListInsights(threadID, "", time.Time{}, timelineOrigin)
 	if err != nil {
 		return fmt.Errorf("failed to list insights: %w", err)
 	}
@@ -142,4 +144,5 @@ func reverseInsights(insights []*types.Insight) {
 
 func init() {
 	rootCmd.AddCommand(timelineCmd)
+	timelineCmd.Flags().StringVar(&timelineOrigin, "origin", "", "filter by origin (exact match)")
 }

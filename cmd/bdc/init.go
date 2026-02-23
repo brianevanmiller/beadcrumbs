@@ -14,6 +14,7 @@ import (
 )
 
 var initStealth bool
+var initQuiet bool
 
 var initCmd = &cobra.Command{
 	Use:   "init",
@@ -52,12 +53,14 @@ This is useful when you want to use beadcrumbs without committing files to the r
 				s.Close()
 				return fmt.Errorf("failed to save stealth mode config: %w", err)
 			}
-			fmt.Println("Stealth mode enabled - .beadcrumbs will not appear in git status")
+			if !initQuiet {
+				fmt.Println("Stealth mode enabled - .beadcrumbs will not appear in git status")
+			}
 		}
 
 		s.Close()
 
-		// Create empty JSONL files
+		// Create empty JSONL files (skip if they already exist, e.g., from git)
 		jsonlFiles := []string{
 			filepath.Join(dir, "insights.jsonl"),
 			filepath.Join(dir, "threads.jsonl"),
@@ -65,6 +68,9 @@ This is useful when you want to use beadcrumbs without committing files to the r
 		}
 
 		for _, file := range jsonlFiles {
+			if _, err := os.Stat(file); err == nil {
+				continue // Don't overwrite existing JSONL files
+			}
 			f, err := os.Create(file)
 			if err != nil {
 				return fmt.Errorf("failed to create %s: %w", file, err)
@@ -75,8 +81,10 @@ This is useful when you want to use beadcrumbs without committing files to the r
 		// Add .gitignore entries (non-stealth mode only)
 		if !initStealth {
 			if err := addGitignoreEntries(); err != nil {
-				fmt.Printf("Warning: failed to update .gitignore: %v\n", err)
-			} else {
+				if !initQuiet {
+					fmt.Printf("Warning: failed to update .gitignore: %v\n", err)
+				}
+			} else if !initQuiet {
 				fmt.Println("Updated .gitignore to track JSONL, ignore SQLite")
 			}
 		}
@@ -84,23 +92,27 @@ This is useful when you want to use beadcrumbs without committing files to the r
 		// Install git hooks (non-stealth mode only)
 		if !initStealth {
 			if err := installGitHooks(); err != nil {
-				fmt.Printf("Warning: failed to install git hooks: %v\n", err)
-				fmt.Println("Git hooks are optional - beadcrumbs will work without them")
+				if !initQuiet {
+					fmt.Printf("Warning: failed to install git hooks: %v\n", err)
+					fmt.Println("Git hooks are optional - beadcrumbs will work without them")
+				}
 			}
 		}
 
-		// Tip about pre-commit framework
-		if _, err := os.Stat(".pre-commit-config.yaml"); err == nil {
-			fmt.Println("Tip: You're using the pre-commit framework. See docs/guides/pre-commit-config.yaml for an alternative hook config.")
-		}
+		if !initQuiet {
+			// Tip about pre-commit framework
+			if _, err := os.Stat(".pre-commit-config.yaml"); err == nil {
+				fmt.Println("Tip: You're using the pre-commit framework. See docs/guides/pre-commit-config.yaml for an alternative hook config.")
+			}
 
-		fmt.Printf("Initialized beadcrumbs repository at %s\n", dir)
-		if !initStealth {
-			fmt.Println("Tip: Run 'bdc setup claude' to integrate with Claude Code")
-		}
+			fmt.Printf("Initialized beadcrumbs repository at %s\n", dir)
+			if !initStealth {
+				fmt.Println("Tip: Run 'bdc setup claude' to integrate with Claude Code")
+			}
 
-		// Non-blocking Linear CLI detection
-		detectLinearOnInit()
+			// Non-blocking Linear CLI detection
+			detectLinearOnInit()
+		}
 
 		return nil
 	},
@@ -219,9 +231,12 @@ if command -v bdc >/dev/null 2>&1; then
 fi
 `,
 		"post-checkout": `#!/bin/sh
-# beadcrumbs: Import insights after checkout
-# This hook imports JSONL changes when switching branches
+# beadcrumbs: Auto-bootstrap and import insights after checkout
+# Creates .beadcrumbs in new worktrees and imports JSONL changes
 if command -v bdc >/dev/null 2>&1; then
+    if [ ! -d .beadcrumbs ]; then
+        bdc init --quiet 2>/dev/null || true
+    fi
     bdc import --auto --quiet 2>/dev/null || true
 fi
 `,
@@ -278,6 +293,8 @@ func addGitignoreEntries() error {
 .beadcrumbs/beadcrumbs.db-journal
 .beadcrumbs/beadcrumbs.db-wal
 .beadcrumbs/beadcrumbs.db-shm
+# Beadcrumbs origin file (session-local, not for version control)
+.beadcrumbs/origin
 `
 
 	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -332,4 +349,5 @@ func detectLinearOnInit() {
 func init() {
 	rootCmd.AddCommand(initCmd)
 	initCmd.Flags().BoolVar(&initStealth, "stealth", false, "local-only installation (uses .git/info/exclude)")
+	initCmd.Flags().BoolVar(&initQuiet, "quiet", false, "suppress output (for hooks and automation)")
 }

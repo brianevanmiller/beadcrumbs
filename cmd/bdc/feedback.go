@@ -25,6 +25,7 @@ Examples:
 }
 
 var feedbackSince string
+var feedbackOrigin string
 
 func runFeedback(cmd *cobra.Command, args []string) error {
 	st, err := getStore()
@@ -48,7 +49,7 @@ func runFeedback(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get feedback insights
-	insights, err := st.ListInsights(threadID, types.InsightFeedback, since)
+	insights, err := st.ListInsights(threadID, types.InsightFeedback, since, feedbackOrigin)
 	if err != nil {
 		return fmt.Errorf("failed to list feedback: %w", err)
 	}
@@ -85,4 +86,5 @@ func runFeedback(cmd *cobra.Command, args []string) error {
 func init() {
 	rootCmd.AddCommand(feedbackCmd)
 	feedbackCmd.Flags().StringVar(&feedbackSince, "since", "", "show feedback since (e.g., 1w, 2d, 3h)")
+	feedbackCmd.Flags().StringVar(&feedbackOrigin, "origin", "", "filter by origin (exact match)")
 }

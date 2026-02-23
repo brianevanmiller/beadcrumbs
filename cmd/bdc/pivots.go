@@ -8,6 +8,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var pivotsOrigin string
+
 var pivotsCmd = &cobra.Command{
 	Use:   "pivots [thread-id]",
 	Short: "Show pivot insights in timeline format",
@@ -36,7 +38,7 @@ func runPivots(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get pivot insights
-	insights, err := st.ListInsights(threadID, types.InsightPivot, time.Time{})
+	insights, err := st.ListInsights(threadID, types.InsightPivot, time.Time{}, pivotsOrigin)
 	if err != nil {
 		return fmt.Errorf("failed to list pivots: %w", err)
 	}
@@ -72,4 +74,5 @@ func runPivots(cmd *cobra.Command, args []string) error {
 
 func init() {
 	rootCmd.AddCommand(pivotsCmd)
+	pivotsCmd.Flags().StringVar(&pivotsOrigin, "origin", "", "filter by origin (exact match)")
 }

@@ -18,9 +18,12 @@ Track reasoning and decision evolution across sessions using bdc (beadcrumbs).
 
 ### Phase 1: Session Start
 
-Open a thread and capture initial intent. Do this BEFORE writing code.
+Open a thread, set origin, and capture initial intent. Do this BEFORE writing code.
 
 ```bash
+# Set origin to identify this session's insights
+bdc origin set claude:<session-id>
+
 # Check for existing active threads (may be resuming)
 bdc thread list --status=active
 
@@ -33,7 +36,14 @@ bdc questions --unresolved
 
 ```bash
 # External tracker issue exists (most common):
+# Option A: auto-create thread on first capture (thread auto-linked, title fetched from Linear)
 bdc capture --thread linear:ENG-456 \
+  --hypothesis "Initial approach: use batch processing for import" \
+  --author cc:opus-4.6
+
+# Option B: explicit thread creation with --linear flag
+bdc thread new "Batch processing for import" --linear ENG-456
+bdc capture --thread thr-xxxx \
   --hypothesis "Initial approach: use batch processing for import" \
   --author cc:opus-4.6
 
@@ -119,11 +129,16 @@ bdc capture --thread <ref> \
 # Link to Beads if a task was spawned during this work
 bdc link ins-xxxx --spawns=bd-abc1
 
+# Clear origin before ending session
+bdc origin clear
+
 # Close the thread
 bdc thread close thr-xxxx
 ```
 
 **Rule**: Do NOT archive or delete a git branch until the beadcrumbs thread is closed.
+
+**Auto-push**: If the thread is linked to a Linear issue, closing it automatically posts a summary comment (decisions, pivots, discoveries) to the Linear issue. Disable with `bdc linear config auto_push false`.
 
 ### Phase 5: PR & Merge
 
@@ -152,11 +167,15 @@ At merge, the JSONL files auto-stage with each commit, so `.beadcrumbs/` data ri
 When resuming work in a new session on the same branch:
 
 ```bash
+# Set origin for the new session
+bdc origin set claude:<new-session-id>
+
 # Find active threads
 bdc thread list --status=active
 
-# Review prior reasoning
+# Review prior reasoning (optionally filter by prior session's origin)
 bdc timeline thr-xxxx
+bdc timeline --origin claude:<old-session-id>
 
 # Check for unresolved questions
 bdc questions --unresolved
@@ -188,9 +207,11 @@ bdc capture --thread <ref> \
 
 ```bash
 # Session lifecycle
+bdc origin set claude:<session-id>                   # Set origin at start
 bdc thread list --status=active                     # Check for prior work
 bdc capture --thread <ref> --<type> "..." --author cc:<model>  # During
-bdc thread close <id>                               # End
+bdc origin clear                                     # Clear origin at end
+bdc thread close <id>                               # Close thread
 
 # Thread references (prefer in this order)
 --thread linear:ENG-456                             # External tracker
@@ -206,4 +227,11 @@ bdc questions --unresolved                          # Open questions
 bdc link <insight-id> --spawns=<bead-id>            # Link to task
 bdc trace <bead-id>                                 # Trace reasoning for a task
 bdc spawn <insight-id> --title="..."                # Create task from insight
+
+# Linear integration
+bdc linear setup                                    # Detect Linear CLI tools
+bdc linear status                                   # Show linked threads, config
+bdc linear push <thread-id>                         # Post summary to Linear issue
+bdc linear link <thread-id> <issue-id>              # Manually link thread to issue
+bdc thread new "Title" --linear ENG-456             # Create thread linked to Linear
 ```

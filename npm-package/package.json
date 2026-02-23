@@ -1,7 +1,7 @@
 {
   "name": "@beadcrumbs/bdc",
-  "version": "0.2.0",
-  "description": "beadcrumbs - capture how understanding evolves through dialogues",
+  "version": "0.6.0",
+  "description": "beadcrumbs - capture how intent evolves through human & AI dialogues",
   "main": "bin/bdc.js",
   "bin": {
     "bdc": "bin/bdc.js"
@@ -11,6 +11,8 @@
   },
   "keywords": [
     "intent-tracking",
+    "ai-threads",
+    "threads",
     "ai-agent",
     "coding-agent",
     "dialogue",

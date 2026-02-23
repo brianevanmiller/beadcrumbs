@@ -31,6 +31,9 @@ var (
 
 	// slack:C0123456 (channel ID) or slack:#channel-name
 	slackPattern = regexp.MustCompile(`^slack:(?:#?([\w-]+)|([A-Z][A-Z0-9]+))$`)
+
+	// bead:abc1 (canonical bead external ref format)
+	beadPattern = regexp.MustCompile(`^bead:([\w-]+)$`)
 )
 
 // BeadsPresent checks if a .beads/ directory exists in the current directory
@@ -83,7 +86,7 @@ func GetBeadsDir() string {
 
 // IsBeadID checks if an ID looks like a bead ID (starts with "bead-" or "bd-").
 func IsBeadID(id string) bool {
-	return len(id) > 5 && (id[:5] == "bead-" || id[:3] == "bd-")
+	return strings.HasPrefix(id, "bead-") || strings.HasPrefix(id, "bd-")
 }
 
 // IsInsightID checks if an ID looks like an insight ID (starts with "ins-").
@@ -112,6 +115,7 @@ func IsExternalRef(ref string) bool {
 //   - github:owner/repo#123 (or gh:owner/repo#123)
 //   - jira:PROJECT-123
 //   - notion:page-id
+//   - bead:abc1
 //   - system:anything (generic fallback)
 func ParseExternalRef(ref string) (*ExternalRef, error) {
 	ref = strings.TrimSpace(ref)
@@ -161,6 +165,14 @@ func ParseExternalRef(ref string) (*ExternalRef, error) {
 		}, nil
 	}
 
+	if matches := beadPattern.FindStringSubmatch(ref); matches != nil {
+		return &ExternalRef{
+			System: "bead",
+			ID:     matches[1],
+			Raw:    ref,
+		}, nil
+	}
+
 	// Generic fallback: system:anything
 	parts := strings.SplitN(ref, ":", 2)
 	if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
@@ -196,9 +208,23 @@ func FormatExternalRef(ref *ExternalRef) string {
 		return "Notion: " + ref.ID
 	case "slack":
 		return "Slack: " + ref.ID
+	case "bead":
+		return "Bead: bd-" + ref.ID
 	default:
 		return ref.System + ": " + ref.ID
 	}
+}
+
+// BeadIDToExternalRef normalizes a bead ID to canonical external ref format.
+// "bd-abc1" → "bead:abc1", "bead-abc1" → "bead:abc1"
+func BeadIDToExternalRef(beadID string) string {
+	if strings.HasPrefix(beadID, "bead-") {
+		return "bead:" + beadID[5:]
+	}
+	if strings.HasPrefix(beadID, "bd-") {
+		return "bead:" + beadID[3:]
+	}
+	return "bead:" + beadID
 }
 
 // ResolveRef determines the type of reference and returns categorization.

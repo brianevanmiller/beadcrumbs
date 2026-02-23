@@ -30,7 +30,7 @@ with the database for version control.`,
 		dir := filepath.Dir(dbPath)
 
 		// Export insights
-		insights, err := s.ListInsights("", types.InsightType(""), time.Time{})
+		insights, err := s.ListInsights("", types.InsightType(""), time.Time{}, "")
 		if err != nil {
 			return fmt.Errorf("failed to list insights: %w", err)
 		}

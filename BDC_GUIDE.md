@@ -8,6 +8,68 @@ Use bdc to capture the *reasoning* behind work — not the work itself (that's w
 
 ---
 
+## Prerequisites (Auto-Setup for AI Agents)
+
+Before using any `bdc` command, check if bdc is installed and initialized in this project:
+
+```bash
+command -v bdc >/dev/null 2>&1 && test -d .beadcrumbs && echo "bdc ready" || echo "bdc not ready"
+```
+
+If **bdc ready**, skip to the next section. If **bdc not ready**, follow these steps. Do NOT skip this. Do NOT repeatedly attempt bdc commands that fail — bootstrap once, then proceed.
+
+### Step 1: Install the bdc binary
+
+Try each method in order. Stop at the first success:
+
+```bash
+# Method A: Install script (preferred)
+curl -fsSL https://raw.githubusercontent.com/brianevanmiller/beadcrumbs/main/scripts/install.sh | bash
+
+# Method B: npm (if curl fails)
+npm install -g @beadcrumbs/bdc
+
+# Method C: Go install (if Go is available)
+go install github.com/brianevanmiller/beadcrumbs/cmd/bdc@latest
+```
+
+Verify installation: `command -v bdc && bdc --help | head -3`
+
+If all methods fail, inform the user they need Go installed (`brew install go` on macOS) and retry.
+
+### Step 2: Initialize the project
+
+**Ask the user** which mode they prefer before proceeding. Do not assume.
+
+- **Team mode** (`bdc init`): Tracks `.beadcrumbs/` JSONL files in git so other contributors can see reasoning history. Installs git hooks for auto-sync. Choose this if the team wants shared insight tracking.
+- **Local-only / stealth mode** (`bdc init --stealth`): Keeps beadcrumbs data local via `.git/info/exclude`. No git hooks installed. No changes to `.gitignore`. Choose this for personal use without affecting the repo.
+
+### Step 3: Import existing data (cloned repos only)
+
+If this repo already has beadcrumbs JSONL files tracked in git, import them to rebuild the local database:
+
+```bash
+test -f .beadcrumbs/insights.jsonl && bdc import
+```
+
+### Step 4: Configure Claude Code hooks
+
+```bash
+bdc setup claude
+```
+
+This registers `bdc prime` as a SessionStart and PreCompact hook so beadcrumbs context is automatically available in future sessions.
+
+### Step 5: Verify
+
+```bash
+bdc prime | head -3
+```
+
+You should see the "Beadcrumbs Insight Tracker Active" header. Setup is complete.
+
+---
+
 ## Insight Tracking with bdc (beadcrumbs)
 
 **IMPORTANT**: This project uses **bdc (beadcrumbs)** to track reasoning and understanding. bd tracks *what* you're doing; bdc tracks *why*.
@@ -58,15 +120,47 @@ bdc thread close <thread-id>
 The `--thread` flag accepts multiple reference formats. Prefer in this order:
 
 1. **Task tracker ref** if using an external tracker: `--thread linear:ENG-456`, `--thread jira:PROJ-123`, `--thread gh:42`
+   - For Linear refs, bdc auto-creates a thread linked to the issue and fetches the issue title
 2. **Bead ID** if a bd issue exists: `--thread bd-a1b2`
-3. **Descriptive title** as fallback when creating: `bdc thread new "Fix auth timeout bug"`
+   - Creates a real thread with an external ref mapping (system: "bead")
+3. **Thread ID** if resuming existing: `--thread thr-xxxx`
+4. **Descriptive title** as fallback when creating: `bdc thread new "Fix auth timeout bug"`
+
+### Multi-System Linking
+
+A single thread can be linked to multiple external systems simultaneously. This is useful when a Linear ticket represents an epic/feature and beads represent implementation subtasks:
+
+```bash
+# Create thread linked to both Linear and a bead in one command
+bdc thread new "Implement caching layer" --linear ENG-456 --bead bd-abc1
+
+# Or link incrementally — start with one, add the other later
+bdc capture --thread linear:ENG-456 --hypothesis "..." --author cc:opus-4.6
+bdc thread link thr-xxxx bd-abc1
+
+# Individual insights can also spawn beads via dependencies (separate mechanism)
+bdc link ins-xxxx --spawns=bd-def2
+```
+
+Thread-level links (via `--thread`, `--linear`, `--bead`, or `bdc thread link`) associate the whole thread with an external system. Dependency links (via `bdc link --spawns`) create causal relationships between specific insights and specific beads. Both mechanisms coexist and serve different purposes.
 
 ### Workflow for AI Agents
 
-1. **Session start**: Open a thread and capture initial intent
+1. **Session start**: Open a thread, set origin, and capture initial intent
    ```bash
+   # Set origin to identify this session's insights
+   bdc origin set claude:<session-id>
+
+   # Option A: auto-create thread from tracker ref (recommended for Linear users)
+   bdc capture --thread linear:ENG-456 --hypothesis "Redis might be overkill, in-memory LRU could suffice" --author cc:opus-4.6
+
+   # Option B: explicit thread creation with --linear flag
+   bdc thread new "Implement caching layer for API" --linear ENG-456
+   bdc capture --thread thr-xxxx --hypothesis "Redis might be overkill" --author cc:opus-4.6
+
+   # Option C: standalone thread (no tracker)
    bdc thread new "Implement caching layer for API"
-   bdc capture --thread <ref> --hypothesis "Redis might be overkill, in-memory LRU could suffice" --author cc:opus-4.6
+   bdc capture --thread <ref> --hypothesis "Redis might be overkill" --author cc:opus-4.6
    ```
 
 2. **During session**: Capture as reasoning evolves — always use `--thread`
@@ -90,21 +184,28 @@ The `--thread` flag accepts multiple reference formats. Prefer in this order:
    bdc capture --thread <ref> --decision "Using Redis with 1-hour TTL and pub/sub invalidation" --author cc:opus-4.6
    ```
 
-3. **Session end / PR creation**: Capture outcome and close thread
+3. **Session end / PR creation**: Capture outcome, clear origin, and close thread
    ```bash
    bdc capture --thread <ref> --decision "PR #42 implements Redis caching with pub/sub invalidation" --author cc:opus-4.6
+   bdc origin clear
    bdc thread close <thread-id>
    ```
 
 4. **Rule**: Do NOT archive or delete a git branch until the beadcrumbs thread is closed with final insights recorded.
 
+   **Auto-push**: If the thread is linked to a Linear issue, closing it automatically posts a summary comment (decisions, pivots, discoveries) to the issue. See the [Linear Integration Guide](docs/guides/linear.md).
+
 5. **Cross-session resumption**: When resuming work in a new session
    ```bash
+   # Set origin for the new session
+   bdc origin set claude:<new-session-id>
+
    # Find active threads
    bdc thread list --status=active
 
-   # Review prior reasoning
+   # Review prior reasoning (optionally filter by prior session's origin)
    bdc timeline <thread-id>
+   bdc timeline --origin claude:<old-session-id>
 
    # Check for unresolved questions
    bdc questions --unresolved
@@ -139,8 +240,21 @@ Do not create beadcrumbs for:
 
 ### Integration with Beads (bd)
 
-Beadcrumbs tracks reasoning; Beads tracks tasks. Link them when insights spawn work:
+Beadcrumbs tracks reasoning; Beads tracks tasks. There are two ways to link them:
 
+**Thread-level linking** — associate a reasoning thread with a bead task:
+```bash
+# Via --thread flag (auto-creates thread and mapping)
+bdc capture --thread bd-abc1 --hypothesis "..." --author cc:opus-4.6
+
+# Via thread creation flag
+bdc thread new "Implement caching" --bead bd-abc1
+
+# Via generic thread link command
+bdc thread link thr-xxxx bd-abc1
+```
+
+**Dependency linking** — connect a specific insight to a bead it spawned:
 ```bash
 # An insight led to creating a task
 bdc link ins-7f2a --spawns=bd-abc1
@@ -152,6 +266,8 @@ bdc trace bd-abc1
 bdc spawn ins-7f2a --title="Implement exponential backoff for retries"
 ```
 
+Both mechanisms work together. Thread links say "this reasoning is about bd-abc1". Dependency links say "this specific insight produced bd-abc1".
+
 ### Essential Commands
 
 ```bash
@@ -160,26 +276,43 @@ bdc thread new "<title>"                    # Start a narrative thread
 bdc thread list --status=active             # See open threads
 bdc thread close <id>                       # Conclude a thread
 
+# Origin tracking
+bdc origin set <system:id>                  # Set origin for this session
+bdc origin show                             # Show current origin
+bdc origin clear                            # Clear origin
+bdc origins                                 # List all origins with counts
+
 # Capturing insights
 bdc capture --thread <ref> --<type> "..."   # Record an insight
 bdc capture --thread <ref> --hypothesis "..." --author cc:opus-4.6
 bdc capture --thread <ref> --decision "..." --author brian
+bdc capture --origin <system:id> --<type> "..."  # Explicit origin on single capture
 
 # Viewing
 bdc timeline [thread-id]                    # Chronological view
+bdc timeline --origin <system:id>           # Filter by origin
 bdc decisions [thread-id]                   # Filter to decisions only
 bdc pivots [thread-id]                      # Filter to pivots only
 bdc questions --unresolved                  # Open questions needing answers
+bdc list --origin <system:id>               # Filter by origin
 
 # Linking to beads
-bdc link <id> --spawns=<bead-id>            # Link insight to task
+bdc link <id> --spawns=<bead-id>            # Link insight to task (dependency)
 bdc trace <bead-id>                         # Trace reasoning chain for a task
 bdc spawn <insight-id> --title="..."        # Create task from insight
+bdc thread link <thread-id> <ref>           # Link thread to any external ref
 
 # Setup
 bdc init                                    # Initialize in a new repo
 bdc init --stealth                          # Local-only (not tracked in git)
 bdc prime                                   # Install hooks, verify DB
+
+# Linear integration (see docs/guides/linear.md)
+bdc linear setup                            # Detect and configure Linear CLI
+bdc linear status                           # Show integration status
+bdc linear push <thread-id>                 # Post summary to Linear issue
+bdc linear link <thread-id> <issue-id>      # Link thread to Linear issue
+bdc thread new "title" --linear ENG-456     # Create thread linked to Linear
 ```
 
 ### Important Rules

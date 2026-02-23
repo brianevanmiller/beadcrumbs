@@ -31,6 +31,7 @@ bdc setup claude
 * **AI-Native:** Import from AI session transcripts, auto-extract insights.
 * **Narrative Reconstruction:** Timeline, story, and graph views of understanding evolution.
 * **Beads Integration:** Link insights to beads tasks with `spawns` and `informed-by` relationships.
+* **Linear Integration:** Link threads to Linear issues and auto-post insight summaries on thread close.
 * **Pivot Preservation:** Pivots and decisions are sacred; discovery chains compress.
 
 ## Essential Commands
@@ -38,12 +39,16 @@ bdc setup claude
 | Command | Action |
 | --- | --- |
 | `bdc capture "..."` | Capture an insight with type flags |
+| `bdc origin set <id>` | Set session origin identifier |
+| `bdc origins` | List all origins with insight counts |
 | `bdc timeline` | View chronological journey |
 | `bdc pivots` | Show only pivot moments |
 | `bdc decisions` | Show only decisions |
 | `bdc feedback` | Show only external feedback |
 | `bdc questions` | Show open questions |
 | `bdc import file.txt` | Import from AI session transcript |
+| `bdc linear setup` | Configure Linear integration |
+| `bdc linear status` | Show Linear integration status |
 
 ## Insight Types & Mental Model
 
@@ -145,20 +150,33 @@ Git-backed like beads: JSONL exports on commit, imports on merge.
 ```bash
 bdc init                              # Initialize repository
 bdc capture "..." [--type=X]          # Capture insight
+bdc capture "..." --origin claude:id  # Capture with explicit origin
 bdc thread new "title"                # Create narrative thread
+bdc thread new "title" --linear ENG-456 --bead bd-abc1  # Multi-system linking
+bdc thread link <id> <ref>            # Link thread to any external ref
 bdc thread show <id>                  # Show thread details
 bdc thread list [--status=active]     # List threads
 bdc thread close <id>                 # Close thread
 ```
 
+### Origin Tracking
+```bash
+bdc origin set <system:id>            # Set origin for this session
+bdc origin show                       # Show current origin
+bdc origin clear                      # Clear origin
+bdc origins                           # List all origins with counts
+```
+
 ### Viewing & Analysis
 ```bash
 bdc timeline [thread-id]              # Chronological view
+bdc timeline --origin <system:id>     # Filter by origin
 bdc pivots [thread-id]                # Filter to pivots
 bdc decisions [thread-id]             # Filter to decisions
 bdc feedback [thread-id]              # Filter to external feedback
 bdc questions [--unresolved]          # Open questions
 bdc list [--type=X] [--since=1w]      # List insights
+bdc list --origin <system:id>         # Filter by origin
 bdc show <id>                         # Show insight details
 ```
 
@@ -183,6 +201,16 @@ bdc trace <bead-id>                   # Trace insight chain
 bdc spawn <insight-id> --title="..."  # Create task from insight
 ```
 
+### Linear Integration
+```bash
+bdc linear setup                      # Detect and configure Linear CLI
+bdc linear status                     # Show integration status
+bdc linear link <thread-id> <issue>   # Link thread to Linear issue
+bdc linear push <thread-id>           # Post summary to Linear issue
+bdc linear config <key> [value]       # Get/set Linear config
+bdc thread new "title" --linear ENG-456  # Create thread linked to issue
+```
+
 ## Use Cases
 
 * **Resume interrupted work** — Reconstruct where you left off
@@ -197,6 +225,7 @@ bdc spawn <insight-id> --title="..."  # Create task from insight
 * **[Lifecycle Guide](docs/guides/lifecycle.md)** — 6-phase workflow from session start to cross-session resumption
 * **[Project Config Template](docs/guides/project-config.md)** — Author naming, thread conventions, signal vs noise guidance
 * **[Insight Types Deep Dive](docs/insight-types.md)** — When to use each of the 6 insight types
+* **[Linear Integration Guide](docs/guides/linear.md)** — Connect bdc to Linear for bi-directional issue linking
 * **[Pre-commit Framework Config](docs/guides/pre-commit-config.yaml)** — Alternative hook config for pre-commit users
 
 ## License

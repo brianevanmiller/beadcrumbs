@@ -9,7 +9,8 @@ import (
 )
 
 var (
-	unresolvedOnly bool
+	unresolvedOnly  bool
+	questionsOrigin string
 )
 
 var questionsCmd = &cobra.Command{
@@ -34,6 +35,7 @@ Example:
 func init() {
 	rootCmd.AddCommand(questionsCmd)
 	questionsCmd.Flags().BoolVar(&unresolvedOnly, "unresolved", false, "Show only unresolved questions")
+	questionsCmd.Flags().StringVar(&questionsOrigin, "origin", "", "filter by origin (exact match)")
 }
 
 func runQuestions(cmd *cobra.Command, args []string) error {
@@ -49,7 +51,7 @@ func runQuestions(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get question insights
-	insights, err := st.ListInsights(threadID, types.InsightQuestion, time.Time{})
+	insights, err := st.ListInsights(threadID, types.InsightQuestion, time.Time{}, questionsOrigin)
 	if err != nil {
 		return fmt.Errorf("failed to list questions: %w", err)
 	}
