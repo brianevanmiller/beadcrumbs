@@ -943,6 +943,129 @@ func (s *Store) ListOrigins() ([]*OriginSummary, error) {
 	return origins, rows.Err()
 }
 
+// UpsertInsight inserts or updates an insight by ID (for JSONL import).
+func (s *Store) UpsertInsight(insight *types.Insight) error {
+	sourceParticipants, err := json.Marshal(insight.Source.Participants)
+	if err != nil {
+		return fmt.Errorf("failed to marshal source participants: %w", err)
+	}
+
+	tags, err := json.Marshal(insight.Tags)
+	if err != nil {
+		return fmt.Errorf("failed to marshal tags: %w", err)
+	}
+
+	approvedBy, err := json.Marshal(insight.EndorsedBy)
+	if err != nil {
+		return fmt.Errorf("failed to marshal endorsed_by: %w", err)
+	}
+
+	var threadID interface{}
+	if insight.ThreadID == "" {
+		threadID = nil
+	} else {
+		threadID = insight.ThreadID
+	}
+
+	var authorID interface{}
+	if insight.AuthorID == "" {
+		authorID = nil
+	} else {
+		authorID = insight.AuthorID
+	}
+
+	_, err = s.db.Exec(`
+		INSERT INTO insights (
+			id, timestamp, content, summary, type, confidence,
+			source_type, source_ref, source_participants,
+			thread_id, author_id, endorsed_by, tags, created_by, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			timestamp = excluded.timestamp,
+			content = excluded.content,
+			summary = excluded.summary,
+			type = excluded.type,
+			confidence = excluded.confidence,
+			source_type = excluded.source_type,
+			source_ref = excluded.source_ref,
+			source_participants = excluded.source_participants,
+			thread_id = excluded.thread_id,
+			author_id = excluded.author_id,
+			endorsed_by = excluded.endorsed_by,
+			tags = excluded.tags,
+			created_by = excluded.created_by,
+			created_at = excluded.created_at
+	`,
+		insight.ID,
+		insight.Timestamp,
+		insight.Content,
+		insight.Summary,
+		insight.Type,
+		insight.Confidence,
+		insight.Source.Type,
+		insight.Source.Ref,
+		string(sourceParticipants),
+		threadID,
+		authorID,
+		string(approvedBy),
+		string(tags),
+		insight.CreatedBy,
+		insight.CreatedAt,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to upsert insight: %w", err)
+	}
+
+	return nil
+}
+
+// UpsertThread inserts or updates a thread by ID (for JSONL import).
+func (s *Store) UpsertThread(thread *types.InsightThread) error {
+	_, err := s.db.Exec(`
+		INSERT INTO threads (id, title, status, current_understanding, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			title = excluded.title,
+			status = excluded.status,
+			current_understanding = excluded.current_understanding,
+			updated_at = excluded.updated_at
+	`,
+		thread.ID,
+		thread.Title,
+		thread.Status,
+		thread.CurrentUnderstanding,
+		thread.CreatedAt,
+		thread.UpdatedAt,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to upsert thread: %w", err)
+	}
+
+	return nil
+}
+
+// UpsertDependency inserts a dependency, ignoring conflicts (for JSONL import).
+func (s *Store) UpsertDependency(dep *types.Dependency) error {
+	_, err := s.db.Exec(`
+		INSERT INTO dependencies (from_id, to_id, type, created_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(from_id, to_id, type) DO NOTHING
+	`,
+		dep.From,
+		dep.To,
+		dep.Type,
+		dep.CreatedAt,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to upsert dependency: %w", err)
+	}
+
+	return nil
+}
+
 // Verify checks the database integrity.
 func (s *Store) Verify() error {
 	// Run integrity check
