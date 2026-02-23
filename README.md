@@ -39,6 +39,8 @@ bdc setup claude
 | Command | Action |
 | --- | --- |
 | `bdc capture "..."` | Capture an insight with type flags |
+| `bdc origin set <id>` | Set session origin identifier |
+| `bdc origins` | List all origins with insight counts |
 | `bdc timeline` | View chronological journey |
 | `bdc pivots` | Show only pivot moments |
 | `bdc decisions` | Show only decisions |
@@ -148,6 +150,7 @@ Git-backed like beads: JSONL exports on commit, imports on merge.
 ```bash
 bdc init                              # Initialize repository
 bdc capture "..." [--type=X]          # Capture insight
+bdc capture "..." --origin claude:id  # Capture with explicit origin
 bdc thread new "title"                # Create narrative thread
 bdc thread new "title" --linear ENG-456 --bead bd-abc1  # Multi-system linking
 bdc thread link <id> <ref>            # Link thread to any external ref
@@ -156,14 +159,24 @@ bdc thread list [--status=active]     # List threads
 bdc thread close <id>                 # Close thread
 ```
 
+### Origin Tracking
+```bash
+bdc origin set <system:id>            # Set origin for this session
+bdc origin show                       # Show current origin
+bdc origin clear                      # Clear origin
+bdc origins                           # List all origins with counts
+```
+
 ### Viewing & Analysis
 ```bash
 bdc timeline [thread-id]              # Chronological view
+bdc timeline --origin <system:id>     # Filter by origin
 bdc pivots [thread-id]                # Filter to pivots
 bdc decisions [thread-id]             # Filter to decisions
 bdc feedback [thread-id]              # Filter to external feedback
 bdc questions [--unresolved]          # Open questions
 bdc list [--type=X] [--since=1w]      # List insights
+bdc list --origin <system:id>         # Filter by origin
 bdc show <id>                         # Show insight details
 ```
 

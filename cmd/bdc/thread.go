@@ -267,7 +267,7 @@ var threadShowCmd = &cobra.Command{
 		}
 
 		// Get insights in this thread
-		insights, err := s.ListInsights(threadID, "", time.Time{})
+		insights, err := s.ListInsights(threadID, "", time.Time{}, "")
 		if err != nil {
 			return fmt.Errorf("failed to get insights: %w", err)
 		}
@@ -404,7 +404,7 @@ func pushLinearSummaryOnClose(s *store.Store, thread *types.InsightThread) {
 	}
 
 	// Gather insights
-	insights, err := s.ListInsights(thread.ID, "", time.Time{})
+	insights, err := s.ListInsights(thread.ID, "", time.Time{}, "")
 	if err != nil || len(insights) == 0 {
 		return
 	}

@@ -23,6 +23,7 @@ var migrationsList = []Migration{
 	{"004_config_table", migrateConfigTable},
 	{"005_external_ref_mappings", migrateExternalRefMappings},
 	{"006_migrate_bead_thread_ids", migrateBeadThreadIDs},
+	{"007_insights_source_ref_index", migrateInsightsSourceRefIndex},
 }
 
 // RunMigrations runs all database migrations.
@@ -302,4 +303,13 @@ func migrateBeadThreadIDs(db *sql.DB) error {
 	}
 
 	return tx.Commit()
+}
+
+// migrateInsightsSourceRefIndex adds an index on source_ref for origin-based queries.
+func migrateInsightsSourceRefIndex(db *sql.DB) error {
+	_, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_insights_source_ref ON insights(source_ref)`)
+	if err != nil {
+		return fmt.Errorf("failed to create source_ref index: %w", err)
+	}
+	return nil
 }

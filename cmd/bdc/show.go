@@ -49,6 +49,9 @@ func showInsight(s *store.Store, id string) error {
 	if insight.ThreadID != "" {
 		fmt.Printf("Thread: %s\n", insight.ThreadID)
 	}
+	if insight.Source.Ref != "" {
+		fmt.Printf("Origin: %s (%s)\n", insight.Source.Ref, insight.Source.Type)
+	}
 	fmt.Printf("Created: %s\n", insight.CreatedAt.Format("2006-01-02 15:04:05"))
 
 	fmt.Printf("\nContent:\n%s\n", insight.Content)
@@ -105,9 +108,25 @@ func showThread(s *store.Store, id string) error {
 	}
 
 	// Get insights in this thread
-	insights, err := s.ListInsights(id, "", time.Time{})
+	insights, err := s.ListInsights(id, "", time.Time{}, "")
 	if err != nil {
 		return fmt.Errorf("failed to get insights: %w", err)
+	}
+
+	// Collect distinct origins from insights in this thread
+	seenOrigins := make(map[string]bool)
+	var origins []string
+	for _, insight := range insights {
+		if insight.Source.Ref != "" && !seenOrigins[insight.Source.Ref] {
+			seenOrigins[insight.Source.Ref] = true
+			origins = append(origins, fmt.Sprintf("%s (%s)", insight.Source.Ref, insight.Source.Type))
+		}
+	}
+	if len(origins) > 0 {
+		fmt.Printf("\nOrigins:\n")
+		for _, o := range origins {
+			fmt.Printf("  %s\n", o)
+		}
 	}
 
 	if len(insights) > 0 {

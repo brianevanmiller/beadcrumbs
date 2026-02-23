@@ -8,6 +8,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var decisionsOrigin string
+
 var decisionsCmd = &cobra.Command{
 	Use:   "decisions [thread-id]",
 	Short: "Show decision insights in timeline format",
@@ -36,7 +38,7 @@ func runDecisions(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get decision insights
-	insights, err := st.ListInsights(threadID, types.InsightDecision, time.Time{})
+	insights, err := st.ListInsights(threadID, types.InsightDecision, time.Time{}, decisionsOrigin)
 	if err != nil {
 		return fmt.Errorf("failed to list decisions: %w", err)
 	}
@@ -72,4 +74,5 @@ func runDecisions(cmd *cobra.Command, args []string) error {
 
 func init() {
 	rootCmd.AddCommand(decisionsCmd)
+	decisionsCmd.Flags().StringVar(&decisionsOrigin, "origin", "", "filter by origin (exact match)")
 }
