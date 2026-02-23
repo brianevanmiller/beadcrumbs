@@ -16,6 +16,7 @@ import (
 var (
 	threadStatus    string
 	threadLinearRef string
+	threadBeadRef   string
 )
 
 var threadCmd = &cobra.Command{
@@ -50,6 +51,13 @@ var threadNewCmd = &cobra.Command{
 		// Link to Linear issue if --linear flag is set
 		if threadLinearRef != "" {
 			if err := linkThreadToLinear(s, thread, threadLinearRef); err != nil {
+				return err
+			}
+		}
+
+		// Link to bead if --bead flag is set
+		if threadBeadRef != "" {
+			if err := linkThreadToBead(s, thread, threadBeadRef); err != nil {
 				return err
 			}
 		}
@@ -102,6 +110,121 @@ func linkThreadToLinear(s *store.Store, thread *types.InsightThread, linearRef s
 	}
 	fmt.Printf("  Linked to Linear: %s\n", extRef.ID)
 	return nil
+}
+
+// linkThreadToBead links a thread to a bead via an external ref mapping.
+func linkThreadToBead(s *store.Store, thread *types.InsightThread, beadRef string) error {
+	if !beads.IsBeadID(beadRef) {
+		return fmt.Errorf("invalid bead reference: %s (expected bd-xxx or bead-xxx)", beadRef)
+	}
+	ref := beads.BeadIDToExternalRef(beadRef)
+
+	extRef, err := beads.ParseExternalRef(ref)
+	if err != nil {
+		return fmt.Errorf("invalid bead reference: %w", err)
+	}
+
+	// Check for existing mapping
+	existing, _ := s.GetExternalRefMappingByRef(ref)
+	if existing != nil {
+		if existing.ThreadID == thread.ID {
+			fmt.Printf("  Already linked to %s\n", beads.FormatExternalRef(extRef))
+			return nil
+		}
+		return fmt.Errorf("reference %s is already linked to thread %s", ref, existing.ThreadID)
+	}
+
+	now := time.Now()
+	mapping := &store.ExternalRefMapping{
+		ExternalRef: ref,
+		ThreadID:    thread.ID,
+		System:      extRef.System,
+		ExternalID:  extRef.ID,
+		Metadata:    "{}",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	if err := s.CreateExternalRefMapping(mapping); err != nil {
+		return fmt.Errorf("failed to link bead: %w", err)
+	}
+	fmt.Printf("  Linked to %s\n", beads.FormatExternalRef(extRef))
+	return nil
+}
+
+var threadLinkCmd = &cobra.Command{
+	Use:   "link <thread-id> <ref>",
+	Short: "Link a thread to an external reference",
+	Long: `Link an existing thread to an external tracker reference.
+
+Accepts any external ref format:
+  linear:ENG-456       Linear issue
+  bd-abc1 or bead:abc1 Beads task
+  github:owner/repo#42 GitHub issue
+  jira:PROJ-123        Jira issue
+  notion:page-id       Notion page
+
+Examples:
+  bdc thread link thr-xxxx linear:ENG-456
+  bdc thread link thr-xxxx bd-abc1
+  bdc thread link thr-xxxx github:myorg/myrepo#42`,
+	Args: cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		threadID := args[0]
+		ref := args[1]
+
+		s, err := getStore()
+		if err != nil {
+			return err
+		}
+		defer closeStore()
+
+		// Verify thread exists
+		thread, err := s.GetThread(threadID)
+		if err != nil {
+			return fmt.Errorf("failed to get thread: %w", err)
+		}
+		if thread == nil {
+			return fmt.Errorf("thread not found: %s", threadID)
+		}
+
+		// Normalize: if it looks like a bead ID, convert to external ref format
+		if beads.IsBeadID(ref) {
+			ref = beads.BeadIDToExternalRef(ref)
+		}
+
+		extRef, err := beads.ParseExternalRef(ref)
+		if err != nil {
+			return fmt.Errorf("invalid reference: %w", err)
+		}
+
+		// Check for existing mapping
+		existing, _ := s.GetExternalRefMappingByRef(ref)
+		if existing != nil {
+			if existing.ThreadID == threadID {
+				fmt.Printf("Thread %s is already linked to %s\n", threadID, beads.FormatExternalRef(extRef))
+				return nil
+			}
+			return fmt.Errorf("reference %s is already linked to thread %s", ref, existing.ThreadID)
+		}
+
+		// Create the mapping
+		now := time.Now()
+		mapping := &store.ExternalRefMapping{
+			ExternalRef: ref,
+			ThreadID:    thread.ID,
+			System:      extRef.System,
+			ExternalID:  extRef.ID,
+			Metadata:    "{}",
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		}
+		if err := s.CreateExternalRefMapping(mapping); err != nil {
+			return fmt.Errorf("failed to create mapping: %w", err)
+		}
+
+		fmt.Printf("Linked thread %s to %s\n", threadID, beads.FormatExternalRef(extRef))
+		return nil
+	},
 }
 
 var threadShowCmd = &cobra.Command{
@@ -355,8 +478,10 @@ func init() {
 	threadCmd.AddCommand(threadShowCmd)
 	threadCmd.AddCommand(threadListCmd)
 	threadCmd.AddCommand(threadCloseCmd)
+	threadCmd.AddCommand(threadLinkCmd)
 
 	threadNewCmd.Flags().StringVar(&threadLinearRef, "linear", "", "link to Linear issue (e.g., ENG-456)")
+	threadNewCmd.Flags().StringVar(&threadBeadRef, "bead", "", "link to bead task (e.g., bd-abc1)")
 	threadListCmd.Flags().StringVar(&threadStatus, "status", "", "filter by status (active|concluded|abandoned)")
 	threadCloseCmd.Flags().StringVar(&threadStatus, "status", "concluded", "status to set (concluded|abandoned)")
 }

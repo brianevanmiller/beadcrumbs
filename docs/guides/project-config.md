@@ -39,25 +39,42 @@ Name threads for the *outcome* being pursued, not the ticket ID.
 
 ## Integration Model
 
-bdc works with any combination of task trackers:
+bdc works with any combination of task trackers. A single thread can link to multiple systems simultaneously:
 
 | Scenario | Thread Reference | Example |
 |----------|-----------------|---------|
 | **External tracker only** (most common) | `--thread linear:ENG-456` | Feature work, bug fixes |
 | **Beads only** | `--thread bd-a1b2` | Quick implementation tasks |
-| **Tracker + Beads** | Either ref works | Epic with beads subtasks |
+| **Tracker + Beads** (multi-system) | `--linear ENG-456 --bead bd-abc1` | Epic with beads subtasks |
 | **Neither** | `bdc thread new "..."` | Ad-hoc exploration, spike work |
+
+### Multi-System Linking
+
+When work has both a high-level tracker ticket and implementation-level bead tasks, link the thread to both:
+
+```bash
+# Create thread linked to both systems
+bdc thread new "Batch import pipeline" --linear ENG-456 --bead bd-abc1
+
+# Or link incrementally
+bdc capture --thread linear:ENG-456 --hypothesis "..." --author cc:opus-4.6
+bdc thread link thr-xxxx bd-abc1
+
+# Generic linking works with any external ref format
+bdc thread link thr-xxxx jira:PROJ-123
+bdc thread link thr-xxxx github:myorg/myrepo#42
+```
 
 ### Linking Between Systems
 
 ```bash
-# Insight spawns a Beads task
+# Thread-level: associate reasoning thread with a bead
+bdc capture --thread bd-abc1 --decision "Using batch processing" --author cc:opus-4.6
+
+# Dependency-level: insight spawns a Beads task
 bdc link ins-7f2a --spawns=bd-abc1
 
-# Insight associated with an external tracker (thread ref handles this)
-bdc capture --thread linear:ENG-456 --decision "Using batch processing" --author cc:opus-4.6
-
-# Trace reasoning behind a task
+# Trace reasoning behind a task (shows both thread and dependency links)
 bdc trace bd-abc1
 
 # Create a Beads task directly from an insight
