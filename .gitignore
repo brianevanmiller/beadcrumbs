@@ -26,8 +26,11 @@ go.work
 .DS_Store
 Thumbs.db
 
-# Local beadcrumbs data (created by bdc init)
-.beadcrumbs/
+# Beadcrumbs database (ephemeral, rebuilt from JSONL)
+.beadcrumbs/beadcrumbs.db
+.beadcrumbs/beadcrumbs.db-journal
+.beadcrumbs/beadcrumbs.db-wal
+.beadcrumbs/beadcrumbs.db-shm
 
 # Debug/temp files
 *.log
