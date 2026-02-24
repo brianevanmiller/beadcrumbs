@@ -60,7 +60,7 @@ If all methods fail, inform the user they need Go installed (`brew install go` o
 **Ask the user** which mode they prefer before proceeding. Do not assume.
 
 - **Team mode** (`bdc init`): Tracks `.beadcrumbs/` JSONL files in git so other contributors can see reasoning history. Installs git hooks for auto-sync. Choose this if the team wants shared insight tracking.
-- **Local-only / stealth mode** (`bdc init --stealth`): Keeps beadcrumbs data local via `.git/info/exclude`. No git hooks installed. No changes to `.gitignore`. Choose this for personal use without affecting the repo.
+- **Local-only / stealth mode** (`bdc init --stealth`): Keeps beadcrumbs data local via `.git/info/exclude`. No git hooks installed. No changes to `.gitignore`. Choose this for personal use without affecting the repo. Can be converted later with `bdc unstealth`.
 
 ### Step 3: Import existing data (cloned repos only)
 
@@ -323,6 +323,9 @@ bdc thread link <thread-id> <ref>           # Link thread to any external ref
 # Setup
 bdc init                                    # Initialize in a new repo
 bdc init --stealth                          # Local-only (not tracked in git)
+bdc stealth                                 # Convert normal → stealth mode
+bdc unstealth                               # Convert stealth → normal mode
+bdc stealth --status                        # Show current mode
 bdc prime                                   # Install hooks, verify DB
 
 # Linear integration (see docs/guides/linear.md)

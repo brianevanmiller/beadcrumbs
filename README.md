@@ -221,6 +221,9 @@ bdc spawn <insight-id> --title="..."  # Create task from insight
 bdc locate                            # Find databases reachable from CWD
 bdc prime                             # Output AI workflow context
 bdc setup claude                      # Configure Claude Code hooks
+bdc stealth                           # Convert to local-only mode
+bdc unstealth                         # Convert to git-tracked mode
+bdc stealth --status                  # Show current mode
 ```
 
 ### Linear Integration
@@ -248,6 +251,7 @@ bdc thread new "title" --linear ENG-456  # Create thread linked to issue
 * **[Project Config Template](docs/guides/project-config.md)** — Author naming, thread conventions, signal vs noise guidance
 * **[Insight Types Deep Dive](docs/insight-types.md)** — When to use each of the 6 insight types
 * **[Linear Integration Guide](docs/guides/linear.md)** — Connect bdc to Linear for bi-directional issue linking
+* **[Stealth Mode Guide](docs/guides/stealth-mode.md)** — Local-only usage, worktree support, and mode switching
 * **[Pre-commit Framework Config](docs/guides/pre-commit-config.yaml)** — Alternative hook config for pre-commit users
 
 ## License
