@@ -560,6 +560,66 @@ func TestCLI_ImportCSV_CustomMapping(t *testing.T) {
 	}
 }
 
+// ============================================================================
+// Version & Upgrade (PR #15)
+// ============================================================================
+
+func TestCLI_VersionOutput(t *testing.T) {
+	// version should work without any .beadcrumbs directory
+	dir := t.TempDir()
+
+	stdout, _, err := bdcRun(t, dir, "version")
+	if err != nil {
+		t.Fatalf("bdc version failed: %v", err)
+	}
+
+	if !strings.Contains(stdout, "bdc version") {
+		t.Errorf("expected 'bdc version' in output, got: %q", stdout)
+	}
+	if !strings.Contains(stdout, "0.9.0") {
+		t.Errorf("expected version '0.9.0' in output, got: %q", stdout)
+	}
+}
+
+func TestCLI_VersionNoDBRequired(t *testing.T) {
+	// version must not require a database or git repo
+	dir := t.TempDir()
+
+	_, stderr, err := bdcRun(t, dir, "version")
+	if err != nil {
+		t.Fatalf("bdc version should succeed without .beadcrumbs, got err: %v stderr: %q", err, stderr)
+	}
+}
+
+func TestCLI_UpgradeNoDBRequired(t *testing.T) {
+	// upgrade must not require a database or git repo
+	dir := t.TempDir()
+
+	stdout, _, err := bdcRun(t, dir, "upgrade")
+	if err != nil {
+		t.Fatalf("bdc upgrade should succeed without .beadcrumbs, got err: %v", err)
+	}
+
+	// When built locally, it should show the "could not detect" fallback
+	if !strings.Contains(stdout, "upgrade") && !strings.Contains(stdout, "npm") {
+		t.Errorf("expected upgrade instructions in output, got: %q", stdout)
+	}
+}
+
+func TestCLI_UpgradeShowsInstructions(t *testing.T) {
+	dir := t.TempDir()
+
+	stdout, _, _ := bdcRun(t, dir, "upgrade")
+
+	// Should always mention both upgrade paths
+	if !strings.Contains(stdout, "npm") {
+		t.Errorf("upgrade output should mention npm, got: %q", stdout)
+	}
+	if !strings.Contains(stdout, "go install") || !strings.Contains(stdout, "beadcrumbs") {
+		t.Errorf("upgrade output should mention go install path, got: %q", stdout)
+	}
+}
+
 func TestCLI_ShowInsightOrigin(t *testing.T) {
 	dir := setupTestEnv(t)
 
