@@ -32,7 +32,7 @@ func init() {
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		// Skip resolution for commands that manage their own DB path
 		switch cmd.Name() {
-		case "init", "locate":
+		case "init", "locate", "version", "upgrade":
 			return nil
 		}
 		resolveDBPath(cmd)
