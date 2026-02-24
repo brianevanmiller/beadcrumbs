@@ -1,6 +1,6 @@
 {
   "name": "@beadcrumbs/bdc",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "beadcrumbs - capture how intent evolves through human & AI dialogues",
   "main": "bin/bdc.js",
   "bin": {
