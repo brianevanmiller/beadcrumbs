@@ -255,6 +255,10 @@ var githubLinkCmd = &cobra.Command{
 		// Check for existing mapping
 		existing, _ := s.GetExternalRefMappingByRef(ref)
 		if existing != nil {
+			if existing.ThreadID == thread.ID {
+				fmt.Printf("Thread %s is already linked to GitHub %s\n", threadID, extRef.ID)
+				return nil
+			}
 			return fmt.Errorf("reference %s is already linked to thread %s", ref, existing.ThreadID)
 		}
 

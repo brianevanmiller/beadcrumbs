@@ -73,8 +73,14 @@ func TestFormatSummary_AllTypes(t *testing.T) {
 	if !strings.Contains(result, "1 decisions") {
 		t.Error("missing decisions count")
 	}
-	if !strings.Contains(result, "1 discoverys") {
-		// Note: naive pluralization is fine for now
+	if !strings.Contains(result, "1 discoveries") {
+		t.Error("missing discoveries count (should use correct plural)")
+	}
+	if !strings.Contains(result, "1 hypotheses") {
+		t.Error("missing hypotheses count (should use correct plural)")
+	}
+	if !strings.Contains(result, "1 feedback") {
+		t.Error("missing feedback count")
 	}
 	if !strings.Contains(result, "*Tracked by [beadcrumbs]") {
 		t.Error("missing attribution link")

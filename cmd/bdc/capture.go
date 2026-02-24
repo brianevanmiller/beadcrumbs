@@ -349,7 +349,7 @@ func resolveGitHubRef(s *store.Store, extRef *beads.ExternalRef) (string, error)
 		return createThreadForExternalRef(s, extRef, extRef.ID)
 	}
 
-	pr, err := ghCli.ViewPR(parts[1])
+	pr, err := ghCli.ViewPR(parts[1], parts[0])
 	if err != nil || pr == nil {
 		fmt.Fprintf(os.Stderr, "Warning: Could not fetch GitHub PR %s: %v\n", extRef.ID, err)
 		return createThreadForExternalRef(s, extRef, extRef.ID)

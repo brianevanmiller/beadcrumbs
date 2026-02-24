@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -179,7 +180,7 @@ func linkThreadToGitHub(s *store.Store, thread *types.InsightThread, githubRef s
 	if ghErr == nil {
 		repo, prNumber := parseGitHubPRRef(extRef.ID)
 		if prNumber > 0 {
-			pr, fetchErr := ghCli.ViewPR(fmt.Sprintf("%d", prNumber))
+			pr, fetchErr := ghCli.ViewPR(fmt.Sprintf("%d", prNumber), repo)
 			if fetchErr == nil && pr != nil && pr.Title != "" {
 				thread.Title = fmt.Sprintf("%s#%d: %s", repo, prNumber, pr.Title)
 				thread.UpdatedAt = time.Now()
@@ -213,8 +214,11 @@ func parseGitHubPRRef(ref string) (repo string, number int) {
 	if len(parts) != 2 {
 		return "", 0
 	}
-	fmt.Sscanf(parts[1], "%d", &number)
-	return parts[0], number
+	n, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return parts[0], 0
+	}
+	return parts[0], n
 }
 
 var threadLinkCmd = &cobra.Command{
@@ -494,6 +498,12 @@ func pushGitHubSummaryOnClose(s *store.Store, thread *types.InsightThread) {
 		return
 	}
 
+	// Detect gh CLI early — needed for both auto-detect and posting
+	ghCli, err := gh.Detect()
+	if err != nil {
+		return // gh not installed, silently skip
+	}
+
 	// Get mappings for this thread
 	mappings, err := s.GetExternalRefMappingsByThread(thread.ID)
 	if err != nil {
@@ -522,10 +532,6 @@ func pushGitHubSummaryOnClose(s *store.Store, thread *types.InsightThread) {
 			return
 		}
 
-		ghCli, err := gh.Detect()
-		if err != nil {
-			return // gh not installed, silently skip
-		}
 		pr, err := ghCli.CurrentBranchPR()
 		if err != nil || pr == nil {
 			return // no PR for current branch, silently skip
@@ -533,29 +539,24 @@ func pushGitHubSummaryOnClose(s *store.Store, thread *types.InsightThread) {
 		prRepo = pr.Repo
 		prNumber = pr.Number
 
-		// Persist the auto-detected mapping for traceability
-		ref := fmt.Sprintf("github:%s#%d", pr.Repo, pr.Number)
-		now := time.Now()
-		mapping := &store.ExternalRefMapping{
-			ExternalRef: ref,
-			ThreadID:    thread.ID,
-			System:      "github",
-			ExternalID:  fmt.Sprintf("%s#%d", pr.Repo, pr.Number),
-			Metadata:    `{"auto_detected":true}`,
-			CreatedAt:   now,
-			UpdatedAt:   now,
+		// Persist the auto-detected mapping for traceability (only if repo info available)
+		if pr.Repo != "" {
+			ref := fmt.Sprintf("github:%s#%d", pr.Repo, pr.Number)
+			now := time.Now()
+			mapping := &store.ExternalRefMapping{
+				ExternalRef: ref,
+				ThreadID:    thread.ID,
+				System:      "github",
+				ExternalID:  fmt.Sprintf("%s#%d", pr.Repo, pr.Number),
+				Metadata:    `{"auto_detected":true}`,
+				CreatedAt:   now,
+				UpdatedAt:   now,
+			}
+			s.CreateExternalRefMapping(mapping) // Best-effort
 		}
-		s.CreateExternalRefMapping(mapping) // Best-effort
 	}
 
 	if prNumber == 0 {
-		return
-	}
-
-	// Detect gh CLI
-	ghCli, err := gh.Detect()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: gh CLI not available, skipping PR comment.\n")
 		return
 	}
 

@@ -93,8 +93,13 @@ func (g *GH) CurrentBranchPR() (*PRInfo, error) {
 }
 
 // ViewPR fetches PR details. prRef can be a number, URL, or branch name.
-func (g *GH) ViewPR(prRef string) (*PRInfo, error) {
-	out, err := g.run("pr", "view", prRef, "--json", "number,title,state,url,headRepositoryOwner,headRepository")
+// If repo is non-empty (e.g., "owner/repo"), it is passed as --repo to support cross-repo lookups.
+func (g *GH) ViewPR(prRef string, repo string) (*PRInfo, error) {
+	args := []string{"pr", "view", prRef, "--json", "number,title,state,url,headRepositoryOwner,headRepository"}
+	if repo != "" {
+		args = append(args, "--repo", repo)
+	}
+	out, err := g.run(args...)
 	if err != nil {
 		return nil, err
 	}

@@ -84,9 +84,17 @@ func FormatSummary(thread *types.InsightThread, insights []*types.Insight) strin
 		types.InsightQuestion,
 		types.InsightFeedback,
 	}
+	pluralLabels := map[types.InsightType]string{
+		types.InsightDecision:   "decisions",
+		types.InsightDiscovery:  "discoveries",
+		types.InsightHypothesis: "hypotheses",
+		types.InsightPivot:      "pivots",
+		types.InsightQuestion:   "questions",
+		types.InsightFeedback:   "feedback",
+	}
 	for _, t := range typeOrder {
 		if c, ok := typeCounts[t]; ok && c > 0 {
-			label := string(t) + "s"
+			label := pluralLabels[t]
 			parts = append(parts, fmt.Sprintf("%d %s", c, label))
 		}
 	}
