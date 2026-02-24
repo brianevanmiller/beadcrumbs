@@ -144,6 +144,18 @@ Git-backed like beads: JSONL exports on commit, imports on merge.
 
 > **Note:** `bdc init` automatically adds .gitignore entries to track JSONL files but ignore the SQLite database.
 
+## Git Worktree Support
+
+bdc automatically resolves the database when running from git worktrees, nested directories, or the main repo. Resolution order:
+
+1. `--db` flag (explicit path)
+2. `BDC_DB_PATH` environment variable (useful with direnv)
+3. Walk up from CWD looking for `.beadcrumbs/beadcrumbs.db`
+4. `git rev-parse --git-common-dir` parent (finds main repo from any worktree)
+5. Default: `.beadcrumbs/beadcrumbs.db` relative to CWD
+
+This means all worktrees share the main repo's beadcrumbs database automatically — no configuration needed. If a worktree has its own `.beadcrumbs/`, the walk-up finds it first (closest wins).
+
 ## Full Command Reference
 
 ### Capture & Thread Management

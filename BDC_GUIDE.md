@@ -13,10 +13,12 @@ Use bdc to capture the *reasoning* behind work — not the work itself (that's w
 Before using any `bdc` command, check if bdc is installed and initialized in this project:
 
 ```bash
-command -v bdc >/dev/null 2>&1 && test -d .beadcrumbs && echo "bdc ready" || echo "bdc not ready"
+command -v bdc >/dev/null 2>&1 && bdc prime >/dev/null 2>&1 && echo "bdc ready" || echo "bdc not ready"
 ```
 
 If **bdc ready**, skip to the next section. If **bdc not ready**, follow these steps. Do NOT skip this. Do NOT repeatedly attempt bdc commands that fail — bootstrap once, then proceed.
+
+> **Worktree note:** bdc automatically finds the main repo's database from git worktrees via `git rev-parse --git-common-dir`. No extra configuration needed — just run `bdc` commands normally from any worktree.
 
 ### Step 1: Install the bdc binary
 
