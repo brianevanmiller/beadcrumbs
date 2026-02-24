@@ -84,19 +84,10 @@ func locateDatabases() []locateResult {
 	}
 
 	// Strategy 2: git-common-dir from CWD
-	if out, err := exec.Command("git", "rev-parse", "--git-common-dir").Output(); err == nil {
-		gitCommonDir := strings.TrimSpace(string(out))
-		if gitCommonDir != "" && gitCommonDir != "." {
-			if !filepath.IsAbs(gitCommonDir) {
-				if cwd, err := os.Getwd(); err == nil {
-					gitCommonDir = filepath.Join(cwd, gitCommonDir)
-				}
-			}
-			repoRoot := filepath.Dir(gitCommonDir)
-			candidate := filepath.Join(repoRoot, ".beadcrumbs", "beadcrumbs.db")
-			if _, err := os.Stat(candidate); err == nil {
-				add(candidate, "git-common-dir")
-			}
+	if repoRoot := gitCommonDirRoot(""); repoRoot != "" {
+		candidate := filepath.Join(repoRoot, ".beadcrumbs", "beadcrumbs.db")
+		if _, err := os.Stat(candidate); err == nil {
+			add(candidate, "git-common-dir")
 		}
 	}
 
@@ -118,18 +109,10 @@ func locateDatabases() []locateResult {
 				}
 
 				// Check child's git-common-dir (child may be a worktree)
-				cmd := exec.Command("git", "-C", childDir, "rev-parse", "--git-common-dir")
-				if out, err := cmd.Output(); err == nil {
-					gitCommonDir := strings.TrimSpace(string(out))
-					if gitCommonDir != "" && gitCommonDir != "." {
-						if !filepath.IsAbs(gitCommonDir) {
-							gitCommonDir = filepath.Join(childDir, gitCommonDir)
-						}
-						repoRoot := filepath.Dir(gitCommonDir)
-						candidate := filepath.Join(repoRoot, ".beadcrumbs", "beadcrumbs.db")
-						if _, err := os.Stat(candidate); err == nil {
-							add(candidate, fmt.Sprintf("git-common-dir via %s", entry.Name()))
-						}
+				if repoRoot := gitCommonDirRoot(childDir); repoRoot != "" {
+					candidate := filepath.Join(repoRoot, ".beadcrumbs", "beadcrumbs.db")
+					if _, err := os.Stat(candidate); err == nil {
+						add(candidate, fmt.Sprintf("git-common-dir via %s", entry.Name()))
 					}
 				}
 			}

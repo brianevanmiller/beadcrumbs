@@ -84,26 +84,11 @@ func findBeadcrumbsDir() string {
 		dir = parent
 	}
 	// Try git-common-dir parent (worktree support)
-	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
-	output, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	gitCommonDir := strings.TrimSpace(string(output))
-	if gitCommonDir == "" || gitCommonDir == "." {
-		return ""
-	}
-	if !filepath.IsAbs(gitCommonDir) {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return ""
+	if repoRoot := gitCommonDirRoot(""); repoRoot != "" {
+		bcPath := filepath.Join(repoRoot, ".beadcrumbs")
+		if info, err := os.Stat(bcPath); err == nil && info.IsDir() {
+			return bcPath
 		}
-		gitCommonDir = filepath.Join(cwd, gitCommonDir)
-	}
-	repoRoot := filepath.Dir(gitCommonDir)
-	bcPath := filepath.Join(repoRoot, ".beadcrumbs")
-	if info, err := os.Stat(bcPath); err == nil && info.IsDir() {
-		return bcPath
 	}
 	return ""
 }
