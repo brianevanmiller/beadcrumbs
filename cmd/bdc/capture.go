@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/brianevanmiller/beadcrumbs/internal/beads"
+	gh "github.com/brianevanmiller/beadcrumbs/internal/github"
 	"github.com/brianevanmiller/beadcrumbs/internal/linear"
 	"github.com/brianevanmiller/beadcrumbs/internal/store"
 	"github.com/brianevanmiller/beadcrumbs/internal/types"
@@ -298,6 +299,11 @@ func resolveExternalThreadRef(ref string) (string, error) {
 		return resolveLinearRef(s, extRef)
 	}
 
+	// For GitHub refs, try to fetch PR title
+	if extRef.System == "github" {
+		return resolveGitHubRef(s, extRef)
+	}
+
 	// For bead refs, use the user-facing bd-xxx format as title
 	if extRef.System == "bead" {
 		return createThreadForExternalRef(s, extRef, "bd-"+extRef.ID)
@@ -326,6 +332,30 @@ func resolveLinearRef(s *store.Store, extRef *beads.ExternalRef) (string, error)
 	}
 
 	title := fmt.Sprintf("%s: %s", issue.ID, issue.Title)
+	return createThreadForExternalRef(s, extRef, title)
+}
+
+// resolveGitHubRef creates a thread linked to a GitHub PR,
+// fetching the PR title if the gh CLI is available.
+func resolveGitHubRef(s *store.Store, extRef *beads.ExternalRef) (string, error) {
+	ghCli, err := gh.Detect()
+	if err != nil {
+		return createThreadForExternalRef(s, extRef, extRef.ID)
+	}
+
+	// extRef.ID is "owner/repo#42" — extract the number for ViewPR
+	parts := strings.SplitN(extRef.ID, "#", 2)
+	if len(parts) != 2 {
+		return createThreadForExternalRef(s, extRef, extRef.ID)
+	}
+
+	pr, err := ghCli.ViewPR(parts[1])
+	if err != nil || pr == nil {
+		fmt.Fprintf(os.Stderr, "Warning: Could not fetch GitHub PR %s: %v\n", extRef.ID, err)
+		return createThreadForExternalRef(s, extRef, extRef.ID)
+	}
+
+	title := fmt.Sprintf("%s: %s", extRef.ID, pr.Title)
 	return createThreadForExternalRef(s, extRef, title)
 }
 

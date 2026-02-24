@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"github.com/brianevanmiller/beadcrumbs/internal/beads"
+	gh "github.com/brianevanmiller/beadcrumbs/internal/github"
 	"github.com/brianevanmiller/beadcrumbs/internal/linear"
 	"github.com/brianevanmiller/beadcrumbs/internal/store"
+	"github.com/brianevanmiller/beadcrumbs/internal/summary"
 	"github.com/brianevanmiller/beadcrumbs/internal/types"
 	"github.com/spf13/cobra"
 )
@@ -17,6 +19,7 @@ var (
 	threadStatus    string
 	threadLinearRef string
 	threadBeadRef   string
+	threadGitHubRef string
 )
 
 var threadCmd = &cobra.Command{
@@ -58,6 +61,13 @@ var threadNewCmd = &cobra.Command{
 		// Link to bead if --bead flag is set
 		if threadBeadRef != "" {
 			if err := linkThreadToBead(s, thread, threadBeadRef); err != nil {
+				return err
+			}
+		}
+
+		// Link to GitHub PR if --github flag is set
+		if threadGitHubRef != "" {
+			if err := linkThreadToGitHub(s, thread, threadGitHubRef); err != nil {
 				return err
 			}
 		}
@@ -149,6 +159,62 @@ func linkThreadToBead(s *store.Store, thread *types.InsightThread, beadRef strin
 	}
 	fmt.Printf("  Linked to %s\n", beads.FormatExternalRef(extRef))
 	return nil
+}
+
+// linkThreadToGitHub links a thread to a GitHub PR and optionally enriches the title.
+func linkThreadToGitHub(s *store.Store, thread *types.InsightThread, githubRef string) error {
+	// Normalize: accept "owner/repo#42", "github:owner/repo#42", or "gh:owner/repo#42"
+	ref := githubRef
+	if !strings.Contains(ref, ":") {
+		ref = "github:" + ref
+	}
+
+	extRef, err := beads.ParseExternalRef(ref)
+	if err != nil {
+		return fmt.Errorf("invalid GitHub reference: %w", err)
+	}
+
+	// Try to fetch PR title from gh CLI to enrich thread title
+	ghCli, ghErr := gh.Detect()
+	if ghErr == nil {
+		repo, prNumber := parseGitHubPRRef(extRef.ID)
+		if prNumber > 0 {
+			pr, fetchErr := ghCli.ViewPR(fmt.Sprintf("%d", prNumber))
+			if fetchErr == nil && pr != nil && pr.Title != "" {
+				thread.Title = fmt.Sprintf("%s#%d: %s", repo, prNumber, pr.Title)
+				thread.UpdatedAt = time.Now()
+				s.UpdateThread(thread)
+				fmt.Printf("  Title: %s\n", thread.Title)
+			}
+		}
+	}
+
+	// Create the mapping
+	now := time.Now()
+	mapping := &store.ExternalRefMapping{
+		ExternalRef: ref,
+		ThreadID:    thread.ID,
+		System:      extRef.System,
+		ExternalID:  extRef.ID,
+		Metadata:    "{}",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	if err := s.CreateExternalRefMapping(mapping); err != nil {
+		return fmt.Errorf("failed to link GitHub PR: %w", err)
+	}
+	fmt.Printf("  Linked to GitHub: %s\n", extRef.ID)
+	return nil
+}
+
+// parseGitHubPRRef parses "owner/repo#42" into repo and PR number.
+func parseGitHubPRRef(ref string) (repo string, number int) {
+	parts := strings.SplitN(ref, "#", 2)
+	if len(parts) != 2 {
+		return "", 0
+	}
+	fmt.Sscanf(parts[1], "%d", &number)
+	return parts[0], number
 }
 
 var threadLinkCmd = &cobra.Command{
@@ -359,9 +425,10 @@ var threadCloseCmd = &cobra.Command{
 
 		fmt.Printf("Thread %s closed with status: %s\n", threadID, newStatus)
 
-		// Push summary to Linear on conclude
+		// Push summaries to integrations on conclude
 		if newStatus == types.ThreadConcluded {
 			pushLinearSummaryOnClose(s, thread)
+			pushGitHubSummaryOnClose(s, thread)
 		}
 
 		return nil
@@ -410,7 +477,7 @@ func pushLinearSummaryOnClose(s *store.Store, thread *types.InsightThread) {
 	}
 
 	// Format and post
-	body := formatLinearSummary(thread, insights)
+	body := summary.FormatSummary(thread, insights)
 	if err := adapter.AddComment(linearMapping.ExternalID, body); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: Failed to post summary to Linear %s: %v\n", linearMapping.ExternalID, err)
 		return
@@ -419,57 +486,93 @@ func pushLinearSummaryOnClose(s *store.Store, thread *types.InsightThread) {
 	fmt.Printf("Posted insight summary to Linear %s\n", linearMapping.ExternalID)
 }
 
-// formatLinearSummary formats thread insights as a markdown comment for Linear.
-func formatLinearSummary(thread *types.InsightThread, insights []*types.Insight) string {
-	var sb strings.Builder
+// pushGitHubSummaryOnClose posts a summary comment to the linked GitHub PR.
+func pushGitHubSummaryOnClose(s *store.Store, thread *types.InsightThread) {
+	// Check if auto-push is enabled (opt-in, defaults to false)
+	autoPush, _ := s.GetConfig("github.auto_push")
+	if autoPush != "true" {
+		return
+	}
 
-	sb.WriteString(fmt.Sprintf("## Beadcrumbs: %s\n\n", thread.Title))
-	sb.WriteString(fmt.Sprintf("Thread `%s` concluded.\n\n", thread.ID))
+	// Get mappings for this thread
+	mappings, err := s.GetExternalRefMappingsByThread(thread.ID)
+	if err != nil {
+		return
+	}
 
-	// Group by type
-	var decisions, pivots, discoveries []*types.Insight
-	for _, ins := range insights {
-		switch ins.Type {
-		case types.InsightDecision:
-			decisions = append(decisions, ins)
-		case types.InsightPivot:
-			pivots = append(pivots, ins)
-		case types.InsightDiscovery:
-			discoveries = append(discoveries, ins)
+	// Find explicit GitHub mapping
+	var ghMapping *store.ExternalRefMapping
+	for _, m := range mappings {
+		if m.System == "github" {
+			ghMapping = m
+			break
 		}
 	}
 
-	if len(decisions) > 0 {
-		sb.WriteString("### Decisions\n")
-		for _, d := range decisions {
-			sb.WriteString(fmt.Sprintf("- %s\n", d.Content))
+	var prRepo string
+	var prNumber int
+
+	if ghMapping != nil {
+		// Parse "owner/repo#42" from ExternalID
+		prRepo, prNumber = parseGitHubPRRef(ghMapping.ExternalID)
+	} else {
+		// Auto-detect PR from current branch if not explicitly disabled
+		autoDetect, _ := s.GetConfig("github.auto_detect")
+		if autoDetect == "false" {
+			return
 		}
-		sb.WriteString("\n")
-	}
 
-	if len(pivots) > 0 {
-		sb.WriteString("### Pivots\n")
-		for _, p := range pivots {
-			sb.WriteString(fmt.Sprintf("- %s\n", p.Content))
+		ghCli, err := gh.Detect()
+		if err != nil {
+			return // gh not installed, silently skip
 		}
-		sb.WriteString("\n")
-	}
-
-	if len(discoveries) > 0 {
-		sb.WriteString("### Key Discoveries\n")
-		for _, d := range discoveries {
-			sb.WriteString(fmt.Sprintf("- %s\n", d.Content))
+		pr, err := ghCli.CurrentBranchPR()
+		if err != nil || pr == nil {
+			return // no PR for current branch, silently skip
 		}
-		sb.WriteString("\n")
+		prRepo = pr.Repo
+		prNumber = pr.Number
+
+		// Persist the auto-detected mapping for traceability
+		ref := fmt.Sprintf("github:%s#%d", pr.Repo, pr.Number)
+		now := time.Now()
+		mapping := &store.ExternalRefMapping{
+			ExternalRef: ref,
+			ThreadID:    thread.ID,
+			System:      "github",
+			ExternalID:  fmt.Sprintf("%s#%d", pr.Repo, pr.Number),
+			Metadata:    `{"auto_detected":true}`,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		}
+		s.CreateExternalRefMapping(mapping) // Best-effort
 	}
 
-	if thread.CurrentUnderstanding != "" {
-		sb.WriteString("### Summary\n")
-		sb.WriteString(thread.CurrentUnderstanding + "\n\n")
+	if prNumber == 0 {
+		return
 	}
 
-	sb.WriteString(fmt.Sprintf("*%d total insights tracked*\n", len(insights)))
-	return sb.String()
+	// Detect gh CLI
+	ghCli, err := gh.Detect()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: gh CLI not available, skipping PR comment.\n")
+		return
+	}
+
+	// Gather insights
+	insights, err := s.ListInsights(thread.ID, "", time.Time{}, "")
+	if err != nil || len(insights) == 0 {
+		return
+	}
+
+	// Format and post
+	body := summary.FormatSummary(thread, insights)
+	if err := ghCli.AddComment(prRepo, prNumber, body); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to post summary to GitHub %s#%d: %v\n", prRepo, prNumber, err)
+		return
+	}
+
+	fmt.Printf("Posted insight summary to GitHub %s#%d\n", prRepo, prNumber)
 }
 
 func init() {
@@ -482,6 +585,7 @@ func init() {
 
 	threadNewCmd.Flags().StringVar(&threadLinearRef, "linear", "", "link to Linear issue (e.g., ENG-456)")
 	threadNewCmd.Flags().StringVar(&threadBeadRef, "bead", "", "link to bead task (e.g., bd-abc1)")
+	threadNewCmd.Flags().StringVar(&threadGitHubRef, "github", "", "link to GitHub PR (e.g., owner/repo#42)")
 	threadListCmd.Flags().StringVar(&threadStatus, "status", "", "filter by status (active|concluded|abandoned)")
 	threadCloseCmd.Flags().StringVar(&threadStatus, "status", "concluded", "status to set (concluded|abandoned)")
 }
