@@ -141,23 +141,13 @@ bdc spawn ins-7f2a --title="Implement exponential backoff"
   beadcrumbs.db     # SQLite for queries
 ```
 
-Git-backed like beads: JSONL exports on commit, imports on merge.
-
-> **Note:** `bdc init` automatically adds .gitignore entries to track JSONL files but ignore the SQLite database.
+Git-backed like beads: JSONL exports on commit, imports on merge. Use `bdc init --stealth` for local-only mode that doesn't touch your repo. See the [Stealth Mode Guide](docs/guides/stealth-mode.md) for details and mode switching.
 
 ## Git Worktree Support
 
-bdc automatically resolves the database when running from git worktrees, nested directories, or the main repo. Resolution order:
+bdc automatically resolves the database from git worktrees, nested directories, or the main repo — no configuration needed. All worktrees share the main repo's database via `git rev-parse --git-common-dir`. If a worktree has its own `.beadcrumbs/`, it takes precedence (closest wins).
 
-1. `--db` flag (explicit path)
-2. `BDC_DB_PATH` environment variable (useful with direnv)
-3. Walk up from CWD looking for `.beadcrumbs/beadcrumbs.db`
-4. `git rev-parse --git-common-dir` parent (finds main repo from any worktree)
-5. Default: `.beadcrumbs/beadcrumbs.db` relative to CWD
-
-This means all worktrees share the main repo's beadcrumbs database automatically — no configuration needed. If a worktree has its own `.beadcrumbs/`, the walk-up finds it first (closest wins).
-
-If automatic resolution fails (e.g., CWD is a workspace parent that isn't a git repo), use `bdc locate` to find reachable databases and set `BDC_DB_PATH`.
+If automatic resolution fails (e.g., CWD is a workspace parent), use `bdc locate` to find reachable databases and set `BDC_DB_PATH`. See the [Stealth Mode Guide](docs/guides/stealth-mode.md#how-it-works-with-git-worktrees) for the full worktree topology.
 
 ## Full Command Reference
 
@@ -221,10 +211,11 @@ bdc spawn <insight-id> --title="..."  # Create task from insight
 bdc locate                            # Find databases reachable from CWD
 bdc prime                             # Output AI workflow context
 bdc setup claude                      # Configure Claude Code hooks
-bdc stealth                           # Convert to local-only mode
-bdc unstealth                         # Convert to git-tracked mode
+bdc stealth / unstealth               # Switch between local-only and git-tracked mode
 bdc stealth --status                  # Show current mode
 ```
+
+See [Stealth Mode Guide](docs/guides/stealth-mode.md) for mode switching details.
 
 ### Linear Integration
 ```bash
@@ -235,6 +226,8 @@ bdc linear push <thread-id>           # Post summary to Linear issue
 bdc linear config <key> [value]       # Get/set Linear config
 bdc thread new "title" --linear ENG-456  # Create thread linked to issue
 ```
+
+See [Linear Integration Guide](docs/guides/linear.md) for full setup and troubleshooting.
 
 ## Use Cases
 

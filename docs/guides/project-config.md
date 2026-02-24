@@ -202,6 +202,8 @@ bdc linear config auto_push false
 
 For full setup and troubleshooting, see the [Linear Integration Guide](linear.md).
 
-## Lifecycle Guide
+## More Guides
 
-For the complete session-by-session workflow, see [lifecycle.md](../../docs/guides/lifecycle.md) or your project's adapted version.
+- [Lifecycle Guide](lifecycle.md) — Session-by-session workflow from start to close
+- [Stealth Mode Guide](stealth-mode.md) — Local-only usage, worktree support, and mode switching
+- [Linear Integration](linear.md) — Full Linear setup, auto-push, troubleshooting

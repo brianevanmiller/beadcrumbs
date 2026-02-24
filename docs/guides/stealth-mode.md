@@ -138,3 +138,7 @@ Yes. The `bdc setup claude` hooks are stored in `~/.claude/settings.json` (globa
 
 **Q: What if I'm not in a git repo at all?**
 `bdc init --stealth` gracefully skips the `.git/info/exclude` setup and prints a notice. The database is still created and usable. This is useful for non-git projects or standalone directories.
+
+---
+
+**Related guides:** [AI Agent Guide](../../BDC_GUIDE.md) | [Lifecycle Guide](lifecycle.md) | [Project Config](project-config.md) | [Linear Integration](linear.md)

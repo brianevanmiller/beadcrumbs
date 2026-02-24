@@ -235,3 +235,7 @@ bdc linear push <thread-id>                         # Post summary to Linear iss
 bdc linear link <thread-id> <issue-id>              # Manually link thread to issue
 bdc thread new "Title" --linear ENG-456             # Create thread linked to Linear
 ```
+
+---
+
+**Related guides:** [AI Agent Guide](../../BDC_GUIDE.md) | [Stealth Mode](stealth-mode.md) | [Project Config](project-config.md) | [Linear Integration](linear.md)

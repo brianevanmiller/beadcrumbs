@@ -18,7 +18,7 @@ command -v bdc >/dev/null 2>&1 && bdc prime >/dev/null 2>&1 && echo "bdc ready" 
 
 If **bdc ready**, skip to the next section. If **bdc not ready**, follow the steps below. Do NOT skip this. Do NOT repeatedly attempt bdc commands that fail — bootstrap once, then proceed.
 
-> **Worktree note:** bdc automatically finds the main repo's database from git worktrees via `git rev-parse --git-common-dir`. No extra configuration needed — just run `bdc` commands normally from any worktree.
+> **Worktree note:** bdc automatically finds the main repo's database from git worktrees. No extra configuration needed. See the [Stealth Mode Guide](docs/guides/stealth-mode.md#how-it-works-with-git-worktrees) for the full worktree topology.
 
 ### Step 0: Check if bdc is installed but can't find a database
 
@@ -60,7 +60,7 @@ If all methods fail, inform the user they need Go installed (`brew install go` o
 **Ask the user** which mode they prefer before proceeding. Do not assume.
 
 - **Team mode** (`bdc init`): Tracks `.beadcrumbs/` JSONL files in git so other contributors can see reasoning history. Installs git hooks for auto-sync. Choose this if the team wants shared insight tracking.
-- **Local-only / stealth mode** (`bdc init --stealth`): Keeps beadcrumbs data local via `.git/info/exclude`. No git hooks installed. No changes to `.gitignore`. Choose this for personal use without affecting the repo. Can be converted later with `bdc unstealth`.
+- **Local-only / stealth mode** (`bdc init --stealth`): Keeps beadcrumbs data local via `.git/info/exclude`. No git hooks, no `.gitignore` changes. Choose this for personal use without affecting the repo. Convert later with `bdc unstealth`. See the [Stealth Mode Guide](docs/guides/stealth-mode.md).
 
 ### Step 3: Import existing data (cloned repos only)
 
@@ -320,13 +320,11 @@ bdc trace <bead-id>                         # Trace reasoning chain for a task
 bdc spawn <insight-id> --title="..."        # Create task from insight
 bdc thread link <thread-id> <ref>           # Link thread to any external ref
 
-# Setup
+# Setup (see docs/guides/stealth-mode.md for mode switching)
 bdc init                                    # Initialize in a new repo
 bdc init --stealth                          # Local-only (not tracked in git)
-bdc stealth                                 # Convert normal → stealth mode
-bdc unstealth                               # Convert stealth → normal mode
-bdc stealth --status                        # Show current mode
-bdc prime                                   # Install hooks, verify DB
+bdc stealth / unstealth                     # Switch between stealth and normal mode
+bdc prime                                   # Output AI workflow context
 
 # Linear integration (see docs/guides/linear.md)
 bdc linear setup                            # Detect and configure Linear CLI

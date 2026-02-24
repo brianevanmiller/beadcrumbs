@@ -222,3 +222,7 @@ If you have multiple Linear CLI tools installed and bdc is using the wrong one:
 bdc linear config cli_tool schpet    # Force a specific adapter
 bdc linear config cli_path /path/to/binary  # Or override the binary path entirely
 ```
+
+---
+
+**Related guides:** [AI Agent Guide](../../BDC_GUIDE.md) | [Stealth Mode](stealth-mode.md) | [Lifecycle Guide](lifecycle.md) | [Project Config](project-config.md)
