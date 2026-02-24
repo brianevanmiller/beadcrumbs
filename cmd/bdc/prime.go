@@ -64,11 +64,31 @@ func repoTracksBeadcrumbs() bool {
 	return len(strings.TrimSpace(string(output))) > 0
 }
 
-// findBeadcrumbsDir checks for .beadcrumbs/ in the current directory.
+// findBeadcrumbsDir walks up from CWD looking for .beadcrumbs/, then
+// falls back to git-common-dir parent for worktree support.
 // Returns the path if found, empty string otherwise.
 func findBeadcrumbsDir() string {
-	if info, err := os.Stat(".beadcrumbs"); err == nil && info.IsDir() {
-		return ".beadcrumbs"
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	for {
+		bcPath := filepath.Join(dir, ".beadcrumbs")
+		if info, err := os.Stat(bcPath); err == nil && info.IsDir() {
+			return bcPath
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	// Try git-common-dir parent (worktree support)
+	if repoRoot := gitCommonDirRoot(""); repoRoot != "" {
+		bcPath := filepath.Join(repoRoot, ".beadcrumbs")
+		if info, err := os.Stat(bcPath); err == nil && info.IsDir() {
+			return bcPath
+		}
 	}
 	return ""
 }

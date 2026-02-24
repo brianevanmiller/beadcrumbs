@@ -124,7 +124,8 @@ func setupStealthMode() error {
 	// Check if we're in a git repo
 	gitDir, err := getGitDir()
 	if err != nil {
-		return fmt.Errorf("not a git repository: %w", err)
+		fmt.Println("Not in a git repository - skipping .git/info/exclude setup")
+		return nil
 	}
 
 	excludePath := filepath.Join(gitDir, "info", "exclude")

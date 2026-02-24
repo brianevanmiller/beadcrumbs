@@ -47,6 +47,7 @@ bdc setup claude
 | `bdc feedback` | Show only external feedback |
 | `bdc questions` | Show open questions |
 | `bdc import file.txt` | Import from AI session transcript |
+| `bdc locate` | Find databases reachable from CWD |
 | `bdc linear setup` | Configure Linear integration |
 | `bdc linear status` | Show Linear integration status |
 
@@ -140,9 +141,13 @@ bdc spawn ins-7f2a --title="Implement exponential backoff"
   beadcrumbs.db     # SQLite for queries
 ```
 
-Git-backed like beads: JSONL exports on commit, imports on merge.
+Git-backed like beads: JSONL exports on commit, imports on merge. Use `bdc init --stealth` for local-only mode that doesn't touch your repo. See the [Stealth Mode Guide](docs/guides/stealth-mode.md) for details and mode switching.
 
-> **Note:** `bdc init` automatically adds .gitignore entries to track JSONL files but ignore the SQLite database.
+## Git Worktree Support
+
+bdc automatically resolves the database from git worktrees, nested directories, or the main repo — no configuration needed. All worktrees share the main repo's database via `git rev-parse --git-common-dir`. If a worktree has its own `.beadcrumbs/`, it takes precedence (closest wins).
+
+If automatic resolution fails (e.g., CWD is a workspace parent), use `bdc locate` to find reachable databases and set `BDC_DB_PATH`. See the [Stealth Mode Guide](docs/guides/stealth-mode.md#how-it-works-with-git-worktrees) for the full worktree topology.
 
 ## Full Command Reference
 
@@ -201,6 +206,17 @@ bdc trace <bead-id>                   # Trace insight chain
 bdc spawn <insight-id> --title="..."  # Create task from insight
 ```
 
+### Database & Setup
+```bash
+bdc locate                            # Find databases reachable from CWD
+bdc prime                             # Output AI workflow context
+bdc setup claude                      # Configure Claude Code hooks
+bdc stealth / unstealth               # Switch between local-only and git-tracked mode
+bdc stealth --status                  # Show current mode
+```
+
+See [Stealth Mode Guide](docs/guides/stealth-mode.md) for mode switching details.
+
 ### Linear Integration
 ```bash
 bdc linear setup                      # Detect and configure Linear CLI
@@ -210,6 +226,8 @@ bdc linear push <thread-id>           # Post summary to Linear issue
 bdc linear config <key> [value]       # Get/set Linear config
 bdc thread new "title" --linear ENG-456  # Create thread linked to issue
 ```
+
+See [Linear Integration Guide](docs/guides/linear.md) for full setup and troubleshooting.
 
 ## Use Cases
 
@@ -226,6 +244,7 @@ bdc thread new "title" --linear ENG-456  # Create thread linked to issue
 * **[Project Config Template](docs/guides/project-config.md)** — Author naming, thread conventions, signal vs noise guidance
 * **[Insight Types Deep Dive](docs/insight-types.md)** — When to use each of the 6 insight types
 * **[Linear Integration Guide](docs/guides/linear.md)** — Connect bdc to Linear for bi-directional issue linking
+* **[Stealth Mode Guide](docs/guides/stealth-mode.md)** — Local-only usage, worktree support, and mode switching
 * **[Pre-commit Framework Config](docs/guides/pre-commit-config.yaml)** — Alternative hook config for pre-commit users
 
 ## License

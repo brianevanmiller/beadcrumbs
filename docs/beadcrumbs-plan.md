@@ -402,9 +402,25 @@ bdc init --stealth
 ```
 
 This:
-- Adds `.beadcrumbs/` to `.git/info/exclude` (local gitignore)
+- Adds `.beadcrumbs/` to `.git/info/exclude` (local gitignore), if in a git repo
 - Stores `stealth_mode=true` in config
 - Skips git hook installation during `bdc prime`
+
+> If run outside a git repo, stealth mode skips the `.git/info/exclude` setup gracefully (prints a notice, continues).
+
+### Database Resolution
+
+bdc resolves the database path before every command using this precedence:
+
+1. `--db` flag (absolute precedence)
+2. `BDC_DB_PATH` environment variable
+3. Walk up from CWD for `.beadcrumbs/beadcrumbs.db` (handles nested dirs)
+4. `git rev-parse --git-common-dir` parent (handles worktrees in separate directory trees)
+5. Default: `.beadcrumbs/beadcrumbs.db` relative to CWD
+
+This enables transparent worktree support: all worktrees share the main repo's single database. The `bdc prime` command uses the same walk-up + git-common-dir strategy to find `.beadcrumbs/` for PRIME.md lookup.
+
+When automatic resolution fails (e.g., CWD is a workspace parent that isn't a git repo or worktree), `bdc locate` searches for databases by walking up, checking git-common-dir, and scanning child directories. It outputs found paths and suggests setting `BDC_DB_PATH`.
 
 ### Prime Command
 
