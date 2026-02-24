@@ -47,6 +47,7 @@ bdc setup claude
 | `bdc feedback` | Show only external feedback |
 | `bdc questions` | Show open questions |
 | `bdc import file.txt` | Import from AI session transcript |
+| `bdc locate` | Find databases reachable from CWD |
 | `bdc linear setup` | Configure Linear integration |
 | `bdc linear status` | Show Linear integration status |
 
@@ -156,6 +157,8 @@ bdc automatically resolves the database when running from git worktrees, nested 
 
 This means all worktrees share the main repo's beadcrumbs database automatically — no configuration needed. If a worktree has its own `.beadcrumbs/`, the walk-up finds it first (closest wins).
 
+If automatic resolution fails (e.g., CWD is a workspace parent that isn't a git repo), use `bdc locate` to find reachable databases and set `BDC_DB_PATH`.
+
 ## Full Command Reference
 
 ### Capture & Thread Management
@@ -211,6 +214,13 @@ bdc import file --dry-run             # Preview extraction
 ```bash
 bdc trace <bead-id>                   # Trace insight chain
 bdc spawn <insight-id> --title="..."  # Create task from insight
+```
+
+### Database & Setup
+```bash
+bdc locate                            # Find databases reachable from CWD
+bdc prime                             # Output AI workflow context
+bdc setup claude                      # Configure Claude Code hooks
 ```
 
 ### Linear Integration

@@ -16,9 +16,25 @@ Before using any `bdc` command, check if bdc is installed and initialized in thi
 command -v bdc >/dev/null 2>&1 && bdc prime >/dev/null 2>&1 && echo "bdc ready" || echo "bdc not ready"
 ```
 
-If **bdc ready**, skip to the next section. If **bdc not ready**, follow these steps. Do NOT skip this. Do NOT repeatedly attempt bdc commands that fail — bootstrap once, then proceed.
+If **bdc ready**, skip to the next section. If **bdc not ready**, follow the steps below. Do NOT skip this. Do NOT repeatedly attempt bdc commands that fail — bootstrap once, then proceed.
 
 > **Worktree note:** bdc automatically finds the main repo's database from git worktrees via `git rev-parse --git-common-dir`. No extra configuration needed — just run `bdc` commands normally from any worktree.
+
+### Step 0: Check if bdc is installed but can't find a database
+
+If `command -v bdc` succeeds but `bdc prime` produces no output, the database may exist in a different directory tree (e.g., you're in a workspace parent, not inside a git repo or worktree). Run:
+
+```bash
+bdc locate
+```
+
+This searches for databases by walking up from CWD, checking git worktree roots, and scanning child directories. If databases are found, present the numbered list to the user and ask which to use. Include an option for the user to enter a path manually. Once chosen, set `BDC_DB_PATH`:
+
+```bash
+export BDC_DB_PATH="<chosen path>"
+```
+
+For persistent activation, add to `.envrc` (with direnv) or the project's shell config. Then re-run the readiness check above. If `bdc locate` finds nothing, continue with Step 1 below.
 
 ### Step 1: Install the bdc binary
 

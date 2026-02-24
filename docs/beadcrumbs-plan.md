@@ -420,6 +420,8 @@ bdc resolves the database path before every command using this precedence:
 
 This enables transparent worktree support: all worktrees share the main repo's single database. The `bdc prime` command uses the same walk-up + git-common-dir strategy to find `.beadcrumbs/` for PRIME.md lookup.
 
+When automatic resolution fails (e.g., CWD is a workspace parent that isn't a git repo or worktree), `bdc locate` searches for databases by walking up, checking git-common-dir, and scanning child directories. It outputs found paths and suggests setting `BDC_DB_PATH`.
+
 ### Prime Command
 
 Set up the environment after init or on a new machine:
