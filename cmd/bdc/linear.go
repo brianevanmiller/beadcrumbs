@@ -9,6 +9,7 @@ import (
 	"github.com/brianevanmiller/beadcrumbs/internal/beads"
 	"github.com/brianevanmiller/beadcrumbs/internal/linear"
 	"github.com/brianevanmiller/beadcrumbs/internal/store"
+	"github.com/brianevanmiller/beadcrumbs/internal/summary"
 	"github.com/spf13/cobra"
 )
 
@@ -247,7 +248,7 @@ var linearPushCmd = &cobra.Command{
 			return fmt.Errorf("no insights in thread %s", threadID)
 		}
 
-		body := formatLinearSummary(thread, insights)
+		body := summary.FormatSummary(thread, insights)
 		if err := adapter.AddComment(linearMapping.ExternalID, body); err != nil {
 			return fmt.Errorf("failed to post comment: %w", err)
 		}

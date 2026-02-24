@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	gh "github.com/brianevanmiller/beadcrumbs/internal/github"
 	"github.com/brianevanmiller/beadcrumbs/internal/linear"
 	"github.com/brianevanmiller/beadcrumbs/internal/store"
 	"github.com/spf13/cobra"
@@ -110,8 +111,9 @@ This is useful when you want to use beadcrumbs without committing files to the r
 				fmt.Println("Tip: Run 'bdc setup claude' to integrate with Claude Code")
 			}
 
-			// Non-blocking Linear CLI detection
+			// Non-blocking CLI detection
 			detectLinearOnInit()
+			detectGitHubOnInit()
 		}
 
 		return nil
@@ -345,6 +347,27 @@ func detectLinearOnInit() {
 		fmt.Printf("  Found: %s (%s) — %s\n", a.Name(), a.BinPath(), authStatus)
 	}
 	fmt.Println("  Run 'bdc linear setup' to configure.")
+}
+
+// detectGitHubOnInit checks for installed gh CLI and reports findings.
+// This is informational only — bdc init succeeds regardless.
+func detectGitHubOnInit() {
+	fmt.Println()
+	fmt.Println("Checking for GitHub CLI (gh)...")
+	ghCli, err := gh.Detect()
+	if err != nil {
+		fmt.Println("  gh CLI not detected. To enable GitHub PR integration:")
+		fmt.Println("    Install: https://cli.github.com")
+		fmt.Println("  Then run: bdc github setup")
+		return
+	}
+
+	authStatus := "not authenticated"
+	if err := ghCli.CheckAuth(); err == nil {
+		authStatus = "authenticated"
+	}
+	fmt.Printf("  Found: gh (%s) — %s\n", ghCli.BinPath(), authStatus)
+	fmt.Println("  Run 'bdc github setup' to configure.")
 }
 
 func init() {
