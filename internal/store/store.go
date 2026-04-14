@@ -158,13 +158,14 @@ func (s *Store) CreateInsight(insight *types.Insight) error {
 func (s *Store) GetInsight(id string) (*types.Insight, error) {
 	var insight types.Insight
 	var sourceParticipantsJSON, tagsJSON, endorsedByJSON sql.NullString
-	var authorID, threadID sql.NullString
+	var authorID, threadID, contentHash sql.NullString
 
 	err := s.db.QueryRow(`
 		SELECT
 			id, timestamp, content, summary, type, confidence,
 			source_type, source_ref, source_participants,
-			thread_id, author_id, endorsed_by, tags, created_by, created_at
+			thread_id, author_id, endorsed_by, tags, created_by, created_at,
+			content_hash
 		FROM insights
 		WHERE id = ?
 	`, id).Scan(
@@ -183,6 +184,7 @@ func (s *Store) GetInsight(id string) (*types.Insight, error) {
 		&tagsJSON,
 		&insight.CreatedBy,
 		&insight.CreatedAt,
+		&contentHash,
 	)
 
 	if err == sql.ErrNoRows {
@@ -198,6 +200,9 @@ func (s *Store) GetInsight(id string) (*types.Insight, error) {
 	}
 	if threadID.Valid {
 		insight.ThreadID = threadID.String
+	}
+	if contentHash.Valid {
+		insight.ContentHash = contentHash.String
 	}
 
 	// Deserialize complex fields
@@ -329,7 +334,7 @@ func (s *Store) DeleteInsight(id string) error {
 // Pass empty string for threadID, insightType, or sourceRef to skip that filter.
 // Pass zero time for since to skip time filter.
 func (s *Store) ListInsights(threadID string, insightType types.InsightType, since time.Time, sourceRef string) ([]*types.Insight, error) {
-	query := "SELECT id, timestamp, content, summary, type, confidence, source_type, source_ref, source_participants, thread_id, author_id, endorsed_by, tags, created_by, created_at FROM insights WHERE 1=1"
+	query := "SELECT id, timestamp, content, summary, type, confidence, source_type, source_ref, source_participants, thread_id, author_id, endorsed_by, tags, created_by, created_at, content_hash FROM insights WHERE 1=1"
 	args := []interface{}{}
 
 	if threadID != "" {
@@ -365,7 +370,7 @@ func (s *Store) ListInsights(threadID string, insightType types.InsightType, sin
 		var insight types.Insight
 		var sourceParticipantsJSON, tagsJSON sql.NullString
 		var endorsedByJSON sql.NullString
-		var authorID, threadID sql.NullString
+		var authorID, threadID, contentHash sql.NullString
 
 		err := rows.Scan(
 			&insight.ID,
@@ -383,6 +388,7 @@ func (s *Store) ListInsights(threadID string, insightType types.InsightType, sin
 			&tagsJSON,
 			&insight.CreatedBy,
 			&insight.CreatedAt,
+			&contentHash,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan insight: %w", err)
@@ -394,6 +400,9 @@ func (s *Store) ListInsights(threadID string, insightType types.InsightType, sin
 		}
 		if threadID.Valid {
 			insight.ThreadID = threadID.String
+		}
+		if contentHash.Valid {
+			insight.ContentHash = contentHash.String
 		}
 
 		// Deserialize complex fields
@@ -431,7 +440,8 @@ func (s *Store) SearchInsights(query string) ([]*types.Insight, error) {
 	rows, err := s.db.Query(`
 		SELECT i.id, i.timestamp, i.content, i.summary, i.type, i.confidence,
 		       i.source_type, i.source_ref, i.source_participants,
-		       i.thread_id, i.author_id, i.endorsed_by, i.tags, i.created_by, i.created_at
+		       i.thread_id, i.author_id, i.endorsed_by, i.tags, i.created_by, i.created_at,
+		       i.content_hash
 		FROM insights i
 		JOIN insights_fts fts ON i.rowid = fts.rowid
 		WHERE insights_fts MATCH ?
@@ -446,7 +456,7 @@ func (s *Store) SearchInsights(query string) ([]*types.Insight, error) {
 	for rows.Next() {
 		var insight types.Insight
 		var sourceParticipantsJSON, tagsJSON, endorsedByJSON sql.NullString
-		var authorID, threadID sql.NullString
+		var authorID, threadID, contentHash sql.NullString
 
 		err := rows.Scan(
 			&insight.ID,
@@ -464,6 +474,7 @@ func (s *Store) SearchInsights(query string) ([]*types.Insight, error) {
 			&tagsJSON,
 			&insight.CreatedBy,
 			&insight.CreatedAt,
+			&contentHash,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan insight: %w", err)
@@ -475,6 +486,9 @@ func (s *Store) SearchInsights(query string) ([]*types.Insight, error) {
 		}
 		if threadID.Valid {
 			insight.ThreadID = threadID.String
+		}
+		if contentHash.Valid {
+			insight.ContentHash = contentHash.String
 		}
 
 		// Deserialize complex fields
