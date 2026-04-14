@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -28,7 +29,7 @@ Examples:
   bdc list --since 1w               # Show insights from last week
   bdc list --author brian           # Show insights by author (exact match)`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		s, err := getStore()
+		s, err := getReadOnlyStore()
 		if err != nil {
 			return err
 		}
@@ -87,7 +88,20 @@ Examples:
 		}
 
 		if len(insights) == 0 {
+			if jsonOutput {
+				fmt.Println("[]")
+				return nil
+			}
 			fmt.Println("No insights found")
+			return nil
+		}
+
+		if jsonOutput {
+			out, err := json.MarshalIndent(insights, "", "  ")
+			if err != nil {
+				return fmt.Errorf("failed to marshal JSON: %w", err)
+			}
+			fmt.Println(string(out))
 			return nil
 		}
 

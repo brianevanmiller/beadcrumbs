@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -26,7 +27,7 @@ Example:
 }
 
 func runPivots(cmd *cobra.Command, args []string) error {
-	st, err := getStore()
+	st, err := getReadOnlyStore()
 	if err != nil {
 		return err
 	}
@@ -44,11 +45,27 @@ func runPivots(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(insights) == 0 {
+		if jsonOutput {
+			fmt.Println("[]")
+			return nil
+		}
 		if threadID != "" {
 			fmt.Printf("No pivots found for thread %s\n", threadID)
 		} else {
 			fmt.Println("No pivots found")
 		}
+		return nil
+	}
+
+	// Sort insights by timestamp (oldest first for timeline view)
+	reverseInsights(insights)
+
+	if jsonOutput {
+		out, err := json.MarshalIndent(insights, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal JSON: %w", err)
+		}
+		fmt.Println(string(out))
 		return nil
 	}
 
@@ -60,9 +77,6 @@ func runPivots(cmd *cobra.Command, args []string) error {
 			fmt.Println()
 		}
 	}
-
-	// Sort insights by timestamp (oldest first for timeline view)
-	reverseInsights(insights)
 
 	// Print each pivot
 	for _, insight := range insights {

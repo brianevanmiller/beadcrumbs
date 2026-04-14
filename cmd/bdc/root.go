@@ -12,8 +12,9 @@ import (
 )
 
 var (
-	dbPath string
-	storeInstance *store.Store
+	dbPath        string
+	jsonOutput    bool
+	storeInstance store.Storage
 )
 
 var rootCmd = &cobra.Command{
@@ -29,6 +30,7 @@ that lead to the bigger tasks (beads) in your workflow.`,
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&dbPath, "db", ".beadcrumbs/beadcrumbs.db", "path to the database")
+	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "output in JSON format")
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		// Skip resolution for commands that manage their own DB path
 		switch cmd.Name() {
@@ -40,8 +42,8 @@ func init() {
 	}
 }
 
-// getStore returns the store instance, initializing it if necessary.
-func getStore() (*store.Store, error) {
+// getStore returns the store instance (read-write), initializing it if necessary.
+func getStore() (store.Storage, error) {
 	if storeInstance != nil {
 		return storeInstance, nil
 	}
@@ -57,10 +59,33 @@ func getStore() (*store.Store, error) {
 		return nil, fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	// Open the store
+	// Open the store (runs migrations)
 	s, err := store.NewStore(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+
+	storeInstance = s
+	return s, nil
+}
+
+// getReadOnlyStore returns a read-only store instance, initializing it if necessary.
+// Used by query-only commands (list, timeline, show, questions, decisions, etc.)
+// to avoid acquiring write locks or triggering file watchers.
+func getReadOnlyStore() (store.Storage, error) {
+	if storeInstance != nil {
+		return storeInstance, nil
+	}
+
+	// Check if the database exists
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("database not found at %s. Run 'bdc init' first", dbPath)
+	}
+
+	// Open in read-only mode — no migrations, no JSONL import
+	s, err := store.NewReadOnlyStore(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database (read-only): %w", err)
 	}
 
 	storeInstance = s

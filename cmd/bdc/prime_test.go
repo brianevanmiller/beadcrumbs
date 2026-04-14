@@ -56,8 +56,11 @@ func TestFindBeadcrumbsDir_Present(t *testing.T) {
 	}
 
 	got := findBeadcrumbsDir()
-	if got != ".beadcrumbs" {
-		t.Errorf("findBeadcrumbsDir() = %q, want %q", got, ".beadcrumbs")
+	// findBeadcrumbsDir returns absolute paths; on macOS /var -> /private/var
+	if got == "" {
+		t.Error("findBeadcrumbsDir() returned empty string, want non-empty path ending in .beadcrumbs")
+	} else if !strings.HasSuffix(got, ".beadcrumbs") {
+		t.Errorf("findBeadcrumbsDir() = %q, want path ending in .beadcrumbs", got)
 	}
 }
 

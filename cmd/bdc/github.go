@@ -125,7 +125,7 @@ type ghLinkedThread struct {
 }
 
 // listGitHubLinkedThreads finds all threads linked to GitHub PRs.
-func listGitHubLinkedThreads(s *store.Store) ([]ghLinkedThread, error) {
+func listGitHubLinkedThreads(s store.Storage) ([]ghLinkedThread, error) {
 	rows, err := s.DB().Query(`
 		SELECT m.external_ref, m.thread_id, m.system, m.external_id, m.metadata, m.created_at, m.updated_at,
 		       t.title, t.status

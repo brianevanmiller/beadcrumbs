@@ -38,6 +38,25 @@ func NewStore(dbPath string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
+// NewReadOnlyStore opens the SQLite database at dbPath in read-only mode.
+// Migrations and JSONL import are NOT run — this is a pure query path.
+// Use for list, show, timeline, and other query-only commands.
+func NewReadOnlyStore(dbPath string) (*Store, error) {
+	// SQLite URI mode=ro prevents any writes, including WAL checkpoints.
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database (read-only): %w", err)
+	}
+
+	// Verify the connection is usable.
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to connect to database (read-only): %w", err)
+	}
+
+	return &Store{db: db}, nil
+}
+
 // DB returns the underlying database connection for advanced queries.
 func (s *Store) DB() *sql.DB {
 	return s.db
@@ -56,7 +75,22 @@ func (s *Store) Close() error {
 }
 
 // CreateInsight inserts a new insight into the database.
+// Returns an error if an insight with the same content already exists (duplicate detection).
 func (s *Store) CreateInsight(insight *types.Insight) error {
+	// Compute and store the content hash for dedup.
+	hash := insight.ComputeContentHash()
+	insight.ContentHash = hash
+
+	// Check for an existing insight with the same content hash.
+	var existingID string
+	err := s.db.QueryRow(`SELECT id FROM insights WHERE content_hash = ? LIMIT 1`, hash).Scan(&existingID)
+	if err == nil {
+		return fmt.Errorf("duplicate insight: identical content already captured as %s", existingID)
+	}
+	if err != sql.ErrNoRows {
+		return fmt.Errorf("failed to check for duplicate insight: %w", err)
+	}
+
 	// Serialize complex fields
 	sourceParticipants, err := json.Marshal(insight.Source.Participants)
 	if err != nil {
@@ -92,8 +126,8 @@ func (s *Store) CreateInsight(insight *types.Insight) error {
 		INSERT INTO insights (
 			id, timestamp, content, summary, type, confidence,
 			source_type, source_ref, source_participants,
-			thread_id, author_id, endorsed_by, tags, created_by, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			thread_id, author_id, endorsed_by, tags, created_by, created_at, content_hash
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		insight.ID,
 		insight.Timestamp,
@@ -110,6 +144,7 @@ func (s *Store) CreateInsight(insight *types.Insight) error {
 		string(tags),
 		insight.CreatedBy,
 		insight.CreatedAt,
+		insight.ContentHash,
 	)
 
 	if err != nil {
@@ -123,13 +158,14 @@ func (s *Store) CreateInsight(insight *types.Insight) error {
 func (s *Store) GetInsight(id string) (*types.Insight, error) {
 	var insight types.Insight
 	var sourceParticipantsJSON, tagsJSON, endorsedByJSON sql.NullString
-	var authorID, threadID sql.NullString
+	var authorID, threadID, contentHash sql.NullString
 
 	err := s.db.QueryRow(`
 		SELECT
 			id, timestamp, content, summary, type, confidence,
 			source_type, source_ref, source_participants,
-			thread_id, author_id, endorsed_by, tags, created_by, created_at
+			thread_id, author_id, endorsed_by, tags, created_by, created_at,
+			content_hash
 		FROM insights
 		WHERE id = ?
 	`, id).Scan(
@@ -148,6 +184,7 @@ func (s *Store) GetInsight(id string) (*types.Insight, error) {
 		&tagsJSON,
 		&insight.CreatedBy,
 		&insight.CreatedAt,
+		&contentHash,
 	)
 
 	if err == sql.ErrNoRows {
@@ -163,6 +200,9 @@ func (s *Store) GetInsight(id string) (*types.Insight, error) {
 	}
 	if threadID.Valid {
 		insight.ThreadID = threadID.String
+	}
+	if contentHash.Valid {
+		insight.ContentHash = contentHash.String
 	}
 
 	// Deserialize complex fields
@@ -294,7 +334,7 @@ func (s *Store) DeleteInsight(id string) error {
 // Pass empty string for threadID, insightType, or sourceRef to skip that filter.
 // Pass zero time for since to skip time filter.
 func (s *Store) ListInsights(threadID string, insightType types.InsightType, since time.Time, sourceRef string) ([]*types.Insight, error) {
-	query := "SELECT id, timestamp, content, summary, type, confidence, source_type, source_ref, source_participants, thread_id, author_id, endorsed_by, tags, created_by, created_at FROM insights WHERE 1=1"
+	query := "SELECT id, timestamp, content, summary, type, confidence, source_type, source_ref, source_participants, thread_id, author_id, endorsed_by, tags, created_by, created_at, content_hash FROM insights WHERE 1=1"
 	args := []interface{}{}
 
 	if threadID != "" {
@@ -330,7 +370,7 @@ func (s *Store) ListInsights(threadID string, insightType types.InsightType, sin
 		var insight types.Insight
 		var sourceParticipantsJSON, tagsJSON sql.NullString
 		var endorsedByJSON sql.NullString
-		var authorID, threadID sql.NullString
+		var authorID, threadID, contentHash sql.NullString
 
 		err := rows.Scan(
 			&insight.ID,
@@ -348,6 +388,7 @@ func (s *Store) ListInsights(threadID string, insightType types.InsightType, sin
 			&tagsJSON,
 			&insight.CreatedBy,
 			&insight.CreatedAt,
+			&contentHash,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan insight: %w", err)
@@ -359,6 +400,9 @@ func (s *Store) ListInsights(threadID string, insightType types.InsightType, sin
 		}
 		if threadID.Valid {
 			insight.ThreadID = threadID.String
+		}
+		if contentHash.Valid {
+			insight.ContentHash = contentHash.String
 		}
 
 		// Deserialize complex fields
@@ -396,7 +440,8 @@ func (s *Store) SearchInsights(query string) ([]*types.Insight, error) {
 	rows, err := s.db.Query(`
 		SELECT i.id, i.timestamp, i.content, i.summary, i.type, i.confidence,
 		       i.source_type, i.source_ref, i.source_participants,
-		       i.thread_id, i.author_id, i.endorsed_by, i.tags, i.created_by, i.created_at
+		       i.thread_id, i.author_id, i.endorsed_by, i.tags, i.created_by, i.created_at,
+		       i.content_hash
 		FROM insights i
 		JOIN insights_fts fts ON i.rowid = fts.rowid
 		WHERE insights_fts MATCH ?
@@ -411,7 +456,7 @@ func (s *Store) SearchInsights(query string) ([]*types.Insight, error) {
 	for rows.Next() {
 		var insight types.Insight
 		var sourceParticipantsJSON, tagsJSON, endorsedByJSON sql.NullString
-		var authorID, threadID sql.NullString
+		var authorID, threadID, contentHash sql.NullString
 
 		err := rows.Scan(
 			&insight.ID,
@@ -429,6 +474,7 @@ func (s *Store) SearchInsights(query string) ([]*types.Insight, error) {
 			&tagsJSON,
 			&insight.CreatedBy,
 			&insight.CreatedAt,
+			&contentHash,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan insight: %w", err)
@@ -440,6 +486,9 @@ func (s *Store) SearchInsights(query string) ([]*types.Insight, error) {
 		}
 		if threadID.Valid {
 			insight.ThreadID = threadID.String
+		}
+		if contentHash.Valid {
+			insight.ContentHash = contentHash.String
 		}
 
 		// Deserialize complex fields
@@ -945,6 +994,11 @@ func (s *Store) ListOrigins() ([]*OriginSummary, error) {
 
 // UpsertInsight inserts or updates an insight by ID (for JSONL import).
 func (s *Store) UpsertInsight(insight *types.Insight) error {
+	// Ensure content hash is set (may already be populated from JSONL).
+	if insight.ContentHash == "" {
+		insight.ContentHash = insight.ComputeContentHash()
+	}
+
 	sourceParticipants, err := json.Marshal(insight.Source.Participants)
 	if err != nil {
 		return fmt.Errorf("failed to marshal source participants: %w", err)
@@ -978,8 +1032,8 @@ func (s *Store) UpsertInsight(insight *types.Insight) error {
 		INSERT INTO insights (
 			id, timestamp, content, summary, type, confidence,
 			source_type, source_ref, source_participants,
-			thread_id, author_id, endorsed_by, tags, created_by, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			thread_id, author_id, endorsed_by, tags, created_by, created_at, content_hash
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			timestamp = excluded.timestamp,
 			content = excluded.content,
@@ -994,7 +1048,8 @@ func (s *Store) UpsertInsight(insight *types.Insight) error {
 			endorsed_by = excluded.endorsed_by,
 			tags = excluded.tags,
 			created_by = excluded.created_by,
-			created_at = excluded.created_at
+			created_at = excluded.created_at,
+			content_hash = excluded.content_hash
 	`,
 		insight.ID,
 		insight.Timestamp,
@@ -1011,6 +1066,7 @@ func (s *Store) UpsertInsight(insight *types.Insight) error {
 		string(tags),
 		insight.CreatedBy,
 		insight.CreatedAt,
+		insight.ContentHash,
 	)
 
 	if err != nil {

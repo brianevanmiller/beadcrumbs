@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -50,8 +51,6 @@ var threadNewCmd = &cobra.Command{
 			return fmt.Errorf("failed to save thread: %w", err)
 		}
 
-		fmt.Printf("Created thread: %s\n", thread.ID)
-
 		// Link to Linear issue if --linear flag is set
 		if threadLinearRef != "" {
 			if err := linkThreadToLinear(s, thread, threadLinearRef); err != nil {
@@ -73,12 +72,22 @@ var threadNewCmd = &cobra.Command{
 			}
 		}
 
+		if jsonOutput {
+			out, err := json.MarshalIndent(thread, "", "  ")
+			if err != nil {
+				return fmt.Errorf("failed to marshal JSON: %w", err)
+			}
+			fmt.Println(string(out))
+			return nil
+		}
+
+		fmt.Printf("Created thread: %s\n", thread.ID)
 		return nil
 	},
 }
 
 // linkThreadToLinear links a thread to a Linear issue and optionally enriches the title.
-func linkThreadToLinear(s *store.Store, thread *types.InsightThread, linearRef string) error {
+func linkThreadToLinear(s store.Storage, thread *types.InsightThread, linearRef string) error {
 	// Normalize: accept both "ENG-456" and "linear:ENG-456"
 	ref := linearRef
 	if !strings.Contains(ref, ":") {
@@ -101,7 +110,9 @@ func linkThreadToLinear(s *store.Store, thread *types.InsightThread, linearRef s
 			thread.Title = fmt.Sprintf("%s: %s", issue.ID, issue.Title)
 			thread.UpdatedAt = time.Now()
 			s.UpdateThread(thread)
-			fmt.Printf("  Title: %s\n", thread.Title)
+			if !jsonOutput {
+				fmt.Printf("  Title: %s\n", thread.Title)
+			}
 		}
 	}
 
@@ -119,12 +130,14 @@ func linkThreadToLinear(s *store.Store, thread *types.InsightThread, linearRef s
 	if err := s.CreateExternalRefMapping(mapping); err != nil {
 		return fmt.Errorf("failed to link Linear issue: %w", err)
 	}
-	fmt.Printf("  Linked to Linear: %s\n", extRef.ID)
+	if !jsonOutput {
+		fmt.Printf("  Linked to Linear: %s\n", extRef.ID)
+	}
 	return nil
 }
 
 // linkThreadToBead links a thread to a bead via an external ref mapping.
-func linkThreadToBead(s *store.Store, thread *types.InsightThread, beadRef string) error {
+func linkThreadToBead(s store.Storage, thread *types.InsightThread, beadRef string) error {
 	if !beads.IsBeadID(beadRef) {
 		return fmt.Errorf("invalid bead reference: %s (expected bd-xxx or bead-xxx)", beadRef)
 	}
@@ -139,7 +152,9 @@ func linkThreadToBead(s *store.Store, thread *types.InsightThread, beadRef strin
 	existing, _ := s.GetExternalRefMappingByRef(ref)
 	if existing != nil {
 		if existing.ThreadID == thread.ID {
-			fmt.Printf("  Already linked to %s\n", beads.FormatExternalRef(extRef))
+			if !jsonOutput {
+				fmt.Printf("  Already linked to %s\n", beads.FormatExternalRef(extRef))
+			}
 			return nil
 		}
 		return fmt.Errorf("reference %s is already linked to thread %s", ref, existing.ThreadID)
@@ -158,12 +173,14 @@ func linkThreadToBead(s *store.Store, thread *types.InsightThread, beadRef strin
 	if err := s.CreateExternalRefMapping(mapping); err != nil {
 		return fmt.Errorf("failed to link bead: %w", err)
 	}
-	fmt.Printf("  Linked to %s\n", beads.FormatExternalRef(extRef))
+	if !jsonOutput {
+		fmt.Printf("  Linked to %s\n", beads.FormatExternalRef(extRef))
+	}
 	return nil
 }
 
 // linkThreadToGitHub links a thread to a GitHub PR and optionally enriches the title.
-func linkThreadToGitHub(s *store.Store, thread *types.InsightThread, githubRef string) error {
+func linkThreadToGitHub(s store.Storage, thread *types.InsightThread, githubRef string) error {
 	// Normalize: accept "owner/repo#42", "github:owner/repo#42", or "gh:owner/repo#42"
 	ref := githubRef
 	if !strings.Contains(ref, ":") {
@@ -185,7 +202,9 @@ func linkThreadToGitHub(s *store.Store, thread *types.InsightThread, githubRef s
 				thread.Title = fmt.Sprintf("%s#%d: %s", repo, prNumber, pr.Title)
 				thread.UpdatedAt = time.Now()
 				s.UpdateThread(thread)
-				fmt.Printf("  Title: %s\n", thread.Title)
+				if !jsonOutput {
+					fmt.Printf("  Title: %s\n", thread.Title)
+				}
 			}
 		}
 	}
@@ -204,7 +223,9 @@ func linkThreadToGitHub(s *store.Store, thread *types.InsightThread, githubRef s
 	if err := s.CreateExternalRefMapping(mapping); err != nil {
 		return fmt.Errorf("failed to link GitHub PR: %w", err)
 	}
-	fmt.Printf("  Linked to GitHub: %s\n", extRef.ID)
+	if !jsonOutput {
+		fmt.Printf("  Linked to GitHub: %s\n", extRef.ID)
+	}
 	return nil
 }
 
@@ -304,7 +325,7 @@ var threadShowCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		threadID := args[0]
 
-		s, err := getStore()
+		s, err := getReadOnlyStore()
 		if err != nil {
 			return err
 		}
@@ -317,6 +338,25 @@ var threadShowCmd = &cobra.Command{
 		}
 		if thread == nil {
 			return fmt.Errorf("thread not found: %s", threadID)
+		}
+
+		// Get insights in this thread
+		insights, err := s.ListInsights(threadID, "", time.Time{}, "")
+		if err != nil {
+			return fmt.Errorf("failed to get insights: %w", err)
+		}
+
+		if jsonOutput {
+			detail := threadDetail{
+				InsightThread: thread,
+				Insights:      insights,
+			}
+			out, err := json.MarshalIndent(detail, "", "  ")
+			if err != nil {
+				return fmt.Errorf("failed to marshal JSON: %w", err)
+			}
+			fmt.Println(string(out))
+			return nil
 		}
 
 		// Display thread details
@@ -336,12 +376,6 @@ var threadShowCmd = &cobra.Command{
 			fmt.Printf("\nCurrent Understanding:\n%s\n", thread.CurrentUnderstanding)
 		}
 
-		// Get insights in this thread
-		insights, err := s.ListInsights(threadID, "", time.Time{}, "")
-		if err != nil {
-			return fmt.Errorf("failed to get insights: %w", err)
-		}
-
 		if len(insights) > 0 {
 			fmt.Printf("\nInsights (%d):\n", len(insights))
 			for _, insight := range insights {
@@ -357,7 +391,7 @@ var threadListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List threads",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		s, err := getStore()
+		s, err := getReadOnlyStore()
 		if err != nil {
 			return err
 		}
@@ -376,7 +410,20 @@ var threadListCmd = &cobra.Command{
 		}
 
 		if len(threads) == 0 {
+			if jsonOutput {
+				fmt.Println("[]")
+				return nil
+			}
 			fmt.Println("No threads found")
+			return nil
+		}
+
+		if jsonOutput {
+			out, err := json.MarshalIndent(threads, "", "  ")
+			if err != nil {
+				return fmt.Errorf("failed to marshal JSON: %w", err)
+			}
+			fmt.Println(string(out))
 			return nil
 		}
 
@@ -427,20 +474,28 @@ var threadCloseCmd = &cobra.Command{
 			return fmt.Errorf("failed to update thread status: %w", err)
 		}
 
-		fmt.Printf("Thread %s closed with status: %s\n", threadID, newStatus)
-
 		// Push summaries to integrations on conclude
 		if newStatus == types.ThreadConcluded {
 			pushLinearSummaryOnClose(s, thread)
 			pushGitHubSummaryOnClose(s, thread)
 		}
 
+		if jsonOutput {
+			out, err := json.MarshalIndent(thread, "", "  ")
+			if err != nil {
+				return fmt.Errorf("failed to marshal JSON: %w", err)
+			}
+			fmt.Println(string(out))
+			return nil
+		}
+
+		fmt.Printf("Thread %s closed with status: %s\n", threadID, newStatus)
 		return nil
 	},
 }
 
 // pushLinearSummaryOnClose posts a summary comment to the linked Linear issue.
-func pushLinearSummaryOnClose(s *store.Store, thread *types.InsightThread) {
+func pushLinearSummaryOnClose(s store.Storage, thread *types.InsightThread) {
 	// Check if auto-push is disabled
 	autoPush, _ := s.GetConfig("linear.auto_push")
 	if autoPush == "false" {
@@ -491,7 +546,7 @@ func pushLinearSummaryOnClose(s *store.Store, thread *types.InsightThread) {
 }
 
 // pushGitHubSummaryOnClose posts a summary comment to the linked GitHub PR.
-func pushGitHubSummaryOnClose(s *store.Store, thread *types.InsightThread) {
+func pushGitHubSummaryOnClose(s store.Storage, thread *types.InsightThread) {
 	// Check if auto-push is enabled (opt-in, defaults to false)
 	autoPush, _ := s.GetConfig("github.auto_push")
 	if autoPush != "true" {
