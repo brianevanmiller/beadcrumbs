@@ -30,6 +30,7 @@ bdc setup claude
 * **Git as Database:** Insights stored as JSONL in `.beadcrumbs/`. Versioned like code.
 * **AI-Native:** Import from AI session transcripts, auto-extract insights.
 * **Narrative Reconstruction:** Timeline, story, and graph views of understanding evolution.
+* **Machine-Readable:** All commands support `--json` output for analysis pipelines.
 * **Beads Integration:** Link insights to beads tasks with `spawns` and `informed-by` relationships.
 * **Linear Integration:** Link threads to Linear issues and auto-post insight summaries on thread close.
 * **Pivot Preservation:** Pivots and decisions are sacred; discovery chains compress.
@@ -48,6 +49,7 @@ bdc setup claude
 | `bdc questions` | Show open questions |
 | `bdc import file.txt` | Import from AI session transcript |
 | `bdc locate` | Find databases reachable from CWD |
+| `bdc doctor` | Run health checks and diagnostics |
 | `bdc linear setup` | Configure Linear integration |
 | `bdc linear status` | Show Linear integration status |
 
@@ -209,6 +211,7 @@ bdc spawn <insight-id> --title="..."  # Create task from insight
 ### Database & Setup
 ```bash
 bdc locate                            # Find databases reachable from CWD
+bdc doctor                            # Health checks (SQLite integrity, JSONL consistency, hooks)
 bdc prime                             # Output AI workflow context
 bdc setup claude                      # Configure Claude Code hooks
 bdc stealth / unstealth               # Switch between local-only and git-tracked mode
