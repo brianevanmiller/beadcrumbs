@@ -1,11 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/brianevanmiller/beadcrumbs/internal/store"
+	"github.com/brianevanmiller/beadcrumbs/internal/types"
 	"github.com/spf13/cobra"
 )
 
@@ -17,7 +19,7 @@ var showCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		id := args[0]
 
-		s, err := getStore()
+		s, err := getReadOnlyStore()
 		if err != nil {
 			return err
 		}
@@ -34,11 +36,20 @@ var showCmd = &cobra.Command{
 	},
 }
 
-func showInsight(s *store.Store, id string) error {
+func showInsight(s store.Storage, id string) error {
 	// Get the insight
 	insight, err := s.GetInsight(id)
 	if err != nil {
 		return fmt.Errorf("failed to get insight: %w", err)
+	}
+
+	if jsonOutput {
+		out, err := json.MarshalIndent(insight, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal JSON: %w", err)
+		}
+		fmt.Println(string(out))
+		return nil
 	}
 
 	// Display insight details
@@ -81,11 +92,36 @@ func showInsight(s *store.Store, id string) error {
 	return nil
 }
 
-func showThread(s *store.Store, id string) error {
+// threadDetail is a JSON-serializable view of a thread with its insights.
+type threadDetail struct {
+	*types.InsightThread
+	Insights []*types.Insight `json:"insights"`
+}
+
+func showThread(s store.Storage, id string) error {
 	// Get the thread
 	thread, err := s.GetThread(id)
 	if err != nil {
 		return fmt.Errorf("failed to get thread: %w", err)
+	}
+
+	// Get insights in this thread
+	insights, err := s.ListInsights(id, "", time.Time{}, "")
+	if err != nil {
+		return fmt.Errorf("failed to get insights: %w", err)
+	}
+
+	if jsonOutput {
+		detail := threadDetail{
+			InsightThread: thread,
+			Insights:      insights,
+		}
+		out, err := json.MarshalIndent(detail, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal JSON: %w", err)
+		}
+		fmt.Println(string(out))
+		return nil
 	}
 
 	// Display thread details
@@ -105,12 +141,6 @@ func showThread(s *store.Store, id string) error {
 
 	if thread.CurrentUnderstanding != "" {
 		fmt.Printf("\nCurrent Understanding:\n%s\n", thread.CurrentUnderstanding)
-	}
-
-	// Get insights in this thread
-	insights, err := s.ListInsights(id, "", time.Time{}, "")
-	if err != nil {
-		return fmt.Errorf("failed to get insights: %w", err)
 	}
 
 	// Collect distinct origins from insights in this thread

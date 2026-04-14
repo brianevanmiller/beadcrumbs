@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -18,13 +19,31 @@ walk up from CWD, check git worktree common-dir, and scan child directories.
 
 Useful when bdc can't find a database automatically (e.g., running from a
 workspace parent directory that isn't itself a git repo or worktree).`,
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		found := locateDatabases()
+
+		if jsonOutput {
+			type locateResultJSON struct {
+				Path   string `json:"path"`
+				Source string `json:"source"`
+			}
+			out := make([]locateResultJSON, len(found))
+			for i, loc := range found {
+				out[i] = locateResultJSON{Path: loc.path, Source: loc.source}
+			}
+			data, err := json.MarshalIndent(out, "", "  ")
+			if err != nil {
+				return fmt.Errorf("failed to marshal JSON: %w", err)
+			}
+			fmt.Println(string(data))
+			return nil
+		}
+
 		if len(found) == 0 {
 			fmt.Println("No beadcrumbs databases found.")
 			fmt.Println()
 			fmt.Println("To create one: cd <your-repo> && bdc init")
-			return
+			return nil
 		}
 
 		fmt.Printf("Found %d beadcrumbs database(s):\n\n", len(found))
@@ -42,6 +61,7 @@ workspace parent directory that isn't itself a git repo or worktree).`,
 			fmt.Println("Or add to .envrc for automatic activation:")
 			fmt.Printf("  echo 'export BDC_DB_PATH=\"%s\"' >> .envrc && direnv allow\n", found[0].path)
 		}
+		return nil
 	},
 }
 

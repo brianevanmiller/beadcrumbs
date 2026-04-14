@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -111,6 +112,15 @@ Examples:
 
 		if err := s.CreateInsight(insight); err != nil {
 			return fmt.Errorf("failed to save insight: %w", err)
+		}
+
+		if jsonOutput {
+			out, err := json.MarshalIndent(insight, "", "  ")
+			if err != nil {
+				return fmt.Errorf("failed to marshal JSON: %w", err)
+			}
+			fmt.Println(string(out))
+			return nil
 		}
 
 		fmt.Printf("Created insight: %s\n", insight.ID)
@@ -315,7 +325,7 @@ func resolveExternalThreadRef(ref string) (string, error) {
 
 // resolveLinearRef creates a thread linked to a Linear issue,
 // fetching the issue title if a Linear CLI is available.
-func resolveLinearRef(s *store.Store, extRef *beads.ExternalRef) (string, error) {
+func resolveLinearRef(s store.Storage, extRef *beads.ExternalRef) (string, error) {
 	// Load config for adapter detection
 	configTool, configPath, apiKey := getLinearConfig(s)
 
@@ -337,7 +347,7 @@ func resolveLinearRef(s *store.Store, extRef *beads.ExternalRef) (string, error)
 
 // resolveGitHubRef creates a thread linked to a GitHub PR,
 // fetching the PR title if the gh CLI is available.
-func resolveGitHubRef(s *store.Store, extRef *beads.ExternalRef) (string, error) {
+func resolveGitHubRef(s store.Storage, extRef *beads.ExternalRef) (string, error) {
 	ghCli, err := gh.Detect()
 	if err != nil {
 		return createThreadForExternalRef(s, extRef, extRef.ID)
@@ -360,7 +370,7 @@ func resolveGitHubRef(s *store.Store, extRef *beads.ExternalRef) (string, error)
 }
 
 // createThreadForExternalRef creates a new thread and maps it to the external ref.
-func createThreadForExternalRef(s *store.Store, extRef *beads.ExternalRef, title string) (string, error) {
+func createThreadForExternalRef(s store.Storage, extRef *beads.ExternalRef, title string) (string, error) {
 	thread := types.NewThread(title)
 	if err := s.CreateThread(thread); err != nil {
 		return "", fmt.Errorf("failed to create thread: %w", err)

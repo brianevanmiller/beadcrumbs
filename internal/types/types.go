@@ -3,7 +3,9 @@ package types
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"time"
 )
 
@@ -72,9 +74,10 @@ type Insight struct {
 	EndorsedBy []string `json:"endorsed_by,omitempty"` // Who endorsed this insight
 
 	// Metadata
-	Tags      []string  `json:"labels,omitempty"`
-	CreatedBy string    `json:"created_by,omitempty"` // Legacy field for backwards compatibility
-	CreatedAt time.Time `json:"created_at"`
+	Tags        []string `json:"labels,omitempty"`
+	CreatedBy   string   `json:"created_by,omitempty"` // Legacy field for backwards compatibility
+	CreatedAt   time.Time `json:"created_at"`
+	ContentHash string   `json:"content_hash,omitempty"` // SHA256 of substantive fields for dedup
 }
 
 // ThreadStatus represents the status of an insight thread.
@@ -121,6 +124,15 @@ type Dependency struct {
 	To        string         `json:"to"`         // ins-yyy or bead-yyy
 	Type      DependencyType `json:"type"`
 	CreatedAt time.Time      `json:"created_at"`
+}
+
+// ComputeContentHash computes a SHA256 hash of the insight's substantive fields.
+// Metadata fields (ID, timestamps, confidence, tags, endorsed_by) are excluded
+// so that the same insight captured twice produces the same hash.
+func (i *Insight) ComputeContentHash() string {
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s", i.Content, string(i.Type), i.ThreadID, i.AuthorID)
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // GenerateID generates a new random ID with the given prefix.

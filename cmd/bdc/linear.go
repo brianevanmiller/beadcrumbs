@@ -15,7 +15,7 @@ import (
 
 // getLinearConfig reads Linear configuration with env var override.
 // Precedence: BDC_LINEAR_API_KEY > LINEAR_API_KEY (env) > linear.api_key (config)
-func getLinearConfig(s *store.Store) (configTool, configPath, apiKey string) {
+func getLinearConfig(s store.Storage) (configTool, configPath, apiKey string) {
 	configTool, _ = s.GetConfig("linear.cli_tool")
 	configPath, _ = s.GetConfig("linear.cli_path")
 	apiKey, _ = s.GetConfig("linear.api_key")
@@ -167,7 +167,7 @@ type linkedThread struct {
 }
 
 // listLinearLinkedThreads finds all threads linked to Linear issues.
-func listLinearLinkedThreads(s *store.Store) ([]linkedThread, error) {
+func listLinearLinkedThreads(s store.Storage) ([]linkedThread, error) {
 	// Query all linear mappings
 	rows, err := s.DB().Query(`
 		SELECT m.external_ref, m.thread_id, m.system, m.external_id, m.metadata, m.created_at, m.updated_at,

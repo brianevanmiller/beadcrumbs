@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -15,7 +16,7 @@ along with insight counts, linked threads, and last activity date.
 Example:
   bdc origins`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		s, err := getStore()
+		s, err := getReadOnlyStore()
 		if err != nil {
 			return err
 		}
@@ -27,7 +28,20 @@ Example:
 		}
 
 		if len(origins) == 0 {
+			if jsonOutput {
+				fmt.Println("[]")
+				return nil
+			}
 			fmt.Println("No origins found")
+			return nil
+		}
+
+		if jsonOutput {
+			out, err := json.MarshalIndent(origins, "", "  ")
+			if err != nil {
+				return fmt.Errorf("failed to marshal JSON: %w", err)
+			}
+			fmt.Println(string(out))
 			return nil
 		}
 

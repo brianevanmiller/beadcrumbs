@@ -24,6 +24,7 @@ var migrationsList = []Migration{
 	{"005_external_ref_mappings", migrateExternalRefMappings},
 	{"006_migrate_bead_thread_ids", migrateBeadThreadIDs},
 	{"007_insights_source_ref_index", migrateInsightsSourceRefIndex},
+	{"008_insights_content_hash", migrateInsightsContentHash},
 }
 
 // RunMigrations runs all database migrations.
@@ -311,5 +312,64 @@ func migrateInsightsSourceRefIndex(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("failed to create source_ref index: %w", err)
 	}
+	return nil
+}
+
+// migrateInsightsContentHash adds the content_hash column to the insights table
+// and backfills existing rows by computing hashes from their substantive fields.
+func migrateInsightsContentHash(db *sql.DB) error {
+	// Check if column already exists.
+	var count int
+	err := db.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('insights')
+		WHERE name = 'content_hash'
+	`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to check for content_hash column: %w", err)
+	}
+	if count > 0 {
+		return nil // Already migrated.
+	}
+
+	_, err = db.Exec(`ALTER TABLE insights ADD COLUMN content_hash TEXT`)
+	if err != nil {
+		return fmt.Errorf("failed to add content_hash column: %w", err)
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_insights_content_hash ON insights(content_hash)`)
+	if err != nil {
+		return fmt.Errorf("failed to create content_hash index: %w", err)
+	}
+
+	// Backfill existing rows.
+	rows, err := db.Query(`SELECT id, content, type, COALESCE(thread_id, ''), COALESCE(author_id, '') FROM insights WHERE content_hash IS NULL`)
+	if err != nil {
+		return fmt.Errorf("failed to query insights for backfill: %w", err)
+	}
+	defer rows.Close()
+
+	type row struct {
+		id   string
+		ins  types.Insight
+	}
+	var toUpdate []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.ins.Content, &r.ins.Type, &r.ins.ThreadID, &r.ins.AuthorID); err != nil {
+			return fmt.Errorf("failed to scan insight for backfill: %w", err)
+		}
+		toUpdate = append(toUpdate, r)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error iterating insights for backfill: %w", err)
+	}
+
+	for _, r := range toUpdate {
+		hash := r.ins.ComputeContentHash()
+		if _, err := db.Exec(`UPDATE insights SET content_hash = ? WHERE id = ?`, hash, r.id); err != nil {
+			return fmt.Errorf("failed to backfill content_hash for insight %s: %w", r.id, err)
+		}
+	}
+
 	return nil
 }
