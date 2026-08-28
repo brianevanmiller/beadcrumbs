@@ -17,7 +17,11 @@
 #   BDC_INSTALL_DIR  where to put the binary (default: /usr/local/bin, else ~/.local/bin)
 #   BDC_BASE_URL     override the download base; accepts a local directory for testing
 
-set -euo pipefail
+# -E is load-bearing, not style: without errtrace an ERR trap is not inherited by
+# shell functions, and every failure path below — fetch, die, resolve_version,
+# detect_platform, main itself — is inside one. Verified on bash 3.2, the /bin/bash
+# every stock macOS ships and the one `curl … | bash` in the header runs.
+set -Eeuo pipefail
 
 REPO="brianevanmiller/beadcrumbs"
 

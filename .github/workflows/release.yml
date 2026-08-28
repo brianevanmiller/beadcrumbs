@@ -54,10 +54,15 @@ jobs:
         with:
           node-version: '20'
 
+      # The dispatch input reaches bash as an environment variable, not as
+      # ${{ }} interpolation: expanding untrusted text straight into a shell
+      # script makes the workflow's shell whatever the caller typed.
       - name: Resolve version
         id: v
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [ -n "${{ inputs.version }}" ]; then v="${{ inputs.version }}"
+          if [ -n "${INPUT_VERSION:-}" ]; then v="${INPUT_VERSION#v}"
           else v="${GITHUB_REF_NAME#v}"; fi
           declared=$(sed -n 's/^const version = "\(.*\)"$/\1/p' cmd/bdc/root.go)
           pkg=$(node -p 'require("./npm-package/package.json").version')

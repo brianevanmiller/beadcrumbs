@@ -101,11 +101,19 @@ pass "install.sh installed and checksum-verified the asset"
 
 step "install.sh refuses an unlisted asset"
 if BDC_VERSION="9.9.9" BDC_BASE_URL="file://$dist" BDC_INSTALL_DIR="$work/never" \
-   bash scripts/install.sh >/dev/null 2>&1; then
+   bash scripts/install.sh >/dev/null 2>"$work/install-fail.err"; then
   fail "install.sh installed a version that is not in the release"
 fi
 [ ! -e "$work/never/bdc" ] || fail "a failed install left a binary behind"
-pass "a missing asset fails loudly instead of building from source"
+# The script's whole safety-net UX is the ERR trap printing manual_instructions.
+# Exiting nonzero says nothing about whether it fired: without `set -E` the trap
+# is not inherited by the functions every failure happens inside, and the user
+# gets a bare curl error with no idea what to do next.
+if ! grep -q "Prebuilt binaries exist" "$work/install-fail.err"; then
+  cat "$work/install-fail.err" >&2
+  fail "a failed install printed no manual instructions"
+fi
+pass "a missing asset fails loudly with build-from-source instructions"
 
 # --- the installed binary -----------------------------------------------------
 
