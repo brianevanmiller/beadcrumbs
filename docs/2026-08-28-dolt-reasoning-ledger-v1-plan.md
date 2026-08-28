@@ -42,9 +42,10 @@ go 1.26.2                                  // hard floor imposed by dolthub/driv
 
 require (
     github.com/dolthub/driver   v1.88.1
+    github.com/dolthub/dolt/go  v0.40.5-...  // nbs.ErrDatabaseLocked, chunks.JournalFileID, cli.CliOut
     github.com/cenkalti/backoff/v4 v4.2.1  // Config.BackOff
-    github.com/google/uuid      v1.6.0     // uuid.NewV7; v1.5.0 lacks it
-    github.com/spf13/cobra      v1.8.0     // kept
+    github.com/google/uuid      v1.6.0     // uuid.NewV7; v1.5.0 lacks it — indirect until S2 promotes it
+    github.com/spf13/cobra      v1.8.0     // kept; must be pinned, MVS otherwise bumps it to v1.10.2
 )
 ```
 
@@ -202,11 +203,13 @@ type Location struct {
 }
 
 func Discover(ctx context.Context, cwd string) (Location, error)
-func Init(ctx context.Context, loc Location, o InitOptions) error
+func Init(ctx context.Context, loc Location, o InitOptions) (created bool, err error)
 
 type Config struct {
     MaxOpenWait  time.Duration // backoff.MaxElapsedTime; exhaustion -> ledger.ErrBusy
     MaxOpenHold  time.Duration // watchdog: the one-command invariant, asserted at runtime
+    Command      string        // named in the violation report; os.Args is not a library input
+    OnViolation  func(Violation) // nil logs to stderr; injected so the assertion is testable
 }
 
 func Open(ctx context.Context, loc Location, cfg Config) (*Store, error)
@@ -227,7 +230,16 @@ working set, and the reason for choosing Dolt over SQLite disappears. Commit ide
 write personal identity into a store the user cannot see in `git status`. The commit message
 carries the command name and actor kind and no domain content. `Config.MultiStatements` is
 enabled only for `Migrate`, which applies the embedded `001_init.sql` as one script; every other
-statement is issued singly.
+statement is issued singly. The engine also inherits Dolt's CLI output plumbing, and `DOLT_BACKUP`
+writes a newline to it: `cli.CliOut` is redirected to `io.Discard` at package init, because stdout
+carries the JSON envelope and nothing else.
+
+S1 lands the embedded-migration runner and `SchemaVersion` (five S1 commands report a schema
+version) with an empty `schema/` directory; S2 adds `001_init.sql` and the `Maintenance`-facing
+`Migrate`. Each script records its own `schema_meta` row as its last statement, which is what keeps
+the runner from having to know the table's shape. `Init` opens two engines in sequence: the database
+cannot be selected before it exists, and the driver fixes the current database at Connect, so a
+`USE` issued afterwards does not survive to the next statement.
 
 **Prune removes rows from the head, not from history.** Verified against dolt 2.3.1: after a
 commit, a deleted Crumb is still readable through `AS OF` and `dolt_history_crumbs`. `DOLT_GC()`
@@ -1158,8 +1170,10 @@ not to a tracked ignore file), Cobra, the module path, the
 
 ## 6. Release-gate test matrix
 
-Every bullet in the design's Verification section maps to a named test. `//go:build integration`
-guards anything that opens a real engine; `-race` runs on the unit tier.
+Every bullet in the design's Verification section maps to a named test, and `-race` runs over all
+of them. There is no `//go:build integration` tag: a build tag exists to let a contributor without
+infrastructure run the suite, embedded Dolt needs none, and the module does not compile at all
+without CGO and ICU4C — so the tag would only hide the tests that matter.
 
 ### Domain and storage
 
@@ -1250,7 +1264,7 @@ group can run in separate worktrees without touching the same package.
 
 | # | Slice | Owns | Depends on | Mode |
 |---|---|---|---|---|
-| S1 | Dolt repository lifecycle, stealth discovery, backup, restore, and doctor | `go.mod`, `go.sum`, `internal/store/dolt/{discover,open,lock,backup,restore,gc,doctor}.go`, `cmd/bdc/{main,root,output,errors,init,doctor,maintenance,version}.go`, `cmd/bdc/lifecycle_test.go`, plus the code deletions in §5.1 | — | serial |
+| S1 | Dolt repository lifecycle, stealth discovery, backup, restore, and doctor | `go.mod`, `go.sum`, `internal/store/dolt/{discover,open,lock,backup,restore,gc,doctor}.go`, `cmd/bdc/{main,root,output,errors,init,doctor,maintenance,version}.go`, `cmd/bdc/lifecycle_test.go`, `internal/ledger/errors.go` (the exit-code table's counterpart, which `cmd/bdc/errors.go` cannot compile without; S2 extends it), `internal/store/dolt/schema/`, `Makefile`, `internal/store/dolt/*_test.go`, plus the code deletions in §5.1 | — | serial |
 | S2 | Normalized schema and intent-based ledger storage operations | `internal/store/dolt/{schema/001_init.sql,migrate,tx,snapshot}.go`, `internal/ledger/{store,types,errors,ids,ledger,doctor}.go` | S1 | serial |
 | S3 | Crumb capture, provenance, confidence, review, and pruning | `internal/ledger/crumb.go`, `internal/redact/**`, `cmd/bdc/{capture,crumb}.go` | S2 | **parallel A** |
 | S4 | Tracker-neutral references and causal lineage | `internal/ledger/reference.go`, `cmd/bdc/reference.go` | S2 | **parallel A** |
