@@ -78,6 +78,7 @@ func (l *Ledger) AttachReference(ctx context.Context, c AttachReference) (Refere
 func (l *Ledger) ProposePromotion(ctx context.Context, c ProposePromotion) (Proposal, bool, error)
 func (l *Ledger) RecordPromotion(ctx context.Context, c RecordPromotion) (Receipt, error)
 func (l *Ledger) RejectPromotion(ctx context.Context, c RejectPromotion) (Promotion, error)
+func (l *Ledger) FailPromotion(ctx context.Context, c FailPromotion) (Promotion, error)
 
 // Reads — snapshot-consistent, no storage concepts in the result types.
 func (l *Ledger) Crumbs(ctx context.Context, q CrumbQuery) ([]CrumbView, error)
@@ -91,7 +92,10 @@ func (l *Ledger) Doctor(ctx context.Context) (Report, error)
 ```
 
 `ProposePromotion` returns `(proposal, created bool, err)`: `created=false` is the idempotent hit,
-not an error. `CompleteHarvest` is the single operation that both persists new candidate Crumbs
+not an error. `RejectPromotion` and `FailPromotion` are separate operations because they mean
+different things to a retry: a rejection is a decision not to write, a failure is a write that did
+not land. Without `FailPromotion` an external write that errors leaves the proposal permanently
+`proposed`, and the `failed` status and `ck_prm_detail` constraint are unreachable. `CompleteHarvest` is the single operation that both persists new candidate Crumbs
 (redacted, from bounded session material) and synthesises selected Crumbs into an Insight
 revision; `mode` distinguishes manual from automatic. Splitting them would let a caller persist
 candidates without a policy/redaction version attached, which is exactly the invariant the
@@ -113,7 +117,7 @@ type Tx interface {
     Snapshot                                                 // transaction-consistent reads
     InsertCrumb(Crumb) error
     AppendCrumbReview(CrumbReviewEvent) error
-    DeleteCrumbs([]CrumbID) (int, error)                     // the only delete in the system
+    DeleteCrumbs([]CrumbID) (int, error)                     // deletes each Crumb *and* its polymorphic dependents
     InsertHarvest(Harvest, []HarvestCrumb) error
     InsertRevision(InsightRevision, []CrumbID) error         // creates the Insight on revision 1
     SetInsightHead(InsightID, int) error                     // keeps the materialised head honest
@@ -136,7 +140,7 @@ type Snapshot interface {
     Proposals(PromotionQuery) ([]ProposalRow, error)
     Attempts([]ProposalID) ([]PromotionRow, []ReceiptRow, error)
     Events(EventQuery) ([]EventRow, error)                   // validations + authorities + reviews, time-ordered
-    OrphanRefLinks() ([]ReferenceLinkRow, error)             // the polymorphic-FK scan bdc doctor needs
+    OrphanTargets() ([]OrphanRow, error)                     // every polymorphic-FK scan bdc doctor needs
     Counts(CountQuery) (Counts, error)
 }
 
@@ -144,10 +148,11 @@ type Maintenance interface {
     Migrate(ctx context.Context) (MigrationResult, error)
     SchemaVersion(ctx context.Context) (int, error)
     Backup(ctx context.Context, destURL string) (BackupResult, error)
-    Restore(ctx context.Context, srcURL string) (RestoreResult, error)
     GC(ctx context.Context) (GCResult, error)
     Diagnose(ctx context.Context) (StoreReport, error)
 }
+// Restore is deliberately absent: it replaces the directory the Store lives in,
+// so it cannot be a method on an open Store. It is a package function (§1.3).
 
 // Redaction runs inside the ledger, on every write path that accepts free text.
 type Redactor interface {
@@ -168,7 +173,13 @@ otherwise be unimplementable: `AppendCrumbReview` reads the crumb to fill `from_
 `MAX(attempt)+1`, `UpsertProposal` reads the existing `content_hash` row to answer
 `created=false`, and `PruneCrumbs` reads `insight_crumbs` *before* deleting so it can return
 `blocked[]` per Crumb. Prune never relies on the FK to report blockage — one violation aborts the
-whole transaction and loses the per-ID answer; `fk_ic_crumb` is the backstop, not the check.
+whole transaction and loses the per-ID answer; `fk_ic_crumb` is the backstop, not the check. `DeleteCrumbs` also removes, in the same
+transaction, the `ref_links` and `validations` rows whose polymorphic target is a deleted Crumb.
+Those two columns carry no foreign key, so nothing else can clean them: verified against dolt
+2.3.1, deleting a Crumb with one `ref_link` and one `validation` leaves both rows behind pointing
+at an id that no longer exists, while its `crumb_review_events` CASCADE away correctly. Prune is
+the only delete in the system, so this is the only place the ledger has to substitute for a
+foreign key.
 
 **Typed errors** (`internal/ledger/errors.go`), each mapping to one exit code and one JSON error
 code: `ErrNotFound`, `ErrInvalidInput`, `ErrPolicyDenied`, `ErrAuthorityDenied`, `ErrBusy`,
@@ -183,13 +194,14 @@ discipline, backup, restore, GC, and diagnostics. Nothing above it imports a Dol
 package dolt
 
 type Location struct {
-    Dir       string // <git-common-dir>/beadcrumbs
-    GitCommon string
-    RepoRoot  string
-    Stealth   bool   // true when Dir is inside .git (the v1 default)
+    Dir       string // stealth: <GitCommon>/beadcrumbs · visible: <MainRoot>/.beadcrumbs
+    GitCommon string // git rev-parse --path-format=absolute --git-common-dir
+    MainRoot  string // first `worktree` line of `git worktree list --porcelain`
+    RepoRoot  string // the checkout the command ran in; equals MainRoot outside a linked worktree
+    Stealth   bool   // true when Dir is inside GitCommon (the v1 default)
 }
 
-func Discover(ctx context.Context, cwd string) (Location, error) // git rev-parse --path-format=absolute --git-common-dir
+func Discover(ctx context.Context, cwd string) (Location, error)
 func Init(ctx context.Context, loc Location, o InitOptions) error
 
 type Config struct {
@@ -198,6 +210,7 @@ type Config struct {
 }
 
 func Open(ctx context.Context, loc Location, cfg Config) (*Store, error)
+func Restore(ctx context.Context, loc Location, srcURL string, o RestoreOptions) (RestoreResult, error)
 func (*Store) Close() error
 // *Store implements ledger.Store.
 ```
@@ -238,14 +251,52 @@ production builds:
    behind a single 4,000-row writer, so `gc`, `backup`, and `restore` — the three commands that
    legitimately run long — set their own larger bound.
 
-**Discovery is structural, not configured.** The ledger lives at
+**Discovery is structural, not configured.** In stealth mode the ledger lives at
 `$(git rev-parse --path-format=absolute --git-common-dir)/beadcrumbs`. That path is identical
 from the repository root and from every linked worktree, so worktrees share one ledger with no
 bookkeeping, and because it is inside `.git/` no ignore file is needed and `git status` cannot
 see it. Stealth is the default and the only mode that needs no file a user could commit away.
-`bdc init --visible` writes to `<repo-root>/.beadcrumbs` and appends `/.beadcrumbs/` to
-`.git/info/exclude` (shared across worktrees) for users who want the directory visible in the
-tree; the storage path is otherwise identical.
+
+`bdc init --visible` writes to `<MainRoot>/.beadcrumbs` and appends `/.beadcrumbs/` to
+`.git/info/exclude` (shared across worktrees). `MainRoot` is the **main worktree** root — the
+first `worktree` line of `git worktree list --porcelain`, which returns the same absolute path
+from every linked worktree — and never `git rev-parse --show-toplevel`, which returns the
+*current* worktree. Using `--show-toplevel` is what would let a linked worktree miss a visible
+ledger and initialise a second one. `Discover` probes both the stealth and the visible path;
+finding neither is `ErrNoLedger`, finding both is `ErrIntegrity` naming both directories.
+
+**Git is invoked hermetically.** Every `git` call runs with `cmd.Dir` set to the target directory
+and with `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, and `GIT_OBJECT_DIRECTORY`
+**removed** from the child environment — removed, not blanked, because `GIT_DIR=` makes `git`
+fail outright. Verified against git in this environment: with `GIT_DIR` pointing elsewhere,
+`git rev-parse --git-common-dir` run inside a worktree resolves the *hijacked* repository, so an
+inherited `GIT_DIR` would silently write the ledger into an unrelated checkout. After resolution
+`Discover` asserts that `cwd` is inside `RepoRoot`; a mismatch is `ErrIntegrity`.
+
+**Repository shapes are classified, not assumed.** Measured with git in this environment:
+
+| Shape | `--git-common-dir` | Behavior |
+|---|---|---|
+| Repository root | `<root>/.git` | supported |
+| Linked worktree | `<main-root>/.git` | supported; same ledger as the root |
+| Submodule | `<super>/.git/modules/<name>` | supported; the submodule gets its own ledger, which is the correct boundary — a submodule is a different repository |
+| Bare repository | `<x>.git` (succeeds) | **rejected**: `--show-toplevel` exits 128 and `--is-bare-repository` reports `true`. `Discover` checks `--is-bare-repository` *first* and returns `ErrNoLedger` with `error.code:"no_ledger_bare"`; without that check `bdc init` would happily create a ledger inside a bare repo that no working tree can reach |
+
+**Restore replaces a directory, so it is a lifecycle operation, not a write.** `bdc restore`
+never runs against an open engine — `root.go` does not open the store for it (§1.6). The sequence
+is: resolve `Location`; unpack the source into a sibling staging directory in the same filesystem;
+open the staging copy, verify `schema_meta.version` and run `Diagnose`; close it; `fsync` the
+staging directory; `rename` the live directory aside to `beadcrumbs.old-<ts>`; `rename` staging
+into place; reopen and re-verify; only then remove the aside copy. Every step before the first
+`rename` is discardable, and an interruption after it leaves both directories on disk, which
+`bdc doctor` reports as a recoverable state naming the aside path. `--force` is required when a
+ledger already exists and is what authorises the aside-and-swap.
+
+**Close is unconditional.** `main.go` builds a `context` cancelled on SIGINT/SIGTERM, calls
+`rootCmd.ExecuteContext`, and closes the store from a `defer` that also runs on a recovered panic
+(close, then re-panic) before mapping the result to an exit code. No command body calls
+`os.Exit`. SIGKILL is unhandleable by construction; the guarantee there is the transaction, not
+the close, which is what `TestSIGKILLMidTransactionLeavesNoPartialWrite` covers.
 
 **GC is scheduled, not hoped for.** Per-transaction commits grow the journal fast (4,910 rows →
 39 MB; `DOLT_GC()` reclaimed it to 188 KB in 83 ms). `Store.Diagnose` reports journal size, and
@@ -272,6 +323,18 @@ A `Finding` carries the rule id, byte offset, length, and replacement token — 
 substring. That rule holds in `warnings[]`, in `ErrRedaction` messages, and in logs; a finding
 that quoted the secret would defeat the redaction it reports, and Dolt history would keep it.
 
+**The redaction boundary is every free-text column, not just Crumb content.** Two treatments,
+assigned per column and enforced in the ledger, never in a command body:
+
+| Treatment | Columns |
+|---|---|
+| **Redact** — replace findings, record the version, write the clean text | `crumbs.content`, `insight_revisions.{title,content,rationale}`, `crumb_review_events.rationale`, `validations.rationale`, `authorities.rationale`, `promotion_proposals.content`, `promotions.detail`, `refs.label`, `refs.meta` (string leaves) |
+| **Reject** — a finding aborts the write with `ErrRedaction`; the value is never rewritten | `refs.locator`, `authorities.destination_locator`, `promotion_proposals.dest_locator`, `receipts.{locator,anchor,external_hash}` |
+
+Identity columns are reject-only because redacting a locator would silently change *which record
+it names*, producing a Reference that resolves to nothing while looking valid. A locator that
+contains a secret is a caller error, and saying so is the only safe answer.
+
 Detects and replaces high-confidence secret shapes (private key blocks, AWS/GCP/GitHub/Slack
 token prefixes, bearer tokens, `postgres://user:pass@`, `.env`-style `KEY=<high-entropy>`) plus
 repository-configured patterns. A finding it cannot confidently replace returns an error, the
@@ -296,10 +359,33 @@ func (a *Adapter) Link(ctx context.Context, from, to, relType string) error
 func (a *Adapter) Workspace(ctx context.Context) (WorkspaceContext, error)        // bd context --json
 ```
 
-Nine commands, no more. Detection ladder: `exec.LookPath("bd")` → `bd version --json` (floor
-1.2.2) → `bd where --json`. `bd doctor` is not a health check in embedded mode and is never used.
+Nine commands, no more. `bd doctor` is not a health check in embedded mode and is never used.
 
-Every invocation passes `-C <repo-root> --json --quiet`, plus `--readonly` on reads and
+**Detection is a three-rung ladder and each rung answers a different question.** Measured against
+bd 1.2.2: `bd version --json` succeeds anywhere, but `bd -C <dir> version --json` exits 1 with the
+plain-text `Error: cannot use -C directory "<dir>": no beads project found` whenever `<dir>` has
+no Beads workspace — including the Beadcrumbs repository root. Passing `-C` to `version` therefore
+collapses "bd is not installed", "bd is too old", and "this repo has no tracker" into one
+indistinguishable failure, so `version` is the one command invoked **without** `-C`.
+
+1. `exec.LookPath("bd")` — absent → `Present:false, Reason:"not_installed"`.
+2. `bd version --json` (no `-C`) — parses `version`; below the 1.2.2 floor →
+   `Reason:"below_floor"`. A failure here means the binary is broken, not that the repo lacks a
+   workspace.
+3. `bd where --json -C <repo-root>` — exit 0 → workspace present. Exit 1 → `Reason:"no_workspace"`.
+
+`Detect` never returns an error and every rung produces a distinct `Availability.Reason`, which is
+what makes the four cases separable in `bdc doctor`.
+
+**Fields observed from `bd where`/`bd context` are optional, and `is_worktree` is not identity.**
+`Availability.Prefix` and `ProjectID` are enrichment, never a gate: a missing one degrades the
+adapter's display, it does not disable it. `bd context`'s `is_worktree`/`is_redirected` describe
+*the directory `bd` was invoked from*, not the tracker — measured, a separate clone of the same
+repository reports `is_worktree:false` while a linked git worktree of it reports `is_worktree:true`
+for the same workspace. Both are surfaced verbatim in `bdc handoff` and neither is used to decide
+which tracker is which; `project_id` is the only workspace identity the adapter trusts.
+
+Every other invocation passes `-C <repo-root> --json --quiet`, plus `--readonly` on reads and
 `--sandbox` on writes. `--ignore-schema-skew` is never passed — forward drift must surface.
 **stdout and stderr are captured separately and only stdout is ever parsed**, because `--json`
 does not guarantee JSON on failure: only `where`, `context`, and `version` emit structured
@@ -324,8 +410,9 @@ maintenance.go backup, restore, gc
 hooks.go version.go
 ```
 
-`root.go` is the only file that names `internal/store/dolt`. Command bodies touch `*ledger.Ledger`
-and nothing else. Open is conditional: `version`, `init`, and `restore` run without an existing
+`root.go` is the only file that names `internal/store/dolt`, and it exposes the three
+directory-lifecycle calls — `Discover`, `Init`, `Restore` — to `init.go` and `maintenance.go`
+through a small local seam. Every other command body touches `*ledger.Ledger` and nothing else. Open is conditional: `version`, `init`, and `restore` run without an existing
 ledger, and everything else fails with `ErrNoLedger` → exit 5 before any command body runs.
 `root.go` also reads `repo_config` (`redaction.version`, `redact.patterns`, `policy.version`)
 from the same snapshot it opens, because the `Redactor` is constructed before the `Ledger` that
@@ -364,6 +451,12 @@ interpreted string. The physical table is therefore named **`refs`**; the domain
 - **IDs**: kind-prefixed UUIDv7 text in `CHAR(40)` — `crb_`, `cre_`, `hrv_`, `ins_`, `rev_`,
   `ref_`, `val_`, `aut_`, `pp_`, `prm_`, `rcp_`. Monotonic, sortable, and self-describing in CLI
   arguments and in `dolt sql` output.
+- **Collation**: every table declares `DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin`.
+  Dolt 2.3.1's default database collation is already `utf8mb4_0900_bin`, but the DDL must not
+  depend on a server default it does not set: under a case-insensitive collation
+  `docs/Foo.md` and `docs/foo.md` collide on `uq_refs_identity`, which was confirmed by creating a
+  `utf8mb4_0900_ai_ci` key and watching the second insert fail as a duplicate. Declaring binary
+  collation is what makes "the locator is opaque to core" true at the storage layer.
 - **Timestamps**: `DATETIME(6)`, always UTC, rendered RFC3339 with microseconds.
 - **Confidence**: `DECIMAL(4,3)` with `CHECK (c >= 0 AND c <= 1)` on every table that carries one.
 - **Provenance column group**, repeated verbatim on every record and event table (immutable, so
@@ -374,9 +467,15 @@ interpreted string. The physical table is therefore named **`refs`**; the domain
   actor_kind  ENUM('human','agent') NOT NULL,
   actor_model VARCHAR(128) NULL,
   session_id  VARCHAR(128) NULL,
-  CONSTRAINT ck_<t>_prov CHECK (actor_kind = 'human'
-      OR (actor_model IS NOT NULL AND session_id IS NOT NULL))
+  CONSTRAINT ck_<t>_prov CHECK (CHAR_LENGTH(actor_id) > 0 AND (actor_kind = 'human'
+      OR (CHAR_LENGTH(COALESCE(actor_model,'')) > 0 AND CHAR_LENGTH(COALESCE(session_id,'')) > 0)))
   ```
+
+  `NOT NULL` alone is not "provenance present": `actor_id=''` and an agent row with
+  `actor_model=''`, `session_id=''` both insert cleanly under the `IS NOT NULL` form. The
+  `CHAR_LENGTH` form is what makes the constraint mean what its name says, and it is enforced in
+  dolt 2.3.1. The same reasoning gives `revision >= 1`, `head_revision >= 1`, and `attempt >= 1`
+  their own checks — a `-5` revision passes every foreign key and unique key in the schema.
 
 - **`class` and `dest_kind` are validated strings, not SQL ENUMs.** Adding a semantic class or a
   destination kind must not require a migration.
@@ -388,6 +487,8 @@ interpreted string. The physical table is therefore named **`refs`**; the domain
 
 ```sql
 -- 001_init.sql — schema version 1
+-- Every table declares COLLATE=utf8mb4_0900_bin so identity comparison is byte-exact
+-- and independent of the server default (§2.2).
 
 CREATE TABLE schema_meta (
   id          TINYINT     NOT NULL PRIMARY KEY DEFAULT 1,
@@ -395,13 +496,13 @@ CREATE TABLE schema_meta (
   bdc_version VARCHAR(32) NOT NULL,
   applied_at  DATETIME(6) NOT NULL,
   CONSTRAINT ck_schema_singleton CHECK (id = 1)
-);
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin;
 
 CREATE TABLE repo_config (
   k          VARCHAR(128) NOT NULL PRIMARY KEY,
   v          TEXT         NOT NULL,
   updated_at DATETIME(6)  NOT NULL
-);
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin;
 -- seeded: harvest.auto='0' (opt-in, off by default) | redaction.version | policy.version
 --         authority.agent_may_set_default='0' | redact.patterns (JSON array) | ledger.created_at
 
@@ -423,9 +524,11 @@ CREATE TABLE harvests (
   KEY ix_harvests_time (finished_at),
   CONSTRAINT ck_harvests_failure CHECK (outcome = 'completed' OR failure_code IS NOT NULL),
   CONSTRAINT ck_harvests_ok      CHECK (outcome <> 'completed' OR failure_code IS NULL),
-  CONSTRAINT ck_harvests_prov CHECK (actor_kind = 'human'
-      OR (actor_model IS NOT NULL AND session_id IS NOT NULL))
-);
+  CONSTRAINT ck_harvests_counts  CHECK (crumbs_considered >= 0
+      AND crumbs_selected >= 0 AND crumbs_selected <= crumbs_considered),
+  CONSTRAINT ck_harvests_prov CHECK (CHAR_LENGTH(actor_id) > 0 AND (actor_kind = 'human'
+      OR (CHAR_LENGTH(COALESCE(actor_model,'')) > 0 AND CHAR_LENGTH(COALESCE(session_id,'')) > 0)))
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin;
 
 CREATE TABLE crumbs (
   id                CHAR(40)     NOT NULL PRIMARY KEY,
@@ -446,13 +549,15 @@ CREATE TABLE crumbs (
   UNIQUE KEY uq_crumbs_hash_session (content_hash, session_id),
   CONSTRAINT fk_crumbs_harvest FOREIGN KEY (harvest_id) REFERENCES harvests(id) ON DELETE RESTRICT,
   CONSTRAINT ck_crumbs_conf CHECK (confidence >= 0 AND confidence <= 1),
-  CONSTRAINT ck_crumbs_prov CHECK (actor_kind = 'human'
-      OR (actor_model IS NOT NULL AND session_id IS NOT NULL)),
+  CONSTRAINT ck_crumbs_size CHECK (CHAR_LENGTH(content) > 0 AND CHAR_LENGTH(content) <= 4096),
+  CONSTRAINT ck_crumbs_prov CHECK (CHAR_LENGTH(actor_id) > 0 AND (actor_kind = 'human'
+      OR (CHAR_LENGTH(COALESCE(actor_model,'')) > 0 AND CHAR_LENGTH(COALESCE(session_id,'')) > 0))),
   CONSTRAINT ck_crumbs_harvest_policy CHECK (harvest_id IS NULL OR policy_version IS NOT NULL)
-);
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin;
 -- uq_crumbs_hash_session dedupes repeated automatic capture within one session.
 -- session_id is NULL for human captures and MySQL unique keys permit repeated NULLs,
 -- so a human may deliberately capture the same text twice. That is intended.
+-- ck_crumbs_size is the database-level statement that a Crumb is a fragment, not a transcript.
 
 CREATE TABLE crumb_review_events (
   id          CHAR(40)     NOT NULL PRIMARY KEY,
@@ -467,9 +572,9 @@ CREATE TABLE crumb_review_events (
   session_id  VARCHAR(128) NULL,
   KEY ix_cre_crumb (crumb_id, occurred_at),
   CONSTRAINT fk_cre_crumb FOREIGN KEY (crumb_id) REFERENCES crumbs(id) ON DELETE CASCADE,
-  CONSTRAINT ck_cre_prov CHECK (actor_kind = 'human'
-      OR (actor_model IS NOT NULL AND session_id IS NOT NULL))
-);
+  CONSTRAINT ck_cre_prov CHECK (CHAR_LENGTH(actor_id) > 0 AND (actor_kind = 'human'
+      OR (CHAR_LENGTH(COALESCE(actor_model,'')) > 0 AND CHAR_LENGTH(COALESCE(session_id,'')) > 0)))
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin;
 
 CREATE TABLE harvest_crumbs (
   harvest_id CHAR(40) NOT NULL,
@@ -479,7 +584,7 @@ CREATE TABLE harvest_crumbs (
   KEY ix_hc_crumb (crumb_id),
   CONSTRAINT fk_hc_harvest FOREIGN KEY (harvest_id) REFERENCES harvests(id) ON DELETE CASCADE,
   CONSTRAINT fk_hc_crumb   FOREIGN KEY (crumb_id)   REFERENCES crumbs(id)   ON DELETE CASCADE
-);
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin;
 
 CREATE TABLE insights (
   id            CHAR(40)     NOT NULL PRIMARY KEY,
@@ -490,9 +595,10 @@ CREATE TABLE insights (
   actor_model   VARCHAR(128) NULL,
   session_id    VARCHAR(128) NULL,
   KEY ix_insights_time (created_at),
-  CONSTRAINT ck_insights_prov CHECK (actor_kind = 'human'
-      OR (actor_model IS NOT NULL AND session_id IS NOT NULL))
-);
+  CONSTRAINT ck_insights_head CHECK (head_revision >= 1),
+  CONSTRAINT ck_insights_prov CHECK (CHAR_LENGTH(actor_id) > 0 AND (actor_kind = 'human'
+      OR (CHAR_LENGTH(COALESCE(actor_model,'')) > 0 AND CHAR_LENGTH(COALESCE(session_id,'')) > 0)))
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin;
 
 CREATE TABLE insight_revisions (
   id                 CHAR(40)     NOT NULL PRIMARY KEY,
@@ -512,16 +618,22 @@ CREATE TABLE insight_revisions (
   actor_model        VARCHAR(128) NULL,
   session_id         VARCHAR(128) NULL,
   UNIQUE KEY uq_rev (insight_id, revision),
+  UNIQUE KEY uq_rev_identity (insight_id, id),   -- the target of every same-Insight composite FK
   KEY ix_rev_class (class, created_at),
-  CONSTRAINT fk_rev_insight FOREIGN KEY (insight_id)         REFERENCES insights(id)          ON DELETE RESTRICT,
-  CONSTRAINT fk_rev_parent  FOREIGN KEY (parent_revision_id) REFERENCES insight_revisions(id) ON DELETE RESTRICT,
-  CONSTRAINT fk_rev_harvest FOREIGN KEY (harvest_id)         REFERENCES harvests(id)          ON DELETE RESTRICT,
+  CONSTRAINT fk_rev_insight FOREIGN KEY (insight_id) REFERENCES insights(id) ON DELETE RESTRICT,
+  CONSTRAINT fk_rev_parent  FOREIGN KEY (insight_id, parent_revision_id)
+                            REFERENCES insight_revisions(insight_id, id) ON DELETE RESTRICT,
+  CONSTRAINT fk_rev_harvest FOREIGN KEY (harvest_id) REFERENCES harvests(id) ON DELETE RESTRICT,
   CONSTRAINT ck_rev_conf CHECK (confidence >= 0 AND confidence <= 1),
+  CONSTRAINT ck_rev_number CHECK (revision >= 1),
+  CONSTRAINT ck_rev_size CHECK (CHAR_LENGTH(content) > 0 AND CHAR_LENGTH(content) <= 262144),
   CONSTRAINT ck_rev_lineage CHECK (revision = 1
       OR (parent_revision_id IS NOT NULL AND rationale IS NOT NULL)),
-  CONSTRAINT ck_rev_prov CHECK (actor_kind = 'human'
-      OR (actor_model IS NOT NULL AND session_id IS NOT NULL))
-);
+  CONSTRAINT ck_rev_prov CHECK (CHAR_LENGTH(actor_id) > 0 AND (actor_kind = 'human'
+      OR (CHAR_LENGTH(COALESCE(actor_model,'')) > 0 AND CHAR_LENGTH(COALESCE(session_id,'')) > 0)))
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin;
+-- fk_rev_parent is composite so a revision cannot inherit from another Insight's lineage.
+-- A NULL parent_revision_id skips the check (MATCH SIMPLE), which is what revision 1 needs.
 
 CREATE TABLE insight_crumbs (
   revision_id CHAR(40) NOT NULL,
@@ -530,7 +642,7 @@ CREATE TABLE insight_crumbs (
   KEY ix_ic_crumb (crumb_id),
   CONSTRAINT fk_ic_rev   FOREIGN KEY (revision_id) REFERENCES insight_revisions(id) ON DELETE RESTRICT,
   CONSTRAINT fk_ic_crumb FOREIGN KEY (crumb_id)    REFERENCES crumbs(id)            ON DELETE RESTRICT
-);
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin;
 -- RESTRICT is deliberate: the database refuses to prune a Crumb that supports an Insight.
 -- harvest_crumbs CASCADEs because a harvest's "considered" list is bookkeeping, not lineage.
 
@@ -544,8 +656,9 @@ CREATE TABLE refs (                                 -- domain concept: Reference
   fetched_at DATETIME(6)   NULL,                    -- NULL = never enriched
   created_at DATETIME(6)   NOT NULL,
   UNIQUE KEY uq_refs_identity (kind, locator, workspace),
-  KEY ix_refs_kind (kind)
-);
+  KEY ix_refs_kind (kind),
+  CONSTRAINT ck_refs_locator CHECK (CHAR_LENGTH(kind) > 0 AND CHAR_LENGTH(locator) > 0)
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin;
 
 CREATE TABLE ref_links (
   record_kind  ENUM('crumb','insight_revision','promotion_proposal','validation') NOT NULL,
@@ -555,11 +668,12 @@ CREATE TABLE ref_links (
   created_at   DATETIME(6) NOT NULL,
   PRIMARY KEY (record_kind, record_id, reference_id, relation),
   KEY ix_rl_ref (reference_id),
+  KEY ix_rl_record (record_kind, record_id),
   CONSTRAINT fk_rl_ref FOREIGN KEY (reference_id) REFERENCES refs(id) ON DELETE RESTRICT
-);
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin;
 -- record_id is polymorphic and therefore has no FK. Referential integrity for it is a
--- ledger invariant plus a `bdc doctor` orphan scan. This is the one place the database
--- cannot enforce the rule, and it is called out so nobody assumes otherwise.
+-- ledger invariant plus a `bdc doctor` orphan scan (§2.5.1). ix_rl_record is what makes
+-- both the prune-time cleanup and the doctor scan a keyed lookup rather than a table scan.
 
 CREATE TABLE validations (
   id                CHAR(40)     NOT NULL PRIMARY KEY,
@@ -577,11 +691,11 @@ CREATE TABLE validations (
   KEY ix_val_target (target_kind, target_id, occurred_at),
   CONSTRAINT ck_val_supersede CHECK (verdict <> 'superseded'
       OR (superseded_by_kind IS NOT NULL AND superseded_by_id IS NOT NULL)),
-  CONSTRAINT ck_val_prov CHECK (actor_kind = 'human'
-      OR (actor_model IS NOT NULL AND session_id IS NOT NULL))
-);
+  CONSTRAINT ck_val_prov CHECK (CHAR_LENGTH(actor_id) > 0 AND (actor_kind = 'human'
+      OR (CHAR_LENGTH(COALESCE(actor_model,'')) > 0 AND CHAR_LENGTH(COALESCE(session_id,'')) > 0)))
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin;
 -- Absence of any row means "unreviewed". Current state is the latest row by occurred_at.
--- Rows are never updated or deleted.
+-- Rows are never updated. They are deleted only with the pruned Crumb they target (§2.5.2).
 
 CREATE TABLE authorities (
   id                  CHAR(40)      NOT NULL PRIMARY KEY,
@@ -599,9 +713,9 @@ CREATE TABLE authorities (
   session_id          VARCHAR(128)  NULL,
   KEY ix_aut_target (target_kind, target_id, occurred_at),
   CONSTRAINT ck_aut_mandatory_human CHECK (level <> 'mandatory' OR actor_kind = 'human'),
-  CONSTRAINT ck_aut_prov CHECK (actor_kind = 'human'
-      OR (actor_model IS NOT NULL AND session_id IS NOT NULL))
-);
+  CONSTRAINT ck_aut_prov CHECK (CHAR_LENGTH(actor_id) > 0 AND (actor_kind = 'human'
+      OR (CHAR_LENGTH(COALESCE(actor_model,'')) > 0 AND CHAR_LENGTH(COALESCE(session_id,'')) > 0)))
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin;
 -- ck_aut_mandatory_human is the database-level enforcement of "only a human grants mandatory".
 -- The ledger rejects it first with a typed error; the constraint is the assertion that stays
 -- live if that check is ever bypassed.
@@ -622,6 +736,8 @@ CREATE TABLE promotion_proposals (
   confidence             DECIMAL(4,3)  NOT NULL,
   requested_authority    ENUM('advisory','default','mandatory') NOT NULL DEFAULT 'advisory',
   supersedes_proposal_id CHAR(40)      NULL,
+  policy_version         VARCHAR(32)   NOT NULL,   -- the policy that judged this proposal
+  redaction_version      VARCHAR(32)   NOT NULL,   -- the redactor that cleared `content`
   created_at             DATETIME(6)   NOT NULL,
   actor_id               VARCHAR(255)  NOT NULL,
   actor_kind             ENUM('human','agent') NOT NULL,
@@ -630,17 +746,27 @@ CREATE TABLE promotion_proposals (
   UNIQUE KEY uq_pp_hash (content_hash),
   KEY ix_pp_insight (insight_id, created_at),
   KEY ix_pp_dest (dest_kind, dest_locator(255)),
-  CONSTRAINT fk_pp_insight FOREIGN KEY (insight_id)  REFERENCES insights(id)          ON DELETE RESTRICT,
-  CONSTRAINT fk_pp_rev     FOREIGN KEY (revision_id) REFERENCES insight_revisions(id) ON DELETE RESTRICT,
+  CONSTRAINT fk_pp_insight FOREIGN KEY (insight_id) REFERENCES insights(id) ON DELETE RESTRICT,
+  CONSTRAINT fk_pp_rev     FOREIGN KEY (insight_id, revision_id)
+                           REFERENCES insight_revisions(insight_id, id) ON DELETE RESTRICT,
   CONSTRAINT fk_pp_super   FOREIGN KEY (supersedes_proposal_id)
                            REFERENCES promotion_proposals(id) ON DELETE RESTRICT,
   CONSTRAINT ck_pp_conf CHECK (confidence >= 0 AND confidence <= 1),
-  CONSTRAINT ck_pp_prov CHECK (actor_kind = 'human'
-      OR (actor_model IS NOT NULL AND session_id IS NOT NULL))
-);
+  CONSTRAINT ck_pp_size CHECK (CHAR_LENGTH(content) > 0 AND CHAR_LENGTH(content) <= 262144),
+  CONSTRAINT ck_pp_prov CHECK (CHAR_LENGTH(actor_id) > 0 AND (actor_kind = 'human'
+      OR (CHAR_LENGTH(COALESCE(actor_model,'')) > 0 AND CHAR_LENGTH(COALESCE(session_id,'')) > 0)))
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin;
+-- fk_pp_rev is composite so a proposal cannot pair Insight A with a revision of Insight B.
 -- content_hash = sha256 over the canonical serialisation of
---   (insight_id, revision, class, dest_kind, dest_locator, dest_workspace, content)
+--   (insight_id, revision, class, dest_kind, dest_locator, dest_workspace,
+--    dest_capabilities, requested_authority, content)   -- see §2.5.9
 -- uq_pp_hash is what makes idempotency a database property rather than a code convention.
+-- There is deliberately no proposal-to-Crumb join table. A proposal names exactly one revision
+-- (composite FK above) and that revision's supporting Crumbs are `insight_crumbs`, which is
+-- immutable once written. The supporting-Crumb set of a promotion is therefore already exact and
+-- reproducible from a receipt; a second table would be a duplicate of lineage that can drift from
+-- it. Proposal-level `evidence[]` is different — it is not derivable — and attaches as `ref_links`
+-- with `record_kind='promotion_proposal'`, supplied at propose time by `--evidence` (§3.3).
 
 CREATE TABLE promotions (                            -- one independent attempt
   id          CHAR(40)     NOT NULL PRIMARY KEY,
@@ -657,9 +783,10 @@ CREATE TABLE promotions (                            -- one independent attempt
   KEY ix_prm_status (status, occurred_at),
   CONSTRAINT fk_prm_pp FOREIGN KEY (proposal_id) REFERENCES promotion_proposals(id) ON DELETE RESTRICT,
   CONSTRAINT ck_prm_detail CHECK (status NOT IN ('rejected','failed') OR detail IS NOT NULL),
-  CONSTRAINT ck_prm_prov CHECK (actor_kind = 'human'
-      OR (actor_model IS NOT NULL AND session_id IS NOT NULL))
-);
+  CONSTRAINT ck_prm_attempt CHECK (attempt >= 1),
+  CONSTRAINT ck_prm_prov CHECK (CHAR_LENGTH(actor_id) > 0 AND (actor_kind = 'human'
+      OR (CHAR_LENGTH(COALESCE(actor_model,'')) > 0 AND CHAR_LENGTH(COALESCE(session_id,'')) > 0)))
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin;
 
 CREATE TABLE receipts (
   id            CHAR(40)      NOT NULL PRIMARY KEY,
@@ -678,9 +805,9 @@ CREATE TABLE receipts (
   UNIQUE KEY uq_rcp_promotion (promotion_id),
   CONSTRAINT fk_rcp_prm FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE RESTRICT,
   CONSTRAINT fk_rcp_ref FOREIGN KEY (reference_id) REFERENCES refs(id)       ON DELETE RESTRICT,
-  CONSTRAINT ck_rcp_prov CHECK (actor_kind = 'human'
-      OR (actor_model IS NOT NULL AND session_id IS NOT NULL))
-);
+  CONSTRAINT ck_rcp_prov CHECK (CHAR_LENGTH(actor_id) > 0 AND (actor_kind = 'human'
+      OR (CHAR_LENGTH(COALESCE(actor_model,'')) > 0 AND CHAR_LENGTH(COALESCE(session_id,'')) > 0)))
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin;
 ```
 
 **This DDL was executed as written against dolt 2.3.1 and applies clean.** Table order is
@@ -694,13 +821,27 @@ application code:
 |---|---|
 | Agent grants `mandatory` authority | `Check constraint "ck_aut_mandatory_human" violated` |
 | Agent event with no model/session | `Check constraint "ck_aut_prov" violated` |
+| Agent event with **empty-string** model/session | `Check constraint "ck_aut_prov" violated` |
+| Empty-string `actor_id` | `Check constraint "ck_aut_prov" violated` |
 | Revision 2 with no rationale or parent | `Check constraint "ck_rev_lineage" violated` |
+| Revision `-5` **with** a valid parent and rationale | `Check constraint "ck_rev_number" violated` |
+| `insights.head_revision = 0` | `Check constraint "ck_insights_head" violated` |
+| Promotion `attempt = 0` | `Check constraint "ck_prm_attempt" violated` |
+| Revision of Insight B whose parent belongs to Insight A | `Foreign key violation on fk: fk_rev_parent` |
+| Proposal pairing Insight B with a revision of Insight A | `Foreign key violation on fk: fk_pp_rev` |
+| Empty or >4 KiB Crumb content | `Check constraint "ck_crumbs_size" violated` |
+| Harvest with `crumbs_selected > crumbs_considered` | `Check constraint "ck_harvests_counts" violated` |
 | Second proposal with the same `content_hash` | `duplicate unique key given: [hh]` |
-| Prune a Crumb that supports an Insight | `Foreign key violation on fk: fk_ic_crumb` |
+| Prune a Crumb that supports an Insight | `cannot delete or update a parent row` (`fk_ic_crumb`) |
 | `superseded` validation with no successor | `Check constraint "ck_val_supersede" violated` |
 | `ref_link` to a nonexistent Reference | `Foreign key violation on fk: fk_rl_ref` |
 | `failed` promotion with no detail | `Check constraint "ck_prm_detail" violated` |
+| `docs/Foo.md` and `docs/foo.md` as two References | accepted — distinct under binary collation |
 | Full propose → apply → receipt path | accepted |
+
+One attempt the database **cannot** reject, recorded here so nobody assumes otherwise: deleting a
+Crumb that has a `ref_link` and a `validation` succeeds and leaves both rows orphaned. That is
+the polymorphic gap §2.5.1–2 assign to the ledger.
 
 **A failed Harvest is recorded by a second transaction.** `CompleteHarvest` is one transaction
 that rolls back entirely on error, so the `failed` and `aborted` outcomes are unreachable from
@@ -709,6 +850,13 @@ the `harvests` row — mode, outcome, `failure_code`, the two counts, policy and
 versions, timestamps, provenance — and no content of any kind. A redaction abort writes
 `outcome='failed', failure_code='redaction_failed'`; nothing the redactor touched is persisted,
 which is what invariant 6 and exit code 7 promise.
+
+`aborted` is the outcome of a harvest the *caller* stopped — a cancelled context, a
+`--dry-run` the user did not confirm — and like `failed` it is written by a live process that
+knows the current time, which is why `finished_at` stays `NOT NULL`. A process killed hard
+records nothing at all; that is the guarantee of "interruption cannot leave a partial operation",
+not a gap in it. A nullable `finished_at` would buy a provisional row that no surviving process
+could ever close.
 
 ### 2.4 Vocabularies
 
@@ -728,10 +876,17 @@ which is what invariant 6 and exit code 7 promise.
 
 ### 2.5 Invariants the ledger owns because the database cannot
 
-1. `ref_links.record_id` points at a live record (polymorphic; `bdc doctor` scans for orphans).
+1. Every polymorphic target column points at a live record. There are three —
+   `ref_links.record_id`, `validations.target_id`, `authorities.target_id` — and `bdc doctor`
+   scans all three, not just the first. `authorities.target_id` cannot dangle today (its
+   `target_kind` admits only revisions and proposals, neither of which is ever deleted), and the
+   scan covers it anyway so the check does not have to be revisited when a kind is added.
 2. Prune is allowed only for `review_state='candidate'`, and only for Crumbs no Insight revision
    references — checked before the delete so `blocked[]` is per-ID; `insight_crumbs` RESTRICT is
-   the backstop. Prune removes the row from the head only; committed history retains it (§1.3).
+   the backstop. In the same transaction, prune deletes the `ref_links` and `validations` rows
+   targeting each pruned Crumb; `crumb_review_events` CASCADE. A pruned Crumb therefore leaves
+   nothing behind at the head. Prune removes rows from the head only; committed history retains
+   them (§1.3).
 3. A `mapping`-class proposal carries at least two `subject` references.
 4. Effective authority requirement = `max(class requirement, destination requirement)`; `policy`
    always requires human authority regardless of destination.
@@ -740,6 +895,23 @@ which is what invariant 6 and exit code 7 promise.
 7. `insights.head_revision` equals `MAX(insight_revisions.revision)` — asserted in `bdc doctor`.
 8. `disputed` / `rejected` / `superseded` validations without an evidence reference emit a
    `warnings[]` entry. Not an error: "when one exists" is not machine-checkable.
+9. The canonical serialisation behind `content_hash` covers `(insight_id, revision, class,
+   dest_kind, dest_locator, dest_workspace, dest_capabilities, requested_authority, content)` —
+   every field that changes *what would be written* or *what authority is needed to write it*.
+   `dest_capabilities` and `requested_authority` are in the hash because without them, re-proposing
+   identical text to the same destination with `--authority mandatory` returns the earlier
+   `advisory` proposal as an idempotent hit and the stricter request silently disappears.
+   `confidence` and evidence links are deliberately **outside** the hash — neither changes the
+   artifact — but an idempotent hit whose incoming confidence or evidence set differs from the
+   stored proposal emits a `warnings[]` entry rather than overwriting it. Proposals are immutable.
+10. Every free-text column is either redacted or reject-on-finding, per the table in §1.4. A write
+    path that accepts text and appears in neither column of that table is a defect in this plan.
+11. A `crumbs.content` value is a fragment: `ck_crumbs_size` caps it at 4 KiB and
+    `ck_rev_size`/`ck_pp_size` cap synthesised and rendered content at 256 KiB. Automatic capture
+    additionally rejects input that is transcript-shaped — repeated speaker-turn prefixes, or more
+    than a configured number of lines — before redaction runs, because redaction removes secrets
+    and does nothing about the product boundary that says transcripts are not stored. Manual
+    `--content-file` is human-authored structured content and is bounded by the column check only.
 
 ---
 
@@ -798,9 +970,10 @@ fails mid-transaction rolls back and reports one error.
 | `bdc authority <target-id>` | `--level` `--scope` `--destination kind:locator` `--rationale` (required) | `{authority, effective_level}` |
 | `bdc reference add <target-id>` | `--kind` `--locator` `--workspace` `--relation` `--label` | `{reference, link}` |
 | `bdc reference list` | `--target` `--kind` `--relation` `--refresh` | `{references[]}` each with `fetched_at` |
-| `bdc promote propose` | `--insight` `--revision` `--class` `--destination kind:locator` `--workspace` `--capability` (repeatable) `--content\|--content-file` `--authority` `--supersedes` `--confidence` | `{proposal, created, content_hash, authority_required}` |
+| `bdc promote propose` | `--insight` `--revision` `--class` `--destination kind:locator` `--workspace` `--capability` (repeatable) `--evidence kind:locator[@relation]` (repeatable) `--content\|--content-file` `--authority` `--supersedes` `--confidence` | `{proposal, created, content_hash, authority_required}` |
 | `bdc promote record <proposal-id>` | `--locator` (required) `--anchor` `--external-hash` `--verified` | `{promotion, receipt, warnings}` |
 | `bdc promote reject <proposal-id>` | `--rationale` (required) | `{promotion}` |
+| `bdc promote fail <proposal-id>` | `--detail` (required) | `{promotion}` |
 | `bdc promote list` | `--insight` `--status` `--destination-kind` | `{proposals[]}` each with `attempts[]`, `receipt` |
 | `bdc context` | `--since` `--insight` `--limit` `--budget` | `{summary, insights[], open_questions[], recent_crumbs[], promotions[]}` |
 | `bdc handoff` | `--since` `--budget` | `{summary, state, unreviewed_crumbs, open_proposals[], workspace}` |
@@ -815,6 +988,13 @@ fails mid-transaction rolls back and reports one error.
 
 `--budget` bounds `context`/`handoff`/`prime` output in approximate tokens; the default is
 declared in the skill so agents can rely on it.
+
+`bdc promote record`, `reject`, and `fail` are the three terminal outcomes of one attempt, and
+all three are needed: `record` links a receipt, `reject` says a human decided not to write, and
+`fail` says the external write was attempted and did not land. `fail` appends
+`status='failed'` with the required `detail` and leaves the proposal retryable — the next
+`record` or `fail` is attempt *n+1* against the same proposal. Without it a destination outage
+strands the proposal at `proposed` forever.
 
 `bdc promote propose` never performs an external write. When the effective authority requirement
 is not met the proposal is still recorded, but the envelope rules in §3.1 still apply: the
@@ -844,7 +1024,10 @@ skills.sh.json                              display grouping only
 ```
 
 Installed with `npx skills add brianevanmiller/beadcrumbs`, or by deep link
-`.../tree/main/skills/beadcrumbs`. The installer copies to `.agents/skills/beadcrumbs` and
+`.../tree/v1.0.0/skills/beadcrumbs`. Docs and CI pin the tag rather than `main`: the installer's
+lockfile records `source`/`ref`/hash and `npx skills update` re-fetches on a tree-SHA change, so
+an unpinned `main` reference makes an install non-reproducible. Every non-interactive invocation
+adds `-y/--yes`; without it the installer can prompt and a CI job hangs to its timeout. The installer copies to `.agents/skills/beadcrumbs` and
 symlinks each detected agent directory at it, which matches the canonical-home convention already
 in use.
 
@@ -885,7 +1068,9 @@ Pick a class (see references/classes.md). Propose, then write the record yoursel
 the receipt:
 `bdc promote propose --insight … --class … --destination docs:docs/adr/ --content-file …`
 → write the file → `bdc promote record <proposal-id> --locator docs/adr/0007-….md --anchor <sha> --verified`
-`blocked_reason: authority_required` means a human must run `bdc authority`. Do not work around it.
+Exit 3 with `error.code: authority_required` means a human must run `bdc authority`. The proposal
+is already recorded — its id is in `error.details.proposal_id`; retry against that id after the
+grant. Do not work around it.
 
 ## Resuming
 `bdc prime --json` at session start; `bdc handoff --json` before handing off.
@@ -912,6 +1097,14 @@ docs/guides/hooks.md                per-harness setup, explicitly optional
 Codex's hook surface is shape-compatible (same stdin JSON: `session_id`, `transcript_path`,
 `cwd`, `hook_event_name`) and gets the same shim. OpenCode and Amp expose no command-hook
 surface; for them the skill body is the whole integration.
+
+**Hooks are lock-aware or they are worse than nothing.** A `pre-push`, `post-merge`, or
+`PreCompact` hook can fire while another `bdc` process owns the engine. Every hook invocation
+therefore sets a longer `MaxOpenWait` (60 s, not the 15 s default) and, on `ErrBusy`, **exits 0**
+after writing one line to stderr naming the skipped action. A hook must never fail a `git push`,
+and a hook that silently swallows the miss is how a harvest gets lost — the line on stderr is the
+difference. The chained shims preserve the pre-existing hook's exit status; `bdc`'s own status is
+never allowed to override it.
 
 **Durable completion is git hooks and CI, not session hooks.** No harness has a PR-merge hook.
 `bdc hooks install` writes chained `pre-push` and `post-merge` shims that call `bdc hooks run
@@ -952,7 +1145,7 @@ guaranteed to observe a remote merge.
 | `npm-package/package.json` | version `1.0.0`; `"os": ["darwin","linux"]` (drop `win32`) |
 | `npm-package/scripts/postinstall.js` | fetch the `-tags icu_static` release asset per platform/arch; fail loudly with the manual-install message on an unsupported platform instead of falling back to a source build |
 | `scripts/install.sh` | same asset matrix; verify checksums; refuse Windows |
-| `.github/workflows/` | **added** — the repository has no CI today: native macOS and Linux runners; ICU prerequisites per platform; `-tags icu_static` release build; no cross-compilation |
+| `.github/workflows/` | **added** — the repository has no CI today: native macOS and Linux runners; `-tags icu_static` release build; no cross-compilation. The ICU prerequisite is a named step per runner, not prose: macOS `brew install icu4c` then `CGO_CPPFLAGS=-I$(brew --prefix icu4c)/include CGO_LDFLAGS=-L$(brew --prefix icu4c)/lib`; Linux `libicu-dev`, already on the default search path. Without the headers the build fails at `unicode/regex.h: file not found`, so an unset flag is a build break, not a silent fallback |
 | `docs/reasoning-ledger-wayfinder.md` | decision statuses and the real implementation ticket titles |
 
 ### 5.3 Kept
@@ -977,16 +1170,28 @@ guards anything that opens a real engine; `-race` runs on the unit tier.
 | Insight revisions preserve derivation and prior evidence | `TestReviseInsightPreservesLineage` | `internal/ledger/insight_test.go` |
 | Promotion attempts independent by destination, idempotent by proposal | `TestProposeIsIdempotentByContentHash`, `TestAttemptsAreIndependentPerDestination` | `internal/ledger/promotion_test.go` |
 | Constraints reject invalid confidence, missing provenance, orphaned relations, duplicate proposals | `TestSchemaRejectsInvalidConfidence`, `TestSchemaRequiresAgentProvenance`, `TestSchemaRejectsOrphanRefLink`, `TestSchemaRejectsDuplicateProposalHash`, `TestSchemaRejectsAgentMandatoryAuthority` | `internal/store/dolt/schema_test.go` |
+| *(added)* provenance means non-empty, not non-null | `TestSchemaRejectsEmptyStringProvenance` | `internal/store/dolt/schema_test.go` |
+| *(added)* revision, head, and attempt numbers are positive | `TestSchemaRejectsNonPositiveOrdinals` | `internal/store/dolt/schema_test.go` |
+| *(added)* a revision or proposal cannot cross Insights | `TestSchemaRejectsCrossInsightParent`, `TestSchemaRejectsCrossInsightProposal` | `internal/store/dolt/schema_test.go` |
+| *(added)* locator identity is case-sensitive | `TestSchemaTreatsCaseVariantLocatorsAsDistinct` | `internal/store/dolt/schema_test.go` |
+| *(added)* prune leaves no polymorphic orphan | `TestPruneRemovesDependentLinksAndValidations`, `TestDoctorDetectsOrphanedPolymorphicTargets` | `internal/ledger/crumb_test.go`, `internal/ledger/doctor_test.go` |
+| *(added)* a failed attempt is representable and retryable | `TestFailedAttemptThenRetryApplies` | `internal/ledger/promotion_test.go` |
+| *(added)* idempotency respects authority and capabilities | `TestProposeWithStricterAuthorityIsNotAnIdempotentHit`, `TestIdempotentHitWarnsOnDivergentConfidence` | `internal/ledger/promotion_test.go` |
 
 ### Dolt operations
 
 | Design bullet | Test | File |
 |---|---|---|
-| Root and linked worktrees discover one ledger | `TestDiscoverIdenticalFromWorktree` | `internal/store/dolt/discover_test.go` |
+| Root and linked worktrees discover one ledger | `TestDiscoverIdenticalFromWorktree` (stealth **and** `--visible`) | `internal/store/dolt/discover_test.go` |
+| *(added)* hostile `GIT_*` cannot redirect the ledger | `TestDiscoverIgnoresInheritedGitEnv` | `internal/store/dolt/discover_test.go` |
+| *(added)* repository shapes are classified | `TestDiscoverRejectsBareRepository`, `TestDiscoverInSubmoduleUsesModuleGitDir` | `internal/store/dolt/discover_test.go` |
+| *(added)* two ledgers is an integrity error, not a coin flip | `TestDiscoverRejectsBothStealthAndVisible` | `internal/store/dolt/discover_test.go` |
 | Stealth leaves Git status unchanged | `TestStealthLeavesGitStatusClean` | `internal/store/dolt/discover_test.go` |
 | Concurrent readers/writers deterministic | `TestConcurrentShortLivedWriters` (8 processes, zero loss, bounded wait) | `internal/store/dolt/concurrency_test.go` |
 | Interruption cannot leave a partial operation | `TestSIGKILLMidTransactionLeavesNoPartialWrite` | `internal/store/dolt/crash_test.go` |
 | Backup and restore reproduce records, history, schema version | `TestBackupRestoreRoundTrip` | `internal/store/dolt/backup_test.go` |
+| *(added)* restore is atomic and recoverable | `TestRestoreSwapIsAtomic`, `TestKilledRestoreLeavesOriginalIntact` | `internal/store/dolt/restore_test.go` |
+| *(added)* the engine closes on error, panic, and SIGTERM | `TestCloseRunsOnErrorPanicAndSignal` | `cmd/bdc/lifecycle_test.go` |
 | Recovery diagnostics are actionable and structured | `TestDiagnoseReportsLockedByAnotherProcess`, `TestBusyReturnsTypedError` | `internal/store/dolt/doctor_test.go` |
 | *(added)* lock discipline is a live assertion | `TestSecondOpenInProcessPanics`, `TestHeldEngineWatchdogFires` | `internal/store/dolt/lock_test.go` |
 | *(added)* GC reclaims journal growth | `TestGCReclaimsJournal` | `internal/store/dolt/gc_test.go` |
@@ -1002,6 +1207,9 @@ guards anything that opens a real engine; `-race` runs on the unit tier.
 | Output does not leak hidden provenance | `TestJSONOutputHasNoUndeclaredFields` (golden) | `cmd/bdc/golden_test.go` |
 | *(added)* redaction failure persists nothing | `TestRedactionFailureAbortsHarvestWithNoWrite` (asserts the recorded `harvests` row carries `failure_code='redaction_failed'` and no content) | `internal/ledger/privacy_test.go` |
 | *(added)* findings never quote the secret | `TestFindingsCarryNoMatchedText` | `internal/redact/redact_test.go` |
+| *(added)* every free-text write path redacts or rejects | `TestEveryFreeTextColumnIsRedactedOrRejected` (table driven from the §1.4 column list; a new write path with no entry fails the test) | `internal/ledger/privacy_test.go` |
+| *(added)* a secret in an opaque locator is rejected, not rewritten | `TestSecretInLocatorAbortsWrite` | `internal/ledger/privacy_test.go` |
+| *(added)* transcript-shaped automatic input is refused | `TestTranscriptShapedAutoCaptureRejected`, `TestOversizeCrumbRejected` | `internal/ledger/privacy_test.go` |
 | *(added)* prune is retention, not erase | `TestPrunedCrumbRemainsInDoltHistory` (documents the guarantee rather than pretending to erase) | `internal/store/dolt/history_test.go` |
 
 ### CLI and integrations
@@ -1015,6 +1223,10 @@ guards anything that opens a real engine; `-race` runs on the unit tier.
 | End-to-end workflow against a real ledger | `TestFullWorkflowInFixtureRepo` (capture→review→harvest→insight→propose→record→context→handoff, documented `bdc` commands only, no installer and no network) | `test/e2e/workflow_test.go` |
 | Skill installs in a clean fixture and completes the workflow | `TestSkillInstallAndFullWorkflow` (`npx skills add <local path>`, then the same sequence; skipped with a named reason when `npx` is unavailable, which is why the gate above exists separately) | `test/e2e/skill_test.go` |
 | *(added)* exit codes are stable | `TestExitCodeForEachErrorClass` | `cmd/bdc/errors_test.go` |
+| *(added)* the authority-blocked envelope carries the recorded proposal | `TestGoldenEnvelope/promote.propose.authority_required` (exit 3, `data:null`, `error.details.proposal_id` present) | `cmd/bdc/golden_test.go` |
+| *(added)* Beads absence, staleness, and workspace absence are distinguishable | `TestDetectionLadderSeparatesNotInstalledFromNoWorkspace`, `TestVersionDetectionRunsWithoutDashC` | `internal/beads/detect_test.go` |
+| *(added)* optional Beads fields never gate the adapter | `TestMissingPrefixDoesNotDisableAdapter`, `TestWorktreeFlagIsNotWorkspaceIdentity` | `internal/beads/detect_test.go` |
+| *(added)* a hook that loses the lock degrades, it does not fail the git operation | `TestHookExitsZeroWhenLedgerBusy` | `cmd/bdc/hooks_test.go` |
 
 ### Release
 
@@ -1022,7 +1234,7 @@ guards anything that opens a real engine; `-race` runs on the unit tier.
 |---|---|
 | Unit, integration, race, e2e pass on supported Go versions | CI matrix: go 1.26.2 and latest, `go test ./...`, `-race`, `-tags integration` |
 | Release binaries carry no non-system dylibs | CI asserts `otool -L` (macOS) / `ldd` (Linux) on the `-tags icu_static` artifact — the dynamic build links an absolute Homebrew `icu4c@78` path and is not portable |
-| macOS and Linux package smoke tests use isolated prefixes | `test/packaging/smoke.sh` — installs into `$(mktemp -d)`, runs `bdc version --json`, never global |
+| macOS and Linux package smoke tests use isolated prefixes | `test/packaging/smoke.sh` — runs the real `postinstall.js` against the published asset into `$(mktemp -d)`, verifies the checksum, asserts `otool -L`/`ldd` shows no non-system dylib, then runs `bdc version --json` **and** `bdc init` + `bdc capture` + `bdc doctor`. `version` alone exits before the engine opens, so it passes on a binary whose ICU linkage is broken |
 | Windows supported only if proven | not proven → README states "not supported", CI has no Windows job |
 | Dependency changes get a supply-chain audit | `go mod graph` diff + license report attached to the PR; the SQLite→Dolt swap is one reviewable commit |
 | Independent reviewer checks standards and design | standards, specification, and adversarial passes each dispositioned in the PR |
@@ -1038,15 +1250,15 @@ group can run in separate worktrees without touching the same package.
 
 | # | Slice | Owns | Depends on | Mode |
 |---|---|---|---|---|
-| S1 | Dolt repository lifecycle, stealth discovery, backup, restore, and doctor | `go.mod`, `go.sum`, `internal/store/dolt/{discover,open,lock,backup,restore,gc,doctor}.go`, `cmd/bdc/{main,root,output,errors,init,doctor,maintenance,version}.go`, plus the code deletions in §5.1 | — | serial |
-| S2 | Normalized schema and intent-based ledger storage operations | `internal/store/dolt/{schema/001_init.sql,migrate,tx,snapshot}.go`, `internal/ledger/{store,types,errors,ids,ledger}.go` | S1 | serial |
+| S1 | Dolt repository lifecycle, stealth discovery, backup, restore, and doctor | `go.mod`, `go.sum`, `internal/store/dolt/{discover,open,lock,backup,restore,gc,doctor}.go`, `cmd/bdc/{main,root,output,errors,init,doctor,maintenance,version}.go`, `cmd/bdc/lifecycle_test.go`, plus the code deletions in §5.1 | — | serial |
+| S2 | Normalized schema and intent-based ledger storage operations | `internal/store/dolt/{schema/001_init.sql,migrate,tx,snapshot}.go`, `internal/ledger/{store,types,errors,ids,ledger,doctor}.go` | S1 | serial |
 | S3 | Crumb capture, provenance, confidence, review, and pruning | `internal/ledger/crumb.go`, `internal/redact/**`, `cmd/bdc/{capture,crumb}.go` | S2 | **parallel A** |
 | S4 | Tracker-neutral references and causal lineage | `internal/ledger/reference.go`, `cmd/bdc/reference.go` | S2 | **parallel A** |
 | S9 | Optional Beads enrichment through supported `bd --json` | `internal/beads/**` | S2 | **parallel A** |
 | S5 | Harvest synthesis and Insight revision lifecycle | `internal/ledger/{harvest,insight}.go`, `cmd/bdc/{harvest,insight}.go` | S3, S4 | serial |
 | S6 | Validation, authority, Promotion Proposals, attempts, and receipts | `internal/ledger/{validation,authority,promotion,policy}.go`, `cmd/bdc/{validate,authority,promote}.go` | S5 | serial |
 | S7 | Stable JSON CLI plus context, handoff, and prime | `internal/ledger/narrative.go`, `cmd/bdc/{context,handoff,prime,output,errors}.go`, `cmd/bdc/testdata/golden/**`, `cmd/bdc/{golden,output,errors}_test.go`, `test/e2e/workflow_test.go` | S6, S9 | serial |
-| S8 | Portable Beadcrumbs skill and opt-in privacy-safe harvesting | `skills/**`, `skills.sh.json`, `.claude-plugin/**`, `hooks/**`, `cmd/bdc/hooks.go`, `docs/guides/hooks.md`, `test/e2e/skill_test.go` | S7 | serial |
+| S8 | Portable Beadcrumbs skill and opt-in privacy-safe harvesting | `skills/**`, `skills.sh.json`, `.claude-plugin/**`, `hooks/**`, `cmd/bdc/{hooks,hooks_test}.go`, `docs/guides/hooks.md`, `test/e2e/skill_test.go` | S7 | serial |
 | S10 | Clean-break documentation, packaging, compatibility removal, and release verification | `README.md`, `CHANGELOG.md`, `BDC_GUIDE.md`, `docs/**`, `npm-package/**`, `scripts/**`, `.github/workflows/**`, `test/packaging/**`, all deletions from §5.1 | S8 | serial |
 
 **Why S1 owns the CLI skeleton.** `main.go`, `root.go`, `output.go`, and `errors.go` are the files
@@ -1083,11 +1295,17 @@ is serial because each slice reads the previous one's domain types.
 2. **The `--budget` default.** `context`/`handoff`/`prime` need a token budget an agent can rely
    on; the number should be set from measured output on a real ledger during S7, then written
    into the skill.
-3. **Redaction pattern set.** The plan fixes the *sequence* (inspect → extract → redact → write)
-   and the abort behavior. The specific high-confidence secret shapes are a table in
-   `internal/redact` that will grow; the release gate tests the sequence, not a fixed list.
+3. **Redaction pattern set.** The plan fixes the *sequence* (inspect → extract → redact → write),
+   the abort behavior, and which columns redact versus reject (§1.4). The specific high-confidence
+   secret shapes are a table in `internal/redact` that will grow; the release gate tests the
+   sequence and the column coverage, not a fixed list.
 4. **Codex global skill path.** `~/.codex/skills` (what the installer writes) versus
    `$HOME/.agents/skills` (what Codex documents) must be verified against the installed Codex
    build in S8 rather than assumed.
 5. **Binary size.** 141 MB stripped with static ICU is accepted, not solved. If distribution size
    becomes a blocker the decision reopens; nothing in this plan depends on it.
+6. **The transcript-shape heuristic.** §2.5.11 fixes that automatic capture rejects
+   transcript-shaped input and that the size caps are database constraints. The specific signals
+   (speaker-turn prefix pattern, line-count ceiling) are tuned in S3 against real session material
+   and stored in `repo_config`; the release gate tests that a raw-transcript fixture is refused,
+   not the particular threshold.

@@ -185,3 +185,11 @@ Revisit once the contract proof can run on a Windows runner.
 4. **GC scheduling.** Journal growth is aggressive under per-transaction commits. `DOLT_GC()` fixes
    it cheaply but must actually be scheduled.
 5. **Windows.** Unverified; explicitly out of scope for v1.
+
+## Related Documentation
+
+| Document | Description |
+|---|---|
+| **[Reasoning ledger design](2026-08-27-reasoning-ledger-design.md)** | Approved v1 architecture this operating model serves |
+| [Reasoning ledger Wayfinder](reasoning-ledger-wayfinder.md) | Portable decision dependency path |
+| [Dolt reasoning ledger v1 plan](2026-08-28-dolt-reasoning-ledger-v1-plan.md) | Implements this operating model as `internal/store/dolt` (§1.3) |

@@ -214,3 +214,4 @@ invent filenames.
 | [Reasoning ledger Wayfinder](reasoning-ledger-wayfinder.md) | Portable decision dependency path |
 | [Beads JSON contract research](2026-08-28-beads-json-contract-research.md) | Measured `bd --json` surface for the ticket destination |
 | [Portable skill install research](2026-08-28-portable-skill-install-research.md) | How the promote step is invoked across agents |
+| [Dolt reasoning ledger v1 plan](2026-08-28-dolt-reasoning-ledger-v1-plan.md) | Implements the descriptor, proposal, and receipt tables (§2.3) |
