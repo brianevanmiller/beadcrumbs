@@ -90,15 +90,21 @@ hypt-build -> ../../.agents/skills/hypt-build
 existing `~/.agents/` canonical-home convention and the installer agree rather
 than fight. Nothing extra is needed to adopt it.
 
-State is tracked in a lock file — `.agents/.skill-lock.json` (project) or
-`$XDG_STATE_HOME/skills/.skill-lock.json`, falling back to
-`~/.agents/.skill-lock.json` (`src/skill-lock.ts:6-7,62-73`). Each entry
-records `source`, `sourceType`, `sourceUrl`, `ref`, `skillPath`,
-`skillFolderHash` (GitHub tree SHA of the skill folder), `installedAt`,
-`updatedAt` (`src/skill-lock.ts:14-37`). **Updates are ref-and-hash based, not
-semver**: `npx skills update` re-fetches when the folder tree SHA changes.
-Version discipline therefore has to live in Beadcrumbs' own release notes and
-in a `bdc` version check inside the skill, not in installer metadata.
+State is tracked in a lock file. **Corrected 2026-08-28 against skills@1.5.23**:
+the project lock is `skills-lock.json` at the repository root — not
+`.agents/.skill-lock.json`, which is what the source read at the time predicted.
+`npx -y skills@1.5.23 add <local path> --yes` in a fresh Git repo produced:
+
+```json
+{"version":1,"skills":{"beadcrumbs":{"source":"…/skills/beadcrumbs",
+ "sourceType":"local","computedHash":"77e2e4f2…"}}}
+```
+
+**Updates are hash based, not semver**: `npx skills update` re-fetches when the
+skill folder's hash changes (`computedHash` for a local source, the GitHub tree
+SHA for a remote one). Version discipline therefore has to live in Beadcrumbs'
+own release notes and in a `bdc` version check inside the skill, not in
+installer metadata.
 
 ### Agent targets relevant to us
 

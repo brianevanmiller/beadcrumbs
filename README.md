@@ -1,256 +1,211 @@
 # Beadcrumbs
 
-**Git-backed insight tracking for AI agents and developers.**
+**A repository-local reasoning ledger for humans and coding agents.**
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Go Report Card](https://goreportcard.com/badge/github.com/brianevanmiller/beadcrumbs)](https://goreportcard.com/report/github.com/brianevanmiller/beadcrumbs)
 
-Beadcrumbs provides a persistent, structured memory of insights and understandings derived through human and agentic dialogue. It gives your coding agents access to the critical discoveries, insights and decisions powering the product.
+Task trackers coordinate work. Beadcrumbs preserves the evidence, intent, and evolving
+understanding behind that work — as structured records with provenance, not as a transcript
+archive.
 
-[Beads](https://github.com/steveyegge/beads) tracks tasks without losing **work context** of what was done and what needs to be done. Beadcrumbs tracks the **understanding context** and ultimate intent behind these tasks.
+```
+capture ──▶ Crumb ──▶ harvest ──▶ Insight ──▶ propose ──▶ Proposal ──▶ record ──▶ Receipt
+             ↑                      │
+             └── reused, never consumed
+```
 
-## Quick Start
+A **Crumb** is one captured fragment: a correction, a discovery, a rejected approach. A
+**Harvest** weighs selected Crumbs into a revisioned **Insight**; the Crumbs stay available to
+every later Harvest. A **Promotion Proposal** says an Insight is ready to become a durable
+record somewhere — an ADR, a comment, a ticket — and `bdc` never performs that external write
+itself. A human or agent writes it and records a **Receipt** with the anchor that proves it.
+
+Evidence, numeric confidence, validation verdict, and authority level are four independent axes.
+Confidence is written once; review, validation, and authority are append-only. Only a human can
+grant `mandatory` authority.
+
+---
+
+## Requirements
+
+| | |
+|---|---|
+| Platforms | macOS and Linux, `arm64` and `amd64` |
+| Windows | **Not supported.** See [Windows](#windows) |
+| Git | required — the ledger lives inside the repository's Git directory |
+| Binary size | ~135 MB. Embedded Dolt with statically linked ICU. Stated up front because it is not a typo |
+| Runtime deps | none for the released binary (`otool -L` / `ldd` show system libraries only) |
+
+## Install
+
+### Released binary (recommended)
 
 ```bash
-# Install (macOS/Linux)
-curl -fsSL https://raw.githubusercontent.com/beadcrumbs/beadcrumbs/main/scripts/install.sh | bash
-
-# Initialize
-bdc init
-
-# Capture insights
-bdc capture "Found: the bug is in JWT validation, not sessions" --pivot
-
-# Set up Claude Code integration (optional)
-bdc setup claude
+curl -fsSL https://raw.githubusercontent.com/brianevanmiller/beadcrumbs/v1.0.0/scripts/install.sh | bash
 ```
 
-## Features
+Or through npm:
 
-* **Git as Database:** Insights stored as JSONL in `.beadcrumbs/`. Versioned like code.
-* **AI-Native:** Import from AI session transcripts, auto-extract insights.
-* **Narrative Reconstruction:** Timeline, story, and graph views of understanding evolution.
-* **Machine-Readable:** All commands support `--json` output for analysis pipelines.
-* **Beads Integration:** Link insights to beads tasks with `spawns` and `informed-by` relationships.
-* **Linear Integration:** Link threads to Linear issues and auto-post insight summaries on thread close.
-* **Pivot Preservation:** Pivots and decisions are sacred; discovery chains compress.
-
-## Essential Commands
-
-| Command | Action |
-| --- | --- |
-| `bdc capture "..."` | Capture an insight with type flags |
-| `bdc origin set <id>` | Set session origin identifier |
-| `bdc origins` | List all origins with insight counts |
-| `bdc timeline` | View chronological journey |
-| `bdc pivots` | Show only pivot moments |
-| `bdc decisions` | Show only decisions |
-| `bdc feedback` | Show only external feedback |
-| `bdc questions` | Show open questions |
-| `bdc import file.txt` | Import from AI session transcript |
-| `bdc locate` | Find databases reachable from CWD |
-| `bdc doctor` | Run health checks and diagnostics |
-| `bdc linear setup` | Configure Linear integration |
-| `bdc linear status` | Show Linear integration status |
-
-## Insight Types & Mental Model
-
-Beadcrumbs tracks how understanding evolves through dialogues. Each insight type represents a moment in the journey:
-
-```
-hypothesis → discovery → question → feedback → pivot → decision
-   ↑           ↑           ↑          ↑         ↑        ↑
-  start    investigate   doubt    get input  change   commit
-```
-
-| Type | Trigger | Symbol | Description |
-|------|---------|--------|-------------|
-| `hypothesis` | "I think..." | ○ | Speculation before evidence |
-| `discovery` | "I found..." | ○ | Evidence-based finding |
-| `question` | "What about...?" | ? | Open uncertainty |
-| `feedback` | "They said..." | » | External input received |
-| `pivot` | "Actually..." | ● | Direction changed |
-| `decision` | "We'll do..." | ◆ | Committed to approach |
-
-```bash
-bdc capture "Might be a caching issue" --hypothesis
-bdc capture "Found: race condition in Redis pub/sub" --discovery
-bdc capture "How should we handle timeouts?" --question
-bdc capture "Code review: add retry logic" --feedback
-bdc capture "Actually, it's not Redis—it's our retry logic" --pivot
-bdc capture "Decision: implement exponential backoff" --decision
-```
-
-## Installation
-
-**curl (recommended):**
-```bash
-curl -fsSL https://raw.githubusercontent.com/beadcrumbs/beadcrumbs/main/scripts/install.sh | bash
-```
-
-**npm:**
 ```bash
 npm install -g @beadcrumbs/bdc
 ```
 
-**Go:**
-```bash
-go install github.com/brianevanmiller/beadcrumbs/cmd/bdc@latest
-```
+Both fetch the prebuilt `-tags icu_static` archive for your platform from the GitHub release,
+verify its SHA-256 against the release's `checksums.txt`, and install one binary. Neither falls
+back to a source build: on an unsupported platform they fail with the manual instructions
+rather than starting a compile that will not finish.
 
-**From source:**
-```bash
-git clone https://github.com/brianevanmiller/beadcrumbs.git
-cd beadcrumbs
-go build -o bdc ./cmd/bdc/
-sudo mv bdc /usr/local/bin/
-```
+### From source
 
-## Beads Integration
-
-beadcrumbs works seamlessly alongside [beads](https://github.com/steveyegge/beads):
+`go install` is a **source build**, not a download. Embedded Dolt requires CGO and ICU4C
+unconditionally — `github.com/dolthub/go-icu-regex` has no pure-Go fallback and no ICU-free build
+tag, so a missing header is a build break (`unicode/regex.h file not found`), never a silent
+degrade.
 
 ```bash
-# Link an insight to a bead task
-bdc link ins-7f2a --spawns=bd-abc1
+# macOS
+brew install icu4c
+CGO_ENABLED=1 \
+CGO_CPPFLAGS="-I$(brew --prefix icu4c)/include" \
+CGO_LDFLAGS="-L$(brew --prefix icu4c)/lib" \
+  go install github.com/brianevanmiller/beadcrumbs/cmd/bdc@v1.0.0
 
-# Trace what insights led to a bead
-bdc trace bd-abc1
-
-# Create a bead from an insight
-bdc spawn ins-7f2a --title="Implement exponential backoff"
+# Debian/Ubuntu — libicu-dev is already on the default search path
+sudo apt install libicu-dev
+CGO_ENABLED=1 go install github.com/brianevanmiller/beadcrumbs/cmd/bdc@v1.0.0
 ```
 
-## Timeline View
+Go 1.26.2 or newer is required. That floor is imposed by `github.com/dolthub/driver`, not chosen.
 
-```
-2024-01-15 10:30  ○ "Bug reports: slow login" [hypothesis]
-2024-01-15 14:22  ○ "Traced to session validation" [discovery]
-2024-01-15 16:00  ? "What about token refresh?" [question]
-2024-01-16 08:00  » "Security team: check JWT expiry" [feedback]
-2024-01-16 09:15  ● "Actually JWT, not session" [PIVOT]
-2024-01-16 11:00  ◆ "Upgrade to JWT v3" [DECISION]
-                     └── spawns: bd-7f2a
-```
+A source build links ICU dynamically, which on macOS means an absolute Homebrew path
+(`/opt/homebrew/opt/icu4c@78/lib/libicui18n.78.dylib`). Such a binary does not run on a machine
+without that exact prefix. Copy it between machines and it will fail; use the release archives
+for distribution.
 
-## Storage
+### Windows
 
-```
-.beadcrumbs/
-  insights.jsonl    # All insights
-  threads.jsonl     # Narrative threads
-  deps.jsonl        # Relationships
-  beadcrumbs.db     # SQLite for queries
-```
+Not supported in v1. This is a refusal to claim it works, not a claim that it is broken: the
+ledger contract has never been proven on Windows hardware, upstream needs an MSYS2/MinGW
+toolchain, and upstream's own multi-database lock-contention test is skipped on Windows — the
+exact behavior Beadcrumbs depends on. CI has no Windows job and the installers refuse to run
+there.
 
-Git-backed like beads: JSONL exports on commit, imports on merge. Use `bdc init --stealth` for local-only mode that doesn't touch your repo. See the [Stealth Mode Guide](docs/guides/stealth-mode.md) for details and mode switching.
+## Quick start
 
-## Git Worktree Support
-
-bdc automatically resolves the database from git worktrees, nested directories, or the main repo — no configuration needed. All worktrees share the main repo's database via `git rev-parse --git-common-dir`. If a worktree has its own `.beadcrumbs/`, it takes precedence (closest wins).
-
-If automatic resolution fails (e.g., CWD is a workspace parent), use `bdc locate` to find reachable databases and set `BDC_DB_PATH`. See the [Stealth Mode Guide](docs/guides/stealth-mode.md#how-it-works-with-git-worktrees) for the full worktree topology.
-
-## Full Command Reference
-
-### Capture & Thread Management
 ```bash
-bdc init                              # Initialize repository
-bdc capture "..." [--type=X]          # Capture insight
-bdc capture "..." --origin claude:id  # Capture with explicit origin
-bdc thread new "title"                # Create narrative thread
-bdc thread new "title" --linear ENG-456 --bead bd-abc1  # Multi-system linking
-bdc thread link <id> <ref>            # Link thread to any external ref
-bdc thread show <id>                  # Show thread details
-bdc thread list [--status=active]     # List threads
-bdc thread close <id>                 # Close thread
+cd your-repo
+bdc init                                     # ledger at <git-common-dir>/beadcrumbs
+bdc capture "The bug is in JWT validation, not the session store." --confidence 0.8
+bdc crumb list --state candidate
+bdc crumb review <crumb-id> --state accepted --rationale "confirmed by the failing test"
+bdc harvest --crumb <crumb-id> --title "JWT validation rejects valid tokens" \
+  --class learning --content-file notes.md
+bdc context                                  # what this repository has concluded
 ```
 
-### Origin Tracking
+Every command accepts `--json`.
+
+## Where the ledger lives
+
+`bdc init` puts the ledger at `$(git rev-parse --git-common-dir)/beadcrumbs`. That path is
+identical from the repository root and from every linked worktree, so worktrees share one ledger
+with no per-worktree setup, and because it is inside `.git/` it never appears in `git status`.
+Stealth is structural, not configured: no ignore file to edit and none to accidentally commit.
+
+`bdc init --visible` places it at `<main-worktree>/.beadcrumbs` instead and adds that path to
+`.git/info/exclude`, which is shared across worktrees and never committed. See
+[the stealth-mode guide](docs/guides/stealth-mode.md).
+
+## Retention, not erasure
+
+`bdc crumb prune` drops Crumbs from the working set. It is a **retention** operation. Dolt keeps
+committed history, so a pruned Crumb remains readable through `dolt_history_*` — pruning removes
+it from every query `bdc` answers, not from the database's past. Nothing in Beadcrumbs expires
+or deletes automatically, ever.
+
+The consequence: never capture a secret expecting to remove it later. Redaction runs *before*
+any write, and a finding it cannot resolve aborts the write with exit 7 and nothing persisted.
+That abort is a signal to rewrite the Crumb, not to retry it.
+
+## Agents
+
+The portable contract is the CLI and its JSON — not a hook, not a transcript path, not an API.
+Install the skill into any repository:
+
 ```bash
-bdc origin set <system:id>            # Set origin for this session
-bdc origin show                       # Show current origin
-bdc origin clear                      # Clear origin
-bdc origins                           # List all origins with counts
+npx -y skills add brianevanmiller/beadcrumbs --yes
 ```
 
-### Viewing & Analysis
+It installs to `.agents/skills/beadcrumbs` and symlinks each detected agent directory at it. Pin
+the tag (`brianevanmiller/beadcrumbs/tree/v1.0.0/skills/beadcrumbs`) if you need a reproducible
+install; the installer tracks a content hash in `skills-lock.json`, not a version.
+
+Optional, and never part of the contract: `bdc hooks install` writes chained `pre-push` and
+`post-merge` shims, and [docs/guides/hooks.md](docs/guides/hooks.md) covers per-harness session
+hooks. Automatic harvesting is off by default and opted into per repository with
+`bdc hooks install --auto-harvest`. Manual is the normal mode, not a degraded one.
+
+## JSON contract
+
+```json
+{
+  "bdc": "1",
+  "command": "capture",
+  "ok": true,
+  "data": {},
+  "warnings": [{"code": "beads_unavailable", "message": "bd not found on PATH"}],
+  "error": null,
+  "meta": {"bdc_version": "1.0.0", "ledger_schema": 1, "generated_at": "2026-08-28T14:00:00.000000Z"}
+}
+```
+
+JSON goes to stdout, prose to stderr, and the two never mix. On failure `ok` is `false`, `data`
+is `null`, and `error` carries `code`, `message`, and `details`. There is no partial envelope.
+
+| Exit | Meaning |
+|---|---|
+| 0 | success |
+| 1 | usage or validation error |
+| 2 | not found |
+| 3 | policy or authority denied |
+| 4 | ledger busy — lock backoff exhausted |
+| 5 | no ledger (not a Git repository, or not initialised) |
+| 6 | storage or integrity error |
+| 7 | redaction abort — nothing persisted |
+| 8 | adapter error |
+
+Full command reference: **[BDC_GUIDE.md](BDC_GUIDE.md)**.
+
+## Optional Beads integration
+
+If [Beads](https://github.com/steveyegge/beads) is installed, `bdc` enriches `beads:` references
+with title and status through supported `bd --json` commands. It never reads Beads' database
+directly. If `bd` is absent, stale, or failing, references still resolve to their locator and the
+envelope carries a warning — a missing tracker never blocks a core write.
+
+## Building and testing
+
 ```bash
-bdc timeline [thread-id]              # Chronological view
-bdc timeline --origin <system:id>     # Filter by origin
-bdc pivots [thread-id]                # Filter to pivots
-bdc decisions [thread-id]             # Filter to decisions
-bdc feedback [thread-id]              # Filter to external feedback
-bdc questions [--unresolved]          # Open questions
-bdc list [--type=X] [--since=1w]      # List insights
-bdc list --origin <system:id>         # Filter by origin
-bdc show <id>                         # Show insight details
+make check      # go build ./... && go vet ./... && go test ./...
+make binary     # a local ./bdc for smoke testing
 ```
 
-### Relationships
-```bash
-bdc link <id> --builds-on=<id>        # Extends understanding
-bdc link <id> --supersedes=<id>       # Replaces/corrects
-bdc link <id> --contradicts=<id>      # Unresolved tension
-bdc link <id> --spawns=<bead-id>      # Led to task
-```
+The Makefile exports the macOS ICU flags for you. `scripts/build-release.sh` produces the
+static-ICU release artifact.
 
-### Import
-```bash
-bdc import file.txt                   # Import AI session
-bdc import slack-export/              # Import Slack export
-bdc import file --dry-run             # Preview extraction
-```
+## Documentation
 
-### Beads Integration
-```bash
-bdc trace <bead-id>                   # Trace insight chain
-bdc spawn <insight-id> --title="..."  # Create task from insight
-```
-
-### Database & Setup
-```bash
-bdc locate                            # Find databases reachable from CWD
-bdc doctor                            # Health checks (SQLite integrity, JSONL consistency, hooks)
-bdc prime                             # Output AI workflow context
-bdc setup claude                      # Configure Claude Code hooks
-bdc stealth / unstealth               # Switch between local-only and git-tracked mode
-bdc stealth --status                  # Show current mode
-```
-
-See [Stealth Mode Guide](docs/guides/stealth-mode.md) for mode switching details.
-
-### Linear Integration
-```bash
-bdc linear setup                      # Detect and configure Linear CLI
-bdc linear status                     # Show integration status
-bdc linear link <thread-id> <issue>   # Link thread to Linear issue
-bdc linear push <thread-id>           # Post summary to Linear issue
-bdc linear config <key> [value]       # Get/set Linear config
-bdc thread new "title" --linear ENG-456  # Create thread linked to issue
-```
-
-See [Linear Integration Guide](docs/guides/linear.md) for full setup and troubleshooting.
-
-## Use Cases
-
-* **Resume interrupted work** — Reconstruct where you left off
-* **Document rationale** — Preserve why decisions were made
-* **Extract insights from exploration** — Turn vibe-coding sessions into structured knowledge
-* **Aid onboarding** — Show newcomers how understanding evolved
-* **Long-term memory** — Understand how the product came to be
-
-## Project Setup Guides
-
-* **[AI Agent Guide](BDC_GUIDE.md)** — Copy into your CLAUDE.md or AI agent config for automatic bdc usage
-* **[Reasoning Ledger Modernization Plan](docs/2026-08-27-reasoning-ledger-design.md)** — Plan the standalone Dolt reasoning ledger
-* **[Lifecycle Guide](docs/guides/lifecycle.md)** — 6-phase workflow from session start to cross-session resumption
-* **[Project Config Template](docs/guides/project-config.md)** — Author naming, thread conventions, signal vs noise guidance
-* **[Insight Types Deep Dive](docs/insight-types.md)** — When to use each of the 6 insight types
-* **[Linear Integration Guide](docs/guides/linear.md)** — Connect bdc to Linear for bi-directional issue linking
-* **[Stealth Mode Guide](docs/guides/stealth-mode.md)** — Local-only usage, worktree support, and mode switching
-* **[Pre-commit Framework Config](docs/guides/pre-commit-config.yaml)** — Alternative hook config for pre-commit users
+| Document | What it covers |
+|---|---|
+| [BDC_GUIDE.md](BDC_GUIDE.md) | Every command, its flags, and its `data` shape |
+| [skills/beadcrumbs/SKILL.md](skills/beadcrumbs/SKILL.md) | The agent-facing contract |
+| [docs/guides/stealth-mode.md](docs/guides/stealth-mode.md) | Ledger location, worktrees, `--visible` |
+| [docs/guides/hooks.md](docs/guides/hooks.md) | Optional git and session hooks |
+| [docs/2026-08-27-reasoning-ledger-design.md](docs/2026-08-27-reasoning-ledger-design.md) | The approved v1 design |
+| [docs/2026-08-28-dolt-reasoning-ledger-v1-plan.md](docs/2026-08-28-dolt-reasoning-ledger-v1-plan.md) | Schema, CLI contract, and the release-gate test matrix |
+| [docs/2026-08-28-dolt-operating-model-research.md](docs/2026-08-28-dolt-operating-model-research.md) | Why embedded Dolt, and what CGO/ICU costs |
+| [docs/2026-08-28-dependency-supply-chain-research.md](docs/2026-08-28-dependency-supply-chain-research.md) | The SQLite→Dolt dependency swap, audited |
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).

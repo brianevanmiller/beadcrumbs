@@ -1,230 +1,156 @@
 #!/usr/bin/env node
+//
+// Fetch the prebuilt bdc release archive for this platform, verify its SHA-256
+// against the release's checksums.txt, and unpack one binary into bin/.
+//
+// There is no source-build fallback. bdc needs CGO, ICU4C headers, and Go
+// >= 1.26.2; `go install` from a postinstall hook would either fail slowly or
+// produce a binary linked against a Homebrew ICU path that does not exist on
+// the next machine. Failing loudly with instructions is the honest outcome.
+//
+// BDC_BASE_URL overrides the download base. It accepts an https:// URL or a
+// local directory (with or without a file:// scheme), which is how
+// test/packaging/smoke.sh exercises this file against a locally built asset
+// with no network and no publish.
 
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { execSync } = require('child_process');
+const crypto = require('crypto');
+const { execFileSync } = require('child_process');
 
-const packageJson = require('../package.json');
-const VERSION = packageJson.version;
+const VERSION = require('../package.json').version;
+const DEFAULT_BASE = `https://github.com/brianevanmiller/beadcrumbs/releases/download/v${VERSION}`;
 
-function getPlatformInfo() {
+const MANUAL = [
+  '',
+  'bdc could not be installed automatically.',
+  '',
+  'Prebuilt binaries exist for macOS and Linux on arm64 and amd64 only.',
+  'Windows is not supported.',
+  '',
+  'To build from source you need Go >= 1.26.2, CGO, and ICU4C:',
+  '  macOS:  brew install icu4c',
+  '          CGO_CPPFLAGS="-I$(brew --prefix icu4c)/include" \\',
+  '          CGO_LDFLAGS="-L$(brew --prefix icu4c)/lib" \\',
+  `          go install github.com/brianevanmiller/beadcrumbs/cmd/bdc@v${VERSION}`,
+  '  Debian: sudo apt install libicu-dev',
+  `          go install github.com/brianevanmiller/beadcrumbs/cmd/bdc@v${VERSION}`,
+  '',
+  'Releases:  https://github.com/brianevanmiller/beadcrumbs/releases',
+  'Issues:    https://github.com/brianevanmiller/beadcrumbs/issues',
+  '',
+].join('\n');
+
+function target() {
   const platform = os.platform();
   const arch = os.arch();
-
-  let platformName;
-  let archName;
-  let binaryName = 'bdc';
-
-  switch (platform) {
-    case 'darwin':
-      platformName = 'darwin';
-      break;
-    case 'linux':
-      platformName = 'linux';
-      break;
-    case 'win32':
-      platformName = 'windows';
-      binaryName = 'bdc.exe';
-      break;
-    default:
-      throw new Error(`Unsupported platform: ${platform}`);
+  if (platform === 'win32') {
+    throw new Error('Windows is not supported. bdc runs on macOS and Linux only.');
   }
-
-  switch (arch) {
-    case 'x64':
-      archName = 'amd64';
-      break;
-    case 'arm64':
-      archName = 'arm64';
-      break;
-    default:
-      throw new Error(`Unsupported architecture: ${arch}`);
+  if (platform !== 'darwin' && platform !== 'linux') {
+    throw new Error(`Unsupported platform: ${platform}. bdc runs on macOS and Linux only.`);
   }
-
-  return { platformName, archName, binaryName };
+  const archName = { x64: 'amd64', arm64: 'arm64' }[arch];
+  if (!archName) {
+    throw new Error(`Unsupported architecture: ${arch}. bdc ships arm64 and amd64 only.`);
+  }
+  return { platform, archName };
 }
 
-function downloadFile(url, dest) {
+function localBase(base) {
+  if (base.startsWith('file://')) return base.slice('file://'.length);
+  if (base.startsWith('https://') || base.startsWith('http://')) return null;
+  return base;
+}
+
+function httpGet(url, dest, redirects = 0) {
   return new Promise((resolve, reject) => {
-    console.log(`Downloading from: ${url}`);
+    if (redirects > 5) return reject(new Error(`too many redirects for ${url}`));
     const file = fs.createWriteStream(dest);
-
-    const request = https.get(url, (response) => {
-      if (response.statusCode === 301 || response.statusCode === 302) {
-        const redirectUrl = response.headers.location;
-        console.log(`Following redirect to: ${redirectUrl}`);
-        downloadFile(redirectUrl, dest).then(resolve).catch(reject);
+    const fail = (err) => { file.destroy(); fs.rm(dest, { force: true }, () => reject(err)); };
+    https.get(url, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume();
+        file.destroy();
+        fs.rm(dest, { force: true }, () =>
+          httpGet(res.headers.location, dest, redirects + 1).then(resolve, reject));
         return;
       }
-
-      if (response.statusCode !== 200) {
-        reject(new Error(`Failed to download: HTTP ${response.statusCode}`));
-        return;
+      if (res.statusCode !== 200) {
+        res.resume();
+        return fail(new Error(`GET ${url} returned HTTP ${res.statusCode}`));
       }
-
-      response.pipe(file);
-
-      file.on('finish', () => {
-        file.close((err) => {
-          if (err) reject(err);
-          else resolve();
-        });
-      });
-    });
-
-    request.on('error', (err) => {
-      fs.unlink(dest, () => {});
-      reject(err);
-    });
-
-    file.on('error', (err) => {
-      fs.unlink(dest, () => {});
-      reject(err);
-    });
+      res.pipe(file);
+      file.on('finish', () => file.close((err) => (err ? fail(err) : resolve())));
+    }).on('error', fail);
+    file.on('error', fail);
   });
 }
 
-function extractTarGz(tarGzPath, destDir, binaryName) {
-  console.log(`Extracting ${tarGzPath}...`);
-
-  try {
-    execSync(`tar -xzf "${tarGzPath}" -C "${destDir}"`, { stdio: 'inherit' });
-
-    const extractedBinary = path.join(destDir, binaryName);
-
-    if (!fs.existsSync(extractedBinary)) {
-      throw new Error(`Binary not found after extraction: ${extractedBinary}`);
-    }
-
-    if (os.platform() !== 'win32') {
-      fs.chmodSync(extractedBinary, 0o755);
-    }
-
-    console.log(`Binary extracted to: ${extractedBinary}`);
-  } catch (err) {
-    throw new Error(`Failed to extract archive: ${err.message}`);
+async function fetch(base, name, dest) {
+  const dir = localBase(base);
+  if (dir) {
+    const src = path.join(dir, name);
+    if (!fs.existsSync(src)) throw new Error(`asset not found: ${src}`);
+    fs.copyFileSync(src, dest);
+    return;
   }
+  await httpGet(`${base}/${name}`, dest);
 }
 
-async function extractZip(zipPath, destDir, binaryName) {
-  console.log(`Extracting ${zipPath}...`);
-
-  try {
-    if (os.platform() === 'win32') {
-      execSync(`powershell -command "Expand-Archive -Path '${zipPath}' -DestinationPath '${destDir}' -Force"`, { stdio: 'inherit' });
-    } else {
-      execSync(`unzip -o "${zipPath}" -d "${destDir}"`, { stdio: 'inherit' });
-    }
-
-    const extractedBinary = path.join(destDir, binaryName);
-
-    if (!fs.existsSync(extractedBinary)) {
-      throw new Error(`Binary not found after extraction: ${extractedBinary}`);
-    }
-
-    console.log(`Binary extracted to: ${extractedBinary}`);
-  } catch (err) {
-    throw new Error(`Failed to extract archive: ${err.message}`);
-  }
+function sha256(file) {
+  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 }
 
-async function installFromGo() {
-  console.log('Attempting to install via go install...');
-
-  try {
-    execSync('go install github.com/brianevanmiller/beadcrumbs/cmd/bdc@latest', {
-      stdio: 'inherit',
-      env: { ...process.env }
-    });
-
-    // Find where Go installed it
-    const gopath = execSync('go env GOPATH', { encoding: 'utf8' }).trim();
-    const goBinaryPath = path.join(gopath, 'bin', os.platform() === 'win32' ? 'bdc.exe' : 'bdc');
-
-    if (fs.existsSync(goBinaryPath)) {
-      // Copy to our bin directory
-      const binDir = path.join(__dirname, '..', 'bin');
-      const binaryName = os.platform() === 'win32' ? 'bdc.exe' : 'bdc';
-      const destPath = path.join(binDir, binaryName);
-
-      fs.copyFileSync(goBinaryPath, destPath);
-      if (os.platform() !== 'win32') {
-        fs.chmodSync(destPath, 0o755);
-      }
-
-      console.log(`bdc installed successfully via go install`);
-      return true;
-    }
-  } catch (err) {
-    console.log(`go install failed: ${err.message}`);
+// The checksum file is the release's own manifest, so a truncated or swapped
+// archive is caught before anything is unpacked or made executable.
+function verify(checksumFile, archiveFile, archiveName) {
+  const line = fs.readFileSync(checksumFile, 'utf8')
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l.endsWith(archiveName) || l.endsWith(`*${archiveName}`));
+  if (!line) throw new Error(`${archiveName} is not listed in checksums.txt`);
+  const expected = line.split(/\s+/)[0].toLowerCase();
+  const actual = sha256(archiveFile);
+  if (expected !== actual) {
+    throw new Error(`checksum mismatch for ${archiveName}: expected ${expected}, got ${actual}`);
   }
-
-  return false;
 }
 
 async function install() {
+  const { platform, archName } = target();
+  const base = process.env.BDC_BASE_URL || DEFAULT_BASE;
+  const archiveName = `beadcrumbs_${VERSION}_${platform}_${archName}.tar.gz`;
+
+  const binDir = path.join(__dirname, '..', 'bin');
+  fs.mkdirSync(binDir, { recursive: true });
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'bdc-install-'));
+
   try {
-    const { platformName, archName, binaryName } = getPlatformInfo();
+    console.log(`Installing bdc v${VERSION} for ${platform}/${archName} from ${base}`);
+    const archive = path.join(work, archiveName);
+    const checksums = path.join(work, 'checksums.txt');
+    await fetch(base, archiveName, archive);
+    await fetch(base, 'checksums.txt', checksums);
 
-    console.log(`Installing bdc v${VERSION} for ${platformName}-${archName}...`);
+    verify(checksums, archive, archiveName);
+    console.log('Checksum verified.');
 
-    const binDir = path.join(__dirname, '..', 'bin');
-    const binaryPath = path.join(binDir, binaryName);
+    execFileSync('tar', ['-xzf', archive, '-C', work, 'bdc'], { stdio: 'inherit' });
+    const binary = path.join(binDir, 'bdc');
+    fs.copyFileSync(path.join(work, 'bdc'), binary);
+    fs.chmodSync(binary, 0o755);
 
-    if (!fs.existsSync(binDir)) {
-      fs.mkdirSync(binDir, { recursive: true });
-    }
-
-    // Try downloading from GitHub releases first
-    const releaseVersion = VERSION;
-    const archiveExt = platformName === 'windows' ? 'zip' : 'tar.gz';
-    const archiveName = `beadcrumbs_${releaseVersion}_${platformName}_${archName}.${archiveExt}`;
-    const downloadUrl = `https://github.com/brianevanmiller/beadcrumbs/releases/download/v${releaseVersion}/${archiveName}`;
-    const archivePath = path.join(binDir, archiveName);
-
-    try {
-      console.log(`Downloading bdc binary...`);
-      await downloadFile(downloadUrl, archivePath);
-
-      if (platformName === 'windows') {
-        await extractZip(archivePath, binDir, binaryName);
-      } else {
-        extractTarGz(archivePath, binDir, binaryName);
-      }
-
-      fs.unlinkSync(archivePath);
-
-      const output = execSync(`"${binaryPath}" --help`, { encoding: 'utf8' });
-      console.log(`bdc installed successfully`);
-      return;
-
-    } catch (downloadErr) {
-      console.log(`GitHub release download failed: ${downloadErr.message}`);
-      console.log('Falling back to go install...');
-    }
-
-    // Try go install as fallback
-    if (await installFromGo()) {
-      return;
-    }
-
-    throw new Error('All installation methods failed');
-
-  } catch (err) {
-    console.error(`Error installing bdc: ${err.message}`);
-    console.error('');
-    console.error('Installation failed. You can try:');
-    console.error('1. Installing Go and running: go install github.com/brianevanmiller/beadcrumbs/cmd/bdc@latest');
-    console.error('2. Building from source: git clone https://github.com/brianevanmiller/beadcrumbs.git && cd beadcrumbs && go build -o bdc ./cmd/bdc/');
-    console.error('3. Opening an issue: https://github.com/brianevanmiller/beadcrumbs/issues');
-    process.exit(1);
+    execFileSync(binary, ['version'], { stdio: 'inherit' });
+  } finally {
+    fs.rmSync(work, { recursive: true, force: true });
   }
 }
 
-if (!process.env.CI) {
-  install();
-} else {
-  console.log('Skipping binary download in CI environment');
-}
+install().catch((err) => {
+  console.error(`Error installing bdc: ${err.message}`);
+  console.error(MANUAL);
+  process.exit(1);
+});

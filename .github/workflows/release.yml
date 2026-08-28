@@ -1,0 +1,110 @@
+name: release
+
+# One native runner per platform and architecture. Cross-compilation is not
+# available (CGO_ENABLED=1 with a foreign GOOS fails in runtime/cgo without a
+# cross C toolchain), so four runners is the shape of the problem, not a choice.
+# There is no Windows job because Windows is not supported.
+#
+# Publishing to npm is deliberately not automated. It is a separate confirmation
+# gate, run by a human against a release whose assets already passed the
+# packaging smoke on this workflow.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: version to build, without the leading v
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-latest,     goos: darwin, goarch: arm64 }
+          - { runner: macos-13,         goos: darwin, goarch: amd64 }
+          - { runner: ubuntu-latest,    goos: linux,  goarch: amd64 }
+          - { runner: ubuntu-24.04-arm, goos: linux,  goarch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ICU4C (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libicu-dev
+
+      - name: Install ICU4C (macOS)
+        if: runner.os == 'macOS'
+        run: brew install icu4c
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Resolve version
+        id: v
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then v="${{ inputs.version }}"
+          else v="${GITHUB_REF_NAME#v}"; fi
+          declared=$(sed -n 's/^const version = "\(.*\)"$/\1/p' cmd/bdc/root.go)
+          pkg=$(node -p 'require("./npm-package/package.json").version')
+          # A tag that disagrees with the binary or the npm package would ship an
+          # asset whose `bdc version` contradicts its own filename.
+          [ "$v" = "$declared" ] || { echo "tag $v != cmd/bdc/root.go $declared" >&2; exit 1; }
+          [ "$v" = "$pkg" ] || { echo "tag $v != npm-package $pkg" >&2; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Build static-ICU artifact
+        run: scripts/build-release.sh "${{ steps.v.outputs.version }}"
+
+      # The same gate a user's install runs: real installers, isolated prefixes,
+      # checksum verified, no non-system dylib, and the binary actually opens a
+      # ledger. `bdc version` alone would pass on a broken ICU link.
+      - name: Packaging smoke
+        run: BDC_DIST="$PWD/dist" test/packaging/smoke.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: dist-*
+          merge-multiple: true
+
+      - name: Assemble checksums
+        run: cat artifacts/*.sha256 | sort -k2 > artifacts/checksums.txt && cat artifacts/checksums.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: |
+            artifacts/*.tar.gz
+            artifacts/checksums.txt
+          body: |
+            See CHANGELOG.md.
+
+            macOS and Linux, arm64 and amd64. Windows is not supported.
+            Verify with `shasum -a 256 -c checksums.txt`.

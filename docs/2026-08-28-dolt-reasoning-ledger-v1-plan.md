@@ -1057,7 +1057,7 @@ skills.sh.json                              display grouping only
 
 Installed with `npx skills add brianevanmiller/beadcrumbs`, or by deep link
 `.../tree/v1.0.0/skills/beadcrumbs`. Docs and CI pin the tag rather than `main`: the installer's
-lockfile records `source`/`ref`/hash and `npx skills update` re-fetches on a tree-SHA change, so
+project `skills-lock.json` records `source`/`sourceType`/hash and `npx skills update` re-fetches on a hash change, so
 an unpinned `main` reference makes an install non-reproducible. Every non-interactive invocation
 adds `-y/--yes`; without it the installer can prompt and a CI job hangs to its timeout. The installer copies to `.agents/skills/beadcrumbs` and
 symlinks each detected agent directory at it, which matches the canonical-home convention already
@@ -1170,7 +1170,7 @@ guaranteed to observe a remote merge.
 
 | Path | Change |
 |---|---|
-| `README.md` | v1 model, the ten outcomes, that `bdc crumb prune` is retention and not erasure because Dolt keeps committed history, the real install story: prebuilt static-ICU binaries for darwin/linux; `go install` documented as a source build needing ICU4C and CGO flags; Windows explicitly unsupported; ~141 MB binary stated up front |
+| `README.md` | v1 model, the ten outcomes, that `bdc crumb prune` is retention and not erasure because Dolt keeps committed history, the real install story: prebuilt static-ICU binaries for darwin/linux; `go install` documented as a source build needing ICU4C and CGO flags; Windows explicitly unsupported; ~135 MB binary stated up front |
 | `BDC_GUIDE.md` | rewritten as the agent-facing command reference; points at `skills/beadcrumbs/SKILL.md` as the contract |
 | `CHANGELOG.md` | one `v1.0.0` entry naming the clean break, the removed commands and store, the go 1.26.2 floor, and the absence of migration |
 | `docs/guides/stealth-mode.md` | rewritten around `<git-common-dir>/beadcrumbs` and `--visible` |
@@ -1182,8 +1182,8 @@ guaranteed to observe a remote merge.
 
 ### 5.3 Kept
 
-`LICENSE`, `.gitignore` (unchanged — `--visible` writes `/.beadcrumbs/` to `.git/info/exclude`,
-not to a tracked ignore file), Cobra, the module path, the
+`LICENSE`, `.gitignore` (S10 swaps the dead SQLite entries for `/dist/`; `--visible` still writes
+`/.beadcrumbs/` to `.git/info/exclude`, not to a tracked ignore file), Cobra, the module path, the
 `bdc` binary name, and the four research documents plus the design as the historical record.
 
 ---
@@ -1266,11 +1266,11 @@ without CGO and ICU4C — so the tag would only hide the tests that matter.
 
 | Design bullet | Gate |
 |---|---|
-| Unit, integration, race, e2e pass on supported Go versions | CI matrix: go 1.26.2 and latest, `go test ./...`, `-race`, `-tags integration` |
+| Unit, integration, race, e2e pass on supported Go versions | CI matrix: go 1.26.2 and latest, `go test ./...` then `go test -race ./...`; no build tag, per this section's preamble |
 | Release binaries carry no non-system dylibs | CI asserts `otool -L` (macOS) / `ldd` (Linux) on the `-tags icu_static` artifact — the dynamic build links an absolute Homebrew `icu4c@78` path and is not portable |
 | macOS and Linux package smoke tests use isolated prefixes | `test/packaging/smoke.sh` — runs the real `postinstall.js` against the published asset into `$(mktemp -d)`, verifies the checksum, asserts `otool -L`/`ldd` shows no non-system dylib, then runs `bdc version --json` **and** `bdc init` + `bdc capture` + `bdc doctor`. `version` alone exits before the engine opens, so it passes on a binary whose ICU linkage is broken |
 | Windows supported only if proven | not proven → README states "not supported", CI has no Windows job |
-| Dependency changes get a supply-chain audit | `go mod graph` diff + license report attached to the PR; the SQLite→Dolt swap is one reviewable commit |
+| Dependency changes get a supply-chain audit | [Dependency supply-chain audit](2026-08-28-dependency-supply-chain-research.md); `go list -m all` diff + `govulncheck` enforced by the `supply-chain` CI job |
 | Independent reviewer checks standards and design | standards, specification, and adversarial passes each dispositioned in the PR |
 | Not globally installed or published during verification | `test/packaging/smoke.sh` asserts the prefix is not on the default `PATH` |
 
@@ -1338,7 +1338,8 @@ is serial because each slice reads the previous one's domain types.
    `codex debug prompt-input` reports both as skill roots (`r0 = ~/.codex/skills`,
    `r1 = ~/.agents/skills`) alongside the project's `<repo>/.agents/skills`. Both global paths
    work; project-scoped `.agents/skills` remains the preferred install.
-5. **Binary size.** 141 MB stripped with static ICU is accepted, not solved. If distribution size
+5. **Binary size.** 135 MB stripped with static ICU (measured in S10; the research doc's 141 MB
+   was an unstripped figure) is accepted, not solved. If distribution size
    becomes a blocker the decision reopens; nothing in this plan depends on it.
 6. **The transcript-shape heuristic.** §2.5.11 fixes that automatic capture rejects
    transcript-shaped input and that the size caps are database constraints. The specific signals

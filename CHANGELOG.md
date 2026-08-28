@@ -1,5 +1,74 @@
 # Changelog
 
+## v1.0.0 — 2026-08-28
+
+**A clean break. There is no migration from 0.x, no dual write, and no compatibility shim.** A
+0.x ledger is not readable by 1.0 and will not be. If you have prototype data you want, export it
+by hand before upgrading; nothing in this release will do it for you.
+
+### The product
+
+Beadcrumbs is a repository-local **reasoning ledger**: Crumbs are captured fragments, a Harvest
+synthesises selected Crumbs into a revisioned Insight without consuming them, and a Promotion
+Proposal carries an Insight to a durable destination — with `bdc` never performing the external
+write and a Receipt recording the anchor that proves it did land. Evidence, confidence,
+validation verdict, and authority level stay four independent axes. Review, validation, and
+authority are append-only; only a human can grant `mandatory`.
+
+### Storage
+
+- SQLite and JSONL are gone. Storage is **embedded Dolt** through `github.com/dolthub/driver`
+  v1.88.1 — one short-lived engine per command, holding an exclusive directory lock for its life.
+- The ledger lives at `<git-common-dir>/beadcrumbs`, so every linked worktree resolves to one
+  ledger and `git status` never sees it. Stealth is structural rather than configured.
+  `bdc init --visible` opts into `<main-worktree>/.beadcrumbs`.
+- A normalized 16-table schema enforces its invariants in the database: confidence range,
+  non-empty provenance, no orphaned polymorphic targets, no duplicate proposal hash, no
+  agent-granted `mandatory` authority.
+- `bdc crumb prune` is **retention, not erasure**. Dolt keeps committed history, so a pruned
+  Crumb stays readable through `dolt_history_*`. Never capture a secret expecting to prune it.
+
+### Requirements
+
+- **Go 1.26.2** is a hard floor, imposed by `dolthub/driver`.
+- **CGO and ICU4C are mandatory.** There is no ICU-free build tag; a missing header is a build
+  break, not a silent fallback. macOS needs `brew install icu4c` plus `CGO_CPPFLAGS`/`CGO_LDFLAGS`;
+  Linux needs `libicu-dev`.
+- **Windows is not supported** — not proven, so not claimed. No Windows job in CI; the installers
+  refuse to run there.
+- Released binaries are ~135 MB, built with `-tags icu_static` so they carry no non-system
+  dynamic libraries. Source builds link ICU dynamically and are not portable between machines.
+
+### CLI
+
+One versioned JSON envelope on every command, prose on stderr, and stable exit codes 0–8.
+
+- **Added**: `capture`, `crumb list|show|review|prune`, `harvest`, `insight list|show|revise`,
+  `validate`, `authority`, `reference add|list`, `promote propose|record|reject|fail|list`,
+  `context`, `handoff`, `prime`, `backup`, `restore`, `gc`, `hooks install|uninstall|run`.
+  `init`, `doctor`, and `version` were rewritten, not edited.
+- **Removed with no alias and no deprecation shim**: `thread`, `origin`, `origins`, `timeline`,
+  `pivots`, `decisions`, `questions`, `feedback`, `trace`, `link`, `list`, `show`, `locate`,
+  `spawn`, `import`, `export`, `linear`, `slack`, `github`, `setup`, `upgrade`, `stealth`,
+  `unstealth`.
+- The Linear, Slack, and GitHub adapters are deleted. v1 ships the destination-neutral
+  propose/record shape and no concrete adapter.
+
+### Agents
+
+- A portable skill at `skills/beadcrumbs/`, installable with `npx skills add` into any harness.
+  Explicit `bdc` commands and the JSON envelope are the whole cross-agent contract.
+- Optional Beads enrichment through supported `bd --json` commands, behind a detection ladder.
+  Beadcrumbs never reads Beads' database, and an absent or stale `bd` is a warning, never a
+  blocked write.
+- Automatic harvesting is **off by default** and opted into per repository with
+  `bdc hooks install --auto-harvest`. Redaction runs before any write and its failure aborts with
+  nothing persisted.
+
+---
+
+*Releases below are the 0.x prototype, kept as history. Nothing in them is supported by 1.0.*
+
 ## v0.10.0 — 2026-04-14
 
 - Architecture improvements inspired by beads 1.0: storage interface extraction, read-only mode for query commands, content hashing for insight dedup, `--json` output on all commands, and `bdc doctor` health check command

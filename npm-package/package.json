@@ -1,7 +1,7 @@
 {
   "name": "@beadcrumbs/bdc",
-  "version": "0.10.0",
-  "description": "beadcrumbs - capture how intent evolves through human & AI dialogues",
+  "version": "1.0.0",
+  "description": "bdc - a repository-local reasoning ledger for humans and coding agents",
   "main": "bin/bdc.js",
   "bin": {
     "bdc": "bin/bdc.js"
@@ -10,14 +10,13 @@
     "postinstall": "node scripts/postinstall.js"
   },
   "keywords": [
-    "intent-tracking",
-    "ai-threads",
-    "threads",
+    "reasoning-ledger",
+    "insights",
+    "provenance",
     "ai-agent",
     "coding-agent",
-    "dialogue",
-    "insights",
-    "narrative",
+    "agent-skills",
+    "dolt",
     "git",
     "beads",
     "beadcrumbs"
@@ -34,12 +33,11 @@
   },
   "homepage": "https://github.com/brianevanmiller/beadcrumbs#readme",
   "engines": {
-    "node": ">=14.0.0"
+    "node": ">=18.0.0"
   },
   "os": [
     "darwin",
-    "linux",
-    "win32"
+    "linux"
   ],
   "cpu": [
     "x64",
