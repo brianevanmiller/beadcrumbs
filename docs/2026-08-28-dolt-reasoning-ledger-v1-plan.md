@@ -110,11 +110,13 @@ type Store interface {
 }
 
 type Tx interface {
+    Snapshot                                                 // transaction-consistent reads
     InsertCrumb(Crumb) error
     AppendCrumbReview(CrumbReviewEvent) error
     DeleteCrumbs([]CrumbID) (int, error)                     // the only delete in the system
     InsertHarvest(Harvest, []HarvestCrumb) error
     InsertRevision(InsightRevision, []CrumbID) error         // creates the Insight on revision 1
+    SetInsightHead(InsightID, int) error                     // keeps the materialised head honest
     UpsertReference(Reference) (ReferenceID, error)
     LinkReference(RecordRef, ReferenceID, Relation) error
     AppendValidation(Validation) error
@@ -126,11 +128,15 @@ type Tx interface {
 
 type Snapshot interface {
     Crumbs(CrumbQuery) ([]CrumbRow, error)
+    CrumbLinks(CrumbID) (CrumbLinkRows, error)               // harvests + revisions a Crumb feeds
     Insights(InsightQuery) ([]InsightRow, error)
     Revisions(InsightID) ([]RevisionRow, error)
+    References(ReferenceQuery) ([]ReferenceRow, error)       // by kind/relation, no target required
     ReferenceLinks(RecordRef) ([]ReferenceLinkRow, error)
     Proposals(PromotionQuery) ([]ProposalRow, error)
+    Attempts([]ProposalID) ([]PromotionRow, []ReceiptRow, error)
     Events(EventQuery) ([]EventRow, error)                   // validations + authorities + reviews, time-ordered
+    OrphanRefLinks() ([]ReferenceLinkRow, error)             // the polymorphic-FK scan bdc doctor needs
     Counts(CountQuery) (Counts, error)
 }
 
@@ -155,6 +161,14 @@ type Enricher interface {
     Enrich(ctx context.Context, locator, workspace string) (label string, meta []byte, fetchedAt time.Time, err error)
 }
 ```
+
+`Tx` embeds `Snapshot` because five writes are defined in terms of the current row and would
+otherwise be unimplementable: `AppendCrumbReview` reads the crumb to fill `from_state`,
+`InsertRevision` reads `MAX(revision)` for the next number and parent, `AppendPromotion` reads
+`MAX(attempt)+1`, `UpsertProposal` reads the existing `content_hash` row to answer
+`created=false`, and `PruneCrumbs` reads `insight_crumbs` *before* deleting so it can return
+`blocked[]` per Crumb. Prune never relies on the FK to report blockage — one violation aborts the
+whole transaction and loses the per-ID answer; `fk_ic_crumb` is the backstop, not the check.
 
 **Typed errors** (`internal/ledger/errors.go`), each mapping to one exit code and one JSON error
 code: `ErrNotFound`, `ErrInvalidInput`, `ErrPolicyDenied`, `ErrAuthorityDenied`, `ErrBusy`,
@@ -193,6 +207,22 @@ open → one bounded transaction → close. Embedded Dolt holds an exclusive wri
 database directory for the whole life of the open engine, so a long-lived agent session must
 never hold it across turns.
 
+**Every successful write transaction ends in one Dolt commit.** The driver makes no commits on
+its own, so without this there is no versioned history, `bdc backup`/`restore` carry only a
+working set, and the reason for choosing Dolt over SQLite disappears. Commit identity is fixed —
+`commitname=beadcrumbs`, `commitemail=bdc@localhost` — never the user's Git identity, which would
+write personal identity into a store the user cannot see in `git status`. The commit message
+carries the command name and actor kind and no domain content. `Config.MultiStatements` is
+enabled only for `Migrate`, which applies the embedded `001_init.sql` as one script; every other
+statement is issued singly.
+
+**Prune removes rows from the head, not from history.** Verified against dolt 2.3.1: after a
+commit, a deleted Crumb is still readable through `AS OF` and `dolt_history_crumbs`. `DOLT_GC()`
+reclaims the journal but does not rewrite committed history. Two consequences the product must
+state rather than imply: `bdc crumb prune` is a retention operation, not an erase, and a secret
+that survives redaction is permanent. Redaction is therefore the only defense, which is why a
+redaction failure aborts the write instead of degrading it.
+
 **Lock discipline is a runtime assertion, not a convention.** Three live checks, all firing in
 production builds:
 
@@ -203,7 +233,10 @@ production builds:
    (default 30 s), it logs a structured invariant violation naming the command. The
    "no engine across turns" rule is otherwise unenforceable.
 3. `Config.MaxOpenWait` (default 15 s) bounds backoff on a directory locked by *another* process.
-   Exhaustion surfaces as `ledger.ErrBusy` → exit 4, never as a hang.
+   Exhaustion surfaces as `ledger.ErrBusy` → exit 4, never as a hang. 15 s is safe only because
+   every command holds the engine for one bounded transaction; the proof measured a 16.7 s wait
+   behind a single 4,000-row writer, so `gc`, `backup`, and `restore` — the three commands that
+   legitimately run long — set their own larger bound.
 
 **Discovery is structural, not configured.** The ledger lives at
 `$(git rev-parse --path-format=absolute --git-common-dir)/beadcrumbs`. That path is identical
@@ -234,6 +267,10 @@ func New(cfg Config) (*Redactor, error)
 func (r *Redactor) Version() string
 func (r *Redactor) Redact(text string) (string, []Finding, error)
 ```
+
+A `Finding` carries the rule id, byte offset, length, and replacement token — never the matched
+substring. That rule holds in `warnings[]`, in `ErrRedaction` messages, and in logs; a finding
+that quoted the secret would defeat the redaction it reports, and Dolt history would keep it.
 
 Detects and replaces high-confidence secret shapes (private key blocks, AWS/GCP/GitHub/Slack
 token prefixes, bearer tokens, `postgres://user:pass@`, `.env`-style `KEY=<high-entropy>`) plus
@@ -288,7 +325,11 @@ hooks.go version.go
 ```
 
 `root.go` is the only file that names `internal/store/dolt`. Command bodies touch `*ledger.Ledger`
-and nothing else.
+and nothing else. Open is conditional: `version`, `init`, and `restore` run without an existing
+ledger, and everything else fails with `ErrNoLedger` → exit 5 before any command body runs.
+`root.go` also reads `repo_config` (`redaction.version`, `redact.patterns`, `policy.version`)
+from the same snapshot it opens, because the `Redactor` is constructed before the `Ledger` that
+injects it.
 
 ---
 
@@ -389,13 +430,13 @@ CREATE TABLE harvests (
 CREATE TABLE crumbs (
   id                CHAR(40)     NOT NULL PRIMARY KEY,
   content           TEXT         NOT NULL,          -- redacted; raw text never reaches this column
-  content_hash      CHAR(64)     NOT NULL,
+  content_hash      CHAR(64)     NOT NULL,          -- sha256 over the redacted content
   review_state      ENUM('candidate','accepted','rejected') NOT NULL DEFAULT 'candidate',
   confidence        DECIMAL(4,3) NOT NULL,
   captured_at       DATETIME(6)  NOT NULL,
   harvest_id        CHAR(40)     NULL,              -- set when captured by a harvest
-  policy_version    VARCHAR(32)  NULL,
-  redaction_version VARCHAR(32)  NULL,
+  policy_version    VARCHAR(32)  NULL,              -- set when captured by a harvest
+  redaction_version VARCHAR(32)  NOT NULL,          -- every content write passes redaction
   actor_id          VARCHAR(255) NOT NULL,
   actor_kind        ENUM('human','agent') NOT NULL,
   actor_model       VARCHAR(128) NULL,
@@ -407,8 +448,7 @@ CREATE TABLE crumbs (
   CONSTRAINT ck_crumbs_conf CHECK (confidence >= 0 AND confidence <= 1),
   CONSTRAINT ck_crumbs_prov CHECK (actor_kind = 'human'
       OR (actor_model IS NOT NULL AND session_id IS NOT NULL)),
-  CONSTRAINT ck_crumbs_harvest_policy CHECK (harvest_id IS NULL
-      OR (policy_version IS NOT NULL AND redaction_version IS NOT NULL))
+  CONSTRAINT ck_crumbs_harvest_policy CHECK (harvest_id IS NULL OR policy_version IS NOT NULL)
 );
 -- uq_crumbs_hash_session dedupes repeated automatic capture within one session.
 -- session_id is NULL for human captures and MySQL unique keys permit repeated NULLs,
@@ -662,6 +702,14 @@ application code:
 | `failed` promotion with no detail | `Check constraint "ck_prm_detail" violated` |
 | Full propose → apply → receipt path | accepted |
 
+**A failed Harvest is recorded by a second transaction.** `CompleteHarvest` is one transaction
+that rolls back entirely on error, so the `failed` and `aborted` outcomes are unreachable from
+inside it. After the rollback the ledger opens a second, separate transaction that writes only
+the `harvests` row — mode, outcome, `failure_code`, the two counts, policy and redaction
+versions, timestamps, provenance — and no content of any kind. A redaction abort writes
+`outcome='failed', failure_code='redaction_failed'`; nothing the redactor touched is persisted,
+which is what invariant 6 and exit code 7 promise.
+
 ### 2.4 Vocabularies
 
 | Vocabulary | Storage | Values |
@@ -681,7 +729,9 @@ application code:
 ### 2.5 Invariants the ledger owns because the database cannot
 
 1. `ref_links.record_id` points at a live record (polymorphic; `bdc doctor` scans for orphans).
-2. Prune is allowed only for `review_state='candidate'`; `insight_crumbs` RESTRICT is the backstop.
+2. Prune is allowed only for `review_state='candidate'`, and only for Crumbs no Insight revision
+   references — checked before the delete so `blocked[]` is per-ID; `insight_crumbs` RESTRICT is
+   the backstop. Prune removes the row from the head only; committed history retains it (§1.3).
 3. A `mapping`-class proposal carries at least two `subject` references.
 4. Effective authority requirement = `max(class requirement, destination requirement)`; `policy`
    always requires human authority regardless of destination.
@@ -748,7 +798,7 @@ fails mid-transaction rolls back and reports one error.
 | `bdc authority <target-id>` | `--level` `--scope` `--destination kind:locator` `--rationale` (required) | `{authority, effective_level}` |
 | `bdc reference add <target-id>` | `--kind` `--locator` `--workspace` `--relation` `--label` | `{reference, link}` |
 | `bdc reference list` | `--target` `--kind` `--relation` `--refresh` | `{references[]}` each with `fetched_at` |
-| `bdc promote propose` | `--insight` `--revision` `--class` `--destination kind:locator` `--workspace` `--capability` (repeatable) `--content\|--content-file` `--authority` `--supersedes` `--confidence` | `{proposal, created, content_hash, authority_required, blocked_reason}` |
+| `bdc promote propose` | `--insight` `--revision` `--class` `--destination kind:locator` `--workspace` `--capability` (repeatable) `--content\|--content-file` `--authority` `--supersedes` `--confidence` | `{proposal, created, content_hash, authority_required}` |
 | `bdc promote record <proposal-id>` | `--locator` (required) `--anchor` `--external-hash` `--verified` | `{promotion, receipt, warnings}` |
 | `bdc promote reject <proposal-id>` | `--rationale` (required) | `{promotion}` |
 | `bdc promote list` | `--insight` `--status` `--destination-kind` | `{proposals[]}` each with `attempts[]`, `receipt` |
@@ -766,15 +816,20 @@ fails mid-transaction rolls back and reports one error.
 `--budget` bounds `context`/`handoff`/`prime` output in approximate tokens; the default is
 declared in the skill so agents can rely on it.
 
-`bdc promote propose` never performs an external write. `blocked_reason` is set (with exit 3)
-when the effective authority requirement is not met — the proposal is still recorded so a human
-can grant authority and retry.
+`bdc promote propose` never performs an external write. When the effective authority requirement
+is not met the proposal is still recorded, but the envelope rules in §3.1 still apply: the
+response is `ok:false`, exit 3, `error.code:"authority_required"`, with
+`error.details:{proposal_id, content_hash, created, authority_required}` so a human can grant
+authority and retry against the recorded proposal. There is no `blocked_reason` field and no
+partially populated `data`.
 
 ### 3.4 Deleted commands
 
 `thread`, `origin`, `origins`, `timeline`, `pivots`, `decisions`, `questions`, `feedback`,
-`trace`, `story`, `link`, `list`, `show`, `locate`, `spawn`, `import`, `export`, `linear`,
-`slack`, `github`, `setup`, `upgrade`, `stealth`. No aliases, no deprecation shims.
+`trace`, `link`, `list`, `show`, `locate`, `spawn`, `import`, `export`, `linear`, `slack`,
+`github`, `setup`, `upgrade`, `stealth`, `unstealth`. No aliases, no deprecation shims.
+(The resolution comment on the CLI ticket also lists `story`; no such command exists in the
+prototype.)
 
 ---
 
@@ -879,6 +934,7 @@ guaranteed to observe a remote merge.
 | `internal/linear/`, `internal/slack/`, `internal/github/` | deferred adapters |
 | `internal/summary/` | only existed to render Linear/GitHub posts |
 | `internal/beads/` | rewritten from scratch against the measured `bd --json` contract |
+| `internal/slack/` (converter) | imports `internal/types`; nothing in v1 uses it |
 | `cmd/bdc/*.go` except `main.go`, `root.go`, `doctor.go`, `version.go` | replaced; the four survivors are rewritten, not edited |
 | `.beadcrumbs/*.jsonl` | prototype data, committed by accident |
 | `docs/beadcrumbs-plan.md`, `docs/insight-types.md` | prototype-era roadmap and taxonomy |
@@ -889,19 +945,20 @@ guaranteed to observe a remote merge.
 
 | Path | Change |
 |---|---|
-| `README.md` | v1 model, the nine outcomes, the real install story: prebuilt static-ICU binaries for darwin/linux; `go install` documented as a source build needing ICU4C and CGO flags; Windows explicitly unsupported; ~141 MB binary stated up front |
+| `README.md` | v1 model, the ten outcomes, that `bdc crumb prune` is retention and not erasure because Dolt keeps committed history, the real install story: prebuilt static-ICU binaries for darwin/linux; `go install` documented as a source build needing ICU4C and CGO flags; Windows explicitly unsupported; ~141 MB binary stated up front |
 | `BDC_GUIDE.md` | rewritten as the agent-facing command reference; points at `skills/beadcrumbs/SKILL.md` as the contract |
 | `CHANGELOG.md` | one `v1.0.0` entry naming the clean break, the removed commands and store, the go 1.26.2 floor, and the absence of migration |
 | `docs/guides/stealth-mode.md` | rewritten around `<git-common-dir>/beadcrumbs` and `--visible` |
 | `npm-package/package.json` | version `1.0.0`; `"os": ["darwin","linux"]` (drop `win32`) |
 | `npm-package/scripts/postinstall.js` | fetch the `-tags icu_static` release asset per platform/arch; fail loudly with the manual-install message on an unsupported platform instead of falling back to a source build |
 | `scripts/install.sh` | same asset matrix; verify checksums; refuse Windows |
-| `.github/workflows/` | native macOS and Linux runners; ICU prerequisites per platform; `-tags icu_static` release build; no cross-compilation |
+| `.github/workflows/` | **added** — the repository has no CI today: native macOS and Linux runners; ICU prerequisites per platform; `-tags icu_static` release build; no cross-compilation |
 | `docs/reasoning-ledger-wayfinder.md` | decision statuses and the real implementation ticket titles |
 
 ### 5.3 Kept
 
-`LICENSE`, `.gitignore` (plus `/.beadcrumbs/` if `--visible` is used), Cobra, the module path, the
+`LICENSE`, `.gitignore` (unchanged — `--visible` writes `/.beadcrumbs/` to `.git/info/exclude`,
+not to a tracked ignore file), Cobra, the module path, the
 `bdc` binary name, and the four research documents plus the design as the historical record.
 
 ---
@@ -939,11 +996,13 @@ guards anything that opens a real engine; `-race` runs on the unit tier.
 | Design bullet | Test | File |
 |---|---|---|
 | Secrets and configured patterns redacted before persistence | `TestRedactsKnownSecretShapes` (table), `TestCaptureRedactsBeforeWrite` | `internal/redact/redact_test.go`, `internal/ledger/privacy_test.go` |
-| Raw transcript fixtures never appear in Dolt, logs, errors, receipts | `TestTranscriptFixtureNeverReachesStore` (scans every table, log buffer, and error string) | `internal/ledger/privacy_test.go` |
+| Raw transcript fixtures never appear in Dolt, logs, errors, receipts | `TestTranscriptFixtureNeverReachesStore` (scans every table **and every `dolt_history_*` table**, plus the log buffer and error strings — a head-only scan passes while the secret sits in committed history) | `internal/ledger/privacy_test.go` |
 | Hostile captured text remains inert | `TestPromptInjectionFixturesRoundTripAsData` | `internal/ledger/privacy_test.go` |
 | Promotion cannot bypass review or authority policy | `TestProposeBlockedWhenHumanAuthorityRequired`, `TestPolicyClassAlwaysRequiresHuman` | `internal/ledger/promotion_test.go` |
 | Output does not leak hidden provenance | `TestJSONOutputHasNoUndeclaredFields` (golden) | `cmd/bdc/golden_test.go` |
-| *(added)* redaction failure persists nothing | `TestRedactionFailureAbortsHarvestWithNoWrite` | `internal/ledger/privacy_test.go` |
+| *(added)* redaction failure persists nothing | `TestRedactionFailureAbortsHarvestWithNoWrite` (asserts the recorded `harvests` row carries `failure_code='redaction_failed'` and no content) | `internal/ledger/privacy_test.go` |
+| *(added)* findings never quote the secret | `TestFindingsCarryNoMatchedText` | `internal/redact/redact_test.go` |
+| *(added)* prune is retention, not erase | `TestPrunedCrumbRemainsInDoltHistory` (documents the guarantee rather than pretending to erase) | `internal/store/dolt/history_test.go` |
 
 ### CLI and integrations
 
@@ -951,9 +1010,10 @@ guards anything that opens a real engine; `-race` runs on the unit tier.
 |---|---|---|
 | Every first-release command has golden JSON contract tests | `TestGoldenEnvelope/<command>` (table over every invocation in the CLI contract) | `cmd/bdc/golden_test.go`, `cmd/bdc/testdata/golden/*.json` |
 | Human and JSON output represent the same result | `TestHumanAndJSONAgree` | `cmd/bdc/output_test.go` |
-| Missing Beads and destinations degrade without corrupting core | `TestCoreWorkflowWithoutBeads`, `TestEnrichFailureIsWarningNotError` | `internal/beads/degrade_test.go` |
+| Missing Beads and destinations degrade without corrupting core | `TestEnrichFailureIsWarningNotError` (adapter tier), `TestCoreWorkflowWithoutBeads` (CLI tier — lives with the e2e workflow because it needs the whole CLI, which does not exist at S9) | `internal/beads/degrade_test.go`, `test/e2e/workflow_test.go` |
 | `bd --json` changes fail with a bounded adapter error | `TestPlainTextFailureIsNeverParsed`, `TestVersionBelowFloorDisablesAdapter`, `TestUnknownFieldsAreTolerated` | `internal/beads/contract_test.go` |
-| Skill installs in a clean fixture and completes the workflow | `TestSkillInstallAndFullWorkflow` (`npx skills add <local path>`, then capture→harvest→insight→propose→record→context→handoff) | `test/e2e/skill_test.go` |
+| End-to-end workflow against a real ledger | `TestFullWorkflowInFixtureRepo` (capture→review→harvest→insight→propose→record→context→handoff, documented `bdc` commands only, no installer and no network) | `test/e2e/workflow_test.go` |
+| Skill installs in a clean fixture and completes the workflow | `TestSkillInstallAndFullWorkflow` (`npx skills add <local path>`, then the same sequence; skipped with a named reason when `npx` is unavailable, which is why the gate above exists separately) | `test/e2e/skill_test.go` |
 | *(added)* exit codes are stable | `TestExitCodeForEachErrorClass` | `cmd/bdc/errors_test.go` |
 
 ### Release
@@ -961,6 +1021,7 @@ guards anything that opens a real engine; `-race` runs on the unit tier.
 | Design bullet | Gate |
 |---|---|
 | Unit, integration, race, e2e pass on supported Go versions | CI matrix: go 1.26.2 and latest, `go test ./...`, `-race`, `-tags integration` |
+| Release binaries carry no non-system dylibs | CI asserts `otool -L` (macOS) / `ldd` (Linux) on the `-tags icu_static` artifact — the dynamic build links an absolute Homebrew `icu4c@78` path and is not portable |
 | macOS and Linux package smoke tests use isolated prefixes | `test/packaging/smoke.sh` — installs into `$(mktemp -d)`, runs `bdc version --json`, never global |
 | Windows supported only if proven | not proven → README states "not supported", CI has no Windows job |
 | Dependency changes get a supply-chain audit | `go mod graph` diff + license report attached to the PR; the SQLite→Dolt swap is one reviewable commit |
@@ -977,14 +1038,14 @@ group can run in separate worktrees without touching the same package.
 
 | # | Slice | Owns | Depends on | Mode |
 |---|---|---|---|---|
-| S1 | Dolt repository lifecycle, stealth discovery, backup, restore, and doctor | `go.mod`, `go.sum`, `internal/store/dolt/{discover,open,lock,backup,gc,doctor}.go`, `cmd/bdc/{main,root,output,errors,init,doctor,maintenance,version}.go` | — | serial |
+| S1 | Dolt repository lifecycle, stealth discovery, backup, restore, and doctor | `go.mod`, `go.sum`, `internal/store/dolt/{discover,open,lock,backup,restore,gc,doctor}.go`, `cmd/bdc/{main,root,output,errors,init,doctor,maintenance,version}.go`, plus the code deletions in §5.1 | — | serial |
 | S2 | Normalized schema and intent-based ledger storage operations | `internal/store/dolt/{schema/001_init.sql,migrate,tx,snapshot}.go`, `internal/ledger/{store,types,errors,ids,ledger}.go` | S1 | serial |
 | S3 | Crumb capture, provenance, confidence, review, and pruning | `internal/ledger/crumb.go`, `internal/redact/**`, `cmd/bdc/{capture,crumb}.go` | S2 | **parallel A** |
 | S4 | Tracker-neutral references and causal lineage | `internal/ledger/reference.go`, `cmd/bdc/reference.go` | S2 | **parallel A** |
 | S9 | Optional Beads enrichment through supported `bd --json` | `internal/beads/**` | S2 | **parallel A** |
 | S5 | Harvest synthesis and Insight revision lifecycle | `internal/ledger/{harvest,insight}.go`, `cmd/bdc/{harvest,insight}.go` | S3, S4 | serial |
 | S6 | Validation, authority, Promotion Proposals, attempts, and receipts | `internal/ledger/{validation,authority,promotion,policy}.go`, `cmd/bdc/{validate,authority,promote}.go` | S5 | serial |
-| S7 | Stable JSON CLI plus context, handoff, and prime | `internal/ledger/narrative.go`, `cmd/bdc/{context,handoff,prime}.go`, `cmd/bdc/testdata/golden/**`, `cmd/bdc/{golden,output,errors}_test.go` | S6, S9 | serial |
+| S7 | Stable JSON CLI plus context, handoff, and prime | `internal/ledger/narrative.go`, `cmd/bdc/{context,handoff,prime,output,errors}.go`, `cmd/bdc/testdata/golden/**`, `cmd/bdc/{golden,output,errors}_test.go`, `test/e2e/workflow_test.go` | S6, S9 | serial |
 | S8 | Portable Beadcrumbs skill and opt-in privacy-safe harvesting | `skills/**`, `skills.sh.json`, `.claude-plugin/**`, `hooks/**`, `cmd/bdc/hooks.go`, `docs/guides/hooks.md`, `test/e2e/skill_test.go` | S7 | serial |
 | S10 | Clean-break documentation, packaging, compatibility removal, and release verification | `README.md`, `CHANGELOG.md`, `BDC_GUIDE.md`, `docs/**`, `npm-package/**`, `scripts/**`, `.github/workflows/**`, `test/packaging/**`, all deletions from §5.1 | S8 | serial |
 
@@ -997,12 +1058,17 @@ contending. S7 later extends `output.go`/`errors.go` — it is the only other sl
 ever touches `001_init.sql`. Any slice that believes it needs a schema change has found a defect
 in S2 and must say so rather than adding `002_*.sql`.
 
-**Deletions land in S10, not incrementally.** The prototype packages keep compiling until the
-final slice removes them together, so no intermediate commit has a broken build. The exception is
-`internal/store/` and `internal/types/`, which S1 and S2 must remove immediately — the SQLite
-store and the old `Storage` interface cannot coexist with the new one under the same import path.
-Prototype commands that depend on them are deleted in S1 as a consequence, which is why the CLI
-skeleton is S1's to own.
+**Code deletions land in S1; documentation and packaging deletions land in S10.** `internal/store/`
+and `internal/types/` must go immediately — the SQLite store and the old `Storage` interface
+cannot coexist with the new ones under the same import path. An import scan of the prototype
+shows `internal/{jsonl,slack,summary,import}` and every prototype command file also import
+`internal/types`, so deferring them would leave every commit from S1 to S10 with a tree that does
+not compile. S1 therefore deletes, in one commit, `internal/{store,types,jsonl,slack,summary,
+import,linear,github}`, all `cmd/bdc/*.go` except its own eight files, and the accidentally
+committed `.beadcrumbs/*.jsonl` — which also keeps `bdc init --visible` from writing into a
+Git-tracked directory. `internal/beads/` is the one prototype package that imports neither, so it
+survives untouched until S9 replaces it. S10 keeps only the `docs/`, `README`, packaging, and
+workflow work in §5.1 and §5.2.
 
 **Parallel group A** (S3, S4, S9) is the only genuine three-way parallel opportunity: disjoint
 packages, disjoint command files, no shared migration, no shared test fixtures. Everything else
