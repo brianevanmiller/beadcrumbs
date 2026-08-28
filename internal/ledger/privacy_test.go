@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/brianevanmiller/beadcrumbs/internal/ledger"
+	"github.com/brianevanmiller/beadcrumbs/internal/redact"
 	"github.com/brianevanmiller/beadcrumbs/internal/store/dolt"
 )
 
@@ -364,4 +366,362 @@ func render(v any) string {
 		return string(b)
 	}
 	return fmt.Sprint(v)
+}
+
+// The §1.4 redaction boundary, as a table. Every free-text column in the schema
+// gets one of two treatments — rewrite the findings, or refuse the write — and
+// the assignment is per column, enforced in the ledger.
+var (
+	// redactColumns are rewritten and stored.
+	redactColumns = []string{
+		"crumbs.content",
+		"insight_revisions.title", "insight_revisions.content", "insight_revisions.rationale",
+		"crumb_review_events.rationale", "validations.rationale", "authorities.rationale",
+		"promotion_proposals.content", "promotions.detail",
+		"refs.label", "refs.meta",
+	}
+
+	// rejectColumns are identity: rewriting one would silently change which
+	// record it names, so a finding aborts the write instead.
+	rejectColumns = []string{
+		"refs.locator", "authorities.destination_locator", "promotion_proposals.dest_locator",
+		"receipts.locator", "receipts.anchor", "receipts.external_hash",
+	}
+
+	// notFreeText is every other text column: identities, hashes, versions,
+	// adapter namespaces, and the actor fields. None carries prose a caller
+	// wrote, so none is on the boundary — but each is named here rather than
+	// inferred, because "this column is not free text" is a judgement and a new
+	// column has to make it deliberately.
+	notFreeText = []string{
+		"schema_meta.bdc_version",
+		"repo_config.k", "repo_config.v",
+		"harvests.failure_code", "harvests.policy_version", "harvests.redaction_version",
+		"harvests.actor_id", "harvests.actor_model", "harvests.session_id",
+		"crumbs.policy_version", "crumbs.redaction_version",
+		"crumbs.actor_id", "crumbs.actor_model", "crumbs.session_id",
+		"crumb_review_events.actor_id", "crumb_review_events.actor_model", "crumb_review_events.session_id",
+		"insights.actor_id", "insights.actor_model", "insights.session_id",
+		"insight_revisions.class",
+		"insight_revisions.actor_id", "insight_revisions.actor_model", "insight_revisions.session_id",
+		"refs.kind", "refs.workspace",
+		"validations.actor_id", "validations.actor_model", "validations.session_id",
+		"authorities.scope", "authorities.destination_kind",
+		"authorities.actor_id", "authorities.actor_model", "authorities.session_id",
+		"promotion_proposals.class", "promotion_proposals.dest_kind", "promotion_proposals.dest_workspace",
+		"promotion_proposals.policy_version", "promotion_proposals.redaction_version",
+		"promotion_proposals.actor_id", "promotion_proposals.actor_model", "promotion_proposals.session_id",
+		"promotions.actor_id", "promotions.actor_model", "promotions.session_id",
+		"receipts.kind",
+		"receipts.actor_id", "receipts.actor_model", "receipts.session_id",
+	}
+)
+
+// TestEveryFreeTextColumnIsRedactedOrRejected is the release gate for §2.5.10:
+// a write path whose column is in neither treatment is a defect, not an
+// oversight. Two halves, and both are needed.
+//
+// The census reads the schema and requires every text column to be classified,
+// so a column added without a treatment fails here rather than shipping
+// unprotected. The behavioural table then drives each classified column through
+// the operation that writes it, because a list that nothing exercises would
+// only prove the list agrees with itself.
+func TestEveryFreeTextColumnIsRedactedOrRejected(t *testing.T) {
+	f := newFixtureWith(t, nil, humanActor())
+	assertEveryTextColumnIsClassified(t, f)
+
+	const locatorSecret = "AKIAIOSFODNN7EXAMPLE"
+	covered := map[string]bool{}
+	for _, c := range redactionCases() {
+		t.Run(c.name, func(t *testing.T) {
+			err := c.run(f)
+			switch {
+			case c.rejected && !errors.Is(err, ledger.ErrRedaction):
+				t.Fatalf("a secret in an identity column returned %v, want a redaction refusal", err)
+			case !c.rejected && err != nil:
+				t.Fatalf("%v", err)
+			}
+			for _, column := range c.columns {
+				covered[column] = true
+				table, name, _ := strings.Cut(column, ".")
+				// CAST because refs.meta is JSON and the rest are text; the
+				// question is the same for both.
+				holds := func(pattern string) int {
+					return f.count(`SELECT COUNT(*) FROM `+table+
+						` WHERE CAST(`+name+` AS CHAR) LIKE ?`, pattern)
+				}
+				if c.rejected {
+					if holds("%"+locatorSecret+"%") != 0 {
+						t.Fatalf("%s stored the secret it was supposed to refuse", column)
+					}
+					continue
+				}
+				if holds("%[REDACTED:%") == 0 {
+					t.Fatalf("%s holds no redacted value, so the write path did not redact", column)
+				}
+				if holds("%"+githubTokenFixture+"%") != 0 {
+					t.Fatalf("%s stored the secret verbatim", column)
+				}
+			}
+		})
+	}
+
+	for _, column := range append(append([]string{}, redactColumns...), rejectColumns...) {
+		if !covered[column] {
+			t.Fatalf("%s is on the redaction boundary and no case writes it", column)
+		}
+	}
+}
+
+// redactionCase is one write path, the columns it fills, and whether a secret
+// in it aborts the write.
+type redactionCase struct {
+	name     string
+	columns  []string
+	rejected bool
+	run      func(*fixture) error
+}
+
+func redactionCases() []redactionCase {
+	ctx := context.Background()
+	var (
+		crumb    ledger.CrumbID
+		insight  ledger.InsightID
+		revision ledger.RevisionID
+		proposal ledger.ProposalID
+	)
+	withSecret := func(prose string) string { return prose + " " + githubTokenFixture }
+	const locatorSecret = "AKIAIOSFODNN7EXAMPLE"
+
+	return []redactionCase{{
+		name:    "capture",
+		columns: []string{"crumbs.content"},
+		run: func(f *fixture) error {
+			res, err := f.L.CaptureCrumb(ctx, ledger.CaptureCrumb{
+				Content: withSecret("the deploy log held"), Confidence: 0.6,
+			})
+			crumb = res.Crumb.ID
+			return err
+		},
+	}, {
+		name:    "review",
+		columns: []string{"crumb_review_events.rationale"},
+		run: func(f *fixture) error {
+			_, err := f.L.ReviewCrumb(ctx, ledger.ReviewCrumb{
+				IDs: []ledger.CrumbID{crumb}, ToState: ledger.StateAccepted,
+				Rationale: withSecret("confirmed against the log that held"),
+			})
+			return err
+		},
+	}, {
+		name:    "harvest",
+		columns: []string{"insight_revisions.title", "insight_revisions.content"},
+		run: func(f *fixture) error {
+			res, err := f.L.CompleteHarvest(ctx, ledger.CompleteHarvest{
+				Mode: ledger.HarvestManual, Crumbs: []ledger.CrumbID{crumb},
+				Title: withSecret("a conclusion mentioning"), Content: withSecret("the body also holds"),
+				Class: "learning", Confidence: 0.6,
+			})
+			if err != nil {
+				return err
+			}
+			insight, revision = res.Insight.ID, res.Revision.ID
+			return nil
+		},
+	}, {
+		name:    "revise",
+		columns: []string{"insight_revisions.rationale"},
+		run: func(f *fixture) error {
+			res, err := f.L.ReviseInsight(ctx, ledger.ReviseInsight{
+				InsightID: insight, Title: "a revised conclusion", Content: "revised body",
+				Rationale: withSecret("revised because the log held"),
+			})
+			if err != nil {
+				return err
+			}
+			revision = res.Revision.ID
+			return nil
+		},
+	}, {
+		name:    "validate",
+		columns: []string{"validations.rationale"},
+		run: func(f *fixture) error {
+			_, err := f.L.RecordValidation(ctx, ledger.RecordValidation{
+				Target:  ledger.RecordRef{Kind: ledger.KindRevision, ID: string(revision)},
+				Verdict: ledger.VerdictSupported, Rationale: withSecret("reproduced with"),
+			})
+			return err
+		},
+	}, {
+		name:    "authority",
+		columns: []string{"authorities.rationale"},
+		run: func(f *fixture) error {
+			_, err := f.L.GrantAuthority(ctx, ledger.GrantAuthority{
+				Target: ledger.RecordRef{Kind: ledger.KindRevision, ID: string(revision)},
+				Level:  ledger.AuthorityDefault, Rationale: withSecret("settled, as shown by"),
+			})
+			return err
+		},
+	}, {
+		name:     "authority destination",
+		columns:  []string{"authorities.destination_locator"},
+		rejected: true,
+		run: func(f *fixture) error {
+			_, err := f.L.GrantAuthority(ctx, ledger.GrantAuthority{
+				Target: ledger.RecordRef{Kind: ledger.KindRevision, ID: string(revision)},
+				Level:  ledger.AuthorityDefault, Rationale: "narrowed to one page",
+				DestinationKind: "docs", DestinationLocator: "docs/" + locatorSecret + ".md",
+			})
+			return err
+		},
+	}, {
+		name:    "propose",
+		columns: []string{"promotion_proposals.content"},
+		run: func(f *fixture) error {
+			res, err := f.L.ProposePromotion(ctx, ledger.ProposePromotion{
+				InsightID: insight, Class: "learning", Destination: docsTo("docs/learnings.md"),
+				Content: withSecret("what would be written, including"), Confidence: 0.6,
+			})
+			proposal = res.Proposal.ID
+			return err
+		},
+	}, {
+		name:     "propose destination",
+		columns:  []string{"promotion_proposals.dest_locator"},
+		rejected: true,
+		run: func(f *fixture) error {
+			_, err := f.L.ProposePromotion(ctx, ledger.ProposePromotion{
+				InsightID: insight, Class: "learning",
+				Destination: docsTo("docs/" + locatorSecret + ".md"),
+				Content:     "a body with nothing wrong in it", Confidence: 0.6,
+			})
+			return err
+		},
+	}, {
+		name:    "fail an attempt",
+		columns: []string{"promotions.detail"},
+		run: func(f *fixture) error {
+			_, err := f.L.FailPromotion(ctx, ledger.FailPromotion{
+				ProposalID: proposal, Detail: withSecret("the destination rejected the write from"),
+			})
+			return err
+		},
+	}, {
+		name:     "receipt",
+		columns:  []string{"receipts.locator", "receipts.anchor", "receipts.external_hash"},
+		rejected: true,
+		run: func(f *fixture) error {
+			_, err := f.L.RecordPromotion(ctx, ledger.RecordPromotion{
+				ProposalID: proposal, Locator: "docs/" + locatorSecret + ".md",
+				Anchor: locatorSecret, ExternalHash: locatorSecret,
+			})
+			return err
+		},
+	}, {
+		name:     "reference locator",
+		columns:  []string{"refs.locator"},
+		rejected: true,
+		run: func(f *fixture) error {
+			_, err := f.L.AttachReference(ctx, ledger.AttachReference{
+				Target: ledger.RecordRef{Kind: ledger.KindCrumb, ID: string(crumb)},
+				Ref: ledger.RefSpec{
+					Kind: "docs", Locator: "docs/" + locatorSecret + ".md", Relation: ledger.RelationSource,
+				},
+			})
+			return err
+		},
+	}, {
+		name:    "reference label",
+		columns: []string{"refs.label"},
+		run: func(f *fixture) error {
+			_, err := f.L.AttachReference(ctx, ledger.AttachReference{
+				Target: ledger.RecordRef{Kind: ledger.KindCrumb, ID: string(crumb)},
+				Ref: ledger.RefSpec{
+					Kind: "docs", Locator: "docs/runbook.md", Relation: ledger.RelationSource,
+				},
+				Label: withSecret("the runbook that quotes"),
+			})
+			return err
+		},
+	}, {
+		name:    "enriched metadata",
+		columns: []string{"refs.meta"},
+		run: func(f *fixture) error {
+			enriched := ledger.New(f.Store, ledger.Options{
+				Actor:    humanActor(),
+				Redactor: mustRedactor(f),
+				Enricher: leakyEnricher{},
+				Config:   f.L.Config(),
+			})
+			_, err := enriched.References(ctx, ledger.ReferenceQuery{Kinds: []string{"docs"}},
+				ledger.ReferenceOptions{Refresh: true})
+			return err
+		},
+	}}
+}
+
+// leakyEnricher is an adapter that returns a secret. Enrichment comes from
+// outside the ledger, so its label and metadata are untrusted input on exactly
+// the same footing as a caller's prose.
+type leakyEnricher struct{}
+
+func (leakyEnricher) Kind() string { return "docs" }
+func (leakyEnricher) Enrich(context.Context, string, string) (string, []byte, time.Time, error) {
+	return "observed " + githubTokenFixture,
+		[]byte(`{"title":"observed ` + githubTokenFixture + `"}`),
+		time.Now().UTC(), nil
+}
+
+func mustRedactor(f *fixture) ledger.Redactor {
+	r, err := redact.New(redact.Config{
+		Version:  f.L.Config().RedactionVersion,
+		Patterns: f.L.Config().RedactPatterns,
+	})
+	if err != nil {
+		panic(err)
+	}
+	return r
+}
+
+// assertEveryTextColumnIsClassified is the half that catches a new write path:
+// the schema is read back and every column that can hold text has to appear in
+// one of the three lists above.
+func assertEveryTextColumnIsClassified(t *testing.T, f *fixture) {
+	t.Helper()
+	rows, err := f.Store.DB().QueryContext(context.Background(),
+		`SELECT table_name, column_name FROM information_schema.columns
+		 WHERE table_schema = ? AND data_type IN ('varchar','text','mediumtext','longtext','json')
+		 ORDER BY table_name, column_name`, dolt.DatabaseName)
+	if err != nil {
+		t.Fatalf("reading the schema: %v", err)
+	}
+	defer rows.Close()
+
+	classified := map[string]bool{}
+	for _, column := range append(append(append([]string{},
+		redactColumns...), rejectColumns...), notFreeText...) {
+		classified[column] = true
+	}
+	// CHAR(n) is out of scope by construction: every one in this schema is an id
+	// or a hex hash of fixed width, so none can carry prose. receipts.external_hash
+	// is one of them and is on the reject list all the same, because what it
+	// proves is only as good as the value the caller passed in.
+	found := 0
+	for rows.Next() {
+		var table, column string
+		if err := rows.Scan(&table, &column); err != nil {
+			t.Fatalf("scanning a column: %v", err)
+		}
+		found++
+		if !classified[table+"."+column] {
+			t.Fatalf("%s.%s can hold text and is on no side of the §1.4 boundary: "+
+				"add it to redactColumns, rejectColumns, or notFreeText", table, column)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("reading the schema: %v", err)
+	}
+	if found < len(redactColumns)+len(rejectColumns) {
+		t.Fatalf("the schema reported %d text columns, fewer than the boundary names", found)
+	}
 }

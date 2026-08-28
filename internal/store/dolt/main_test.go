@@ -3,7 +3,9 @@ package dolt
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/brianevanmiller/beadcrumbs/internal/ledger"
 )
 
 // holdEnv turns the test binary into a process that opens a ledger and holds the
@@ -27,12 +31,32 @@ const (
 	restoreSrcEnv = "BDC_TEST_RESTORE_SRC"
 )
 
+// writeEnv turns the test binary into one short-lived writer: open, one bounded
+// transaction, close. Concurrency is between processes because that is the only
+// place it exists — the engine's lock is per directory, and a second Open in one
+// process panics by design.
+const (
+	writeEnv    = "BDC_TEST_WRITE"
+	writeTagEnv = "BDC_TEST_WRITE_TAG"
+)
+
+// killEnv turns the test binary into a process that writes inside a transaction
+// and then waits to be killed, so the parent can prove an interrupted
+// transaction leaves nothing behind.
+const killEnv = "BDC_TEST_KILL_MID_TX"
+
 func TestMain(m *testing.M) {
 	if dir := os.Getenv(holdEnv); dir != "" {
 		os.Exit(runHolder(dir))
 	}
 	if dir := os.Getenv(restoreEnv); dir != "" {
 		os.Exit(runRestorer(dir, os.Getenv(restoreSrcEnv)))
+	}
+	if dir := os.Getenv(writeEnv); dir != "" {
+		os.Exit(runWriter(dir, os.Getenv(writeTagEnv)))
+	}
+	if dir := os.Getenv(killEnv); dir != "" {
+		os.Exit(runKilled(dir))
 	}
 	os.Exit(m.Run())
 }
@@ -60,6 +84,68 @@ func runRestorer(dir, src string) int {
 		return 1
 	}
 	return 0
+}
+
+// runWriter is one whole `bdc` invocation's worth of storage work: open the
+// ledger, write one Crumb in one transaction, close. It waits for the lock
+// rather than failing, which is what a real command does.
+func runWriter(dir, tag string) int {
+	store, err := Open(context.Background(), Location{Dir: dir, Stealth: true}, Config{
+		MaxOpenWait: 2 * time.Minute,
+		MaxOpenHold: time.Minute,
+		Command:     "test-writer",
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "writer:", err)
+		return 1
+	}
+	defer store.Close()
+	if err := store.Write(context.Background(), func(tx ledger.Tx) error {
+		return tx.InsertCrumb(testCrumb(tag))
+	}); err != nil {
+		fmt.Fprintln(os.Stderr, "writer:", err)
+		return 1
+	}
+	return 0
+}
+
+// runKilled writes inside a transaction and then blocks forever. The parent
+// kills it with SIGKILL, which is the only way to interrupt a process between
+// the writes and the commit.
+func runKilled(dir string) int {
+	store, err := Open(context.Background(), Location{Dir: dir, Stealth: true}, Config{
+		MaxOpenWait: 30 * time.Second,
+		MaxOpenHold: time.Hour,
+		Command:     "test-killed",
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "killed:", err)
+		return 1
+	}
+	defer store.Close()
+	_ = store.Write(context.Background(), func(tx ledger.Tx) error {
+		for i := 0; i < 3; i++ {
+			if err := tx.InsertCrumb(testCrumb(fmt.Sprintf("partial-%d", i))); err != nil {
+				return err
+			}
+		}
+		fmt.Println("WROTE")
+		select {}
+	})
+	return 0
+}
+
+// testCrumb is one valid Crumb, distinct per tag: uq_crumbs_hash_session is on
+// (content_hash, session_id), so two writers must not mint the same pair.
+func testCrumb(tag string) ledger.Crumb {
+	sum := sha256.Sum256([]byte(tag))
+	return ledger.Crumb{
+		ID: ledger.NewCrumbID(), Content: "written by " + tag,
+		ContentHash: hex.EncodeToString(sum[:]), ReviewState: ledger.StateCandidate,
+		Confidence: 0.5, CapturedAt: time.Now().UTC().Truncate(time.Microsecond),
+		RedactionVersion: "1",
+		Provenance:       ledger.Provenance{ActorID: "tester", ActorKind: ledger.ActorHuman},
+	}
 }
 
 // holdLedger starts a second process holding dir's lock and returns once it is

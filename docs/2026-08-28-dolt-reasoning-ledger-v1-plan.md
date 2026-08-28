@@ -1225,10 +1225,12 @@ without CGO and ICU4C — so the tag would only hide the tests that matter.
 | Interruption cannot leave a partial operation | `TestSIGKILLMidTransactionLeavesNoPartialWrite` | `internal/store/dolt/crash_test.go` |
 | Backup and restore reproduce records, history, schema version | `TestBackupRestoreRoundTrip` | `internal/store/dolt/backup_test.go` |
 | *(added)* restore is atomic and recoverable | `TestRestoreSwapIsAtomic`, `TestKilledRestoreLeavesOriginalIntact` | `internal/store/dolt/restore_test.go` |
+| *(added)* restore refuses what it cannot safely replace | `TestRestoreRefusesWhileAnotherProcessHoldsTheLedger` (exit 4 rather than deleting a directory another process has open), `TestRestoreRefusesANewerSchema` (rejected while staging is still discardable) | `internal/store/dolt/restore_test.go` |
 | *(added)* the engine closes on error, panic, and SIGTERM | `TestCloseRunsOnErrorPanicAndSignal` | `cmd/bdc/lifecycle_test.go` |
 | Recovery diagnostics are actionable and structured | `TestDiagnoseReportsLockedByAnotherProcess`, `TestBusyReturnsTypedError` | `internal/store/dolt/doctor_test.go` |
 | *(added)* lock discipline is a live assertion | `TestSecondOpenInProcessPanics`, `TestHeldEngineWatchdogFires` | `internal/store/dolt/lock_test.go` |
 | *(added)* GC reclaims journal growth | `TestGCReclaimsJournal` | `internal/store/dolt/gc_test.go` |
+| *(added)* a migration can record its version | `TestSchemaVersionIsRecordedByReplacingTheSingleton` (schema_meta is a singleton, so a later script replaces the row rather than inserting one) | `internal/store/dolt/schema_test.go` |
 
 ### Privacy and security
 
@@ -1238,11 +1240,13 @@ without CGO and ICU4C — so the tag would only hide the tests that matter.
 | Raw transcript fixtures never appear in Dolt, logs, errors, receipts | `TestTranscriptFixtureNeverReachesStore` (scans every table **and every `dolt_history_*` table**, plus the log buffer and error strings — a head-only scan passes while the secret sits in committed history) | `internal/ledger/privacy_test.go` |
 | Hostile captured text remains inert | `TestPromptInjectionFixturesRoundTripAsData` | `internal/ledger/privacy_test.go` |
 | Promotion cannot bypass review or authority policy | `TestProposeBlockedWhenHumanAuthorityRequired`, `TestPolicyClassAlwaysRequiresHuman` | `internal/ledger/promotion_test.go` |
+| *(added)* a grant covers only what it names | `TestRevisionGrantDoesNotAuthorizePolicyPromotion`, `TestNarrowedGrantCoversOnlyWhatItNames` (a revision-level grant does not satisfy a `policy` class; a scoped or differently-destined grant unlocks nothing) | `internal/ledger/promotion_test.go` |
 | Output does not leak hidden provenance | `TestJSONOutputHasNoUndeclaredFields` (golden) | `cmd/bdc/golden_test.go` |
 | *(added)* redaction failure persists nothing | `TestRedactionFailureAbortsHarvestWithNoWrite` (asserts the recorded `harvests` row carries `failure_code='redaction_failed'` and no content) | `internal/ledger/privacy_test.go` |
 | *(added)* findings never quote the secret | `TestFindingsCarryNoMatchedText` | `internal/redact/redact_test.go` |
 | *(added)* every free-text write path redacts or rejects | `TestEveryFreeTextColumnIsRedactedOrRejected` (table driven from the §1.4 column list; a new write path with no entry fails the test) | `internal/ledger/privacy_test.go` |
 | *(added)* a secret in an opaque locator is rejected, not rewritten | `TestSecretInLocatorAbortsWrite` | `internal/ledger/privacy_test.go` |
+| *(added)* the error surface carries neither the argument nor the engine's text | `TestParseDoesNotEchoTheArgument`, `TestErrorMessageCarriesOnlyTheLedgersOwnText` | `internal/ledger/config_test.go` |
 | *(added)* transcript-shaped automatic input is refused | `TestTranscriptShapedAutoCaptureRejected`, `TestOversizeCrumbRejected` | `internal/ledger/privacy_test.go` |
 | *(added)* prune is retention, not erase | `TestPrunedCrumbRemainsInDoltHistory` (documents the guarantee rather than pretending to erase) | `internal/store/dolt/history_test.go` |
 
