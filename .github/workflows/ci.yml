@@ -82,9 +82,12 @@ jobs:
 
       - run: sudo apt-get update && sudo apt-get install -y libicu-dev
 
+      # Stable toolchain, not go.mod's floor: stdlib advisories are fixed by
+      # newer patch releases, and the gate should judge dependencies, not the
+      # minimum toolchain a contributor may build with.
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: stable
           cache: true
 
       # A dependency change is reviewable only if the diff is in front of the
