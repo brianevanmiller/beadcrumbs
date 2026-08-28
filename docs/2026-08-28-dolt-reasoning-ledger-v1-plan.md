@@ -75,7 +75,7 @@ func (l *Ledger) CompleteHarvest(ctx context.Context, c CompleteHarvest) (Harves
 func (l *Ledger) ReviseInsight(ctx context.Context, c ReviseInsight) (InsightRevision, error)
 func (l *Ledger) RecordValidation(ctx context.Context, c RecordValidation) (Validation, error)
 func (l *Ledger) GrantAuthority(ctx context.Context, c GrantAuthority) (Authority, error)
-func (l *Ledger) AttachReference(ctx context.Context, c AttachReference) (Reference, error)
+func (l *Ledger) AttachReference(ctx context.Context, c AttachReference) (AttachResult, error)  // {reference, link}
 func (l *Ledger) ProposePromotion(ctx context.Context, c ProposePromotion) (Proposal, bool, error)
 func (l *Ledger) RecordPromotion(ctx context.Context, c RecordPromotion) (Receipt, error)
 func (l *Ledger) RejectPromotion(ctx context.Context, c RejectPromotion) (Promotion, error)
@@ -86,7 +86,7 @@ func (l *Ledger) Crumbs(ctx context.Context, q CrumbQuery) (CrumbPage, error)  /
 func (l *Ledger) Crumb(ctx context.Context, id CrumbID) (CrumbDetail, error)
 func (l *Ledger) Insights(ctx context.Context, q InsightQuery) ([]InsightView, error)
 func (l *Ledger) Insight(ctx context.Context, id InsightID, o InsightOptions) (InsightDetail, error)
-func (l *Ledger) References(ctx context.Context, q ReferenceQuery) ([]ReferenceView, error)
+func (l *Ledger) References(ctx context.Context, q ReferenceQuery, o ReferenceOptions) ([]ReferenceView, error)
 func (l *Ledger) Promotions(ctx context.Context, q PromotionQuery) ([]PromotionView, error)
 func (l *Ledger) Narrative(ctx context.Context, q NarrativeQuery) (Narrative, error) // context|handoff|prime
 func (l *Ledger) Doctor(ctx context.Context) (Report, error)

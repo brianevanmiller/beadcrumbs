@@ -116,6 +116,7 @@ func (a *app) newRootCommand() *cobra.Command {
 		a.newGCCommand(),
 		a.newCaptureCommand(),
 		a.newCrumbCommand(),
+		a.newReferenceCommand(),
 	)
 	return root
 }
