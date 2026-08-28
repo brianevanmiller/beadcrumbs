@@ -213,13 +213,11 @@ type CrumbQuery struct {
 	Since  time.Time
 	Before time.Time
 
-	// SessionID and HarvestID are capture provenance: which session recorded
-	// the Crumb and which Harvest captured it. RevisionIDs runs the other way —
-	// the Crumbs supporting one or more Insight revisions — and is what makes
-	// `bdc insight show` a keyed lookup instead of a walk of every Crumb in the
-	// ledger.
+	// SessionID is capture provenance: which session recorded the Crumb.
+	// RevisionIDs runs the other way — the Crumbs supporting one or more
+	// Insight revisions — and is what makes `bdc insight show` a keyed lookup
+	// instead of a walk of every Crumb in the ledger.
 	SessionID   string
-	HarvestID   HarvestID
 	RevisionIDs []RevisionID
 
 	Limit  int
@@ -248,18 +246,18 @@ type ReferenceQuery struct {
 }
 
 type PromotionQuery struct {
-	IDs         []ProposalID
-	InsightID   InsightID
-	ContentHash string
-	DestKinds   []string
-	Statuses    []PromotionStatus
-	Limit       int
+	IDs       []ProposalID
+	InsightID InsightID
+	DestKinds []string
+	Statuses  []PromotionStatus
+	Limit     int
 }
 
+// EventQuery selects the histories of one or more records. It has no window or
+// limit because no reading wants one: an append-only history read in part is a
+// different fact from the history.
 type EventQuery struct {
 	Targets []RecordRef
-	Since   time.Time
-	Limit   int
 }
 
 type CountQuery struct {

@@ -11,19 +11,15 @@ import (
 	"github.com/brianevanmiller/beadcrumbs/internal/ledger"
 )
 
-// queryer is what a snapshot needs from either an open transaction or the raw
-// engine. Nothing else in this package depends on which one it got.
-type queryer interface {
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-}
-
 // snapshot is the read half of the storage port. Every result it returns is a
 // domain value: no row ids, no cursors, no open statements escape it.
+//
+// It reads through the transaction rather than the engine: every read the
+// product performs is inside one, so that a listing and the count beside it
+// cannot disagree.
 type snapshot struct {
 	ctx context.Context
-	q   queryer
+	q   *sql.Tx
 }
 
 func (s *snapshot) row(query string, args ...any) *sql.Row {
@@ -64,7 +60,6 @@ func (s *snapshot) Crumbs(q ledger.CrumbQuery) ([]ledger.CrumbRow, error) {
 	w.gte("captured_at", q.Since)
 	w.lt("captured_at", q.Before)
 	w.eq("session_id", q.SessionID)
-	w.eq("harvest_id", string(q.HarvestID))
 	// The supporting set of a revision is a semi-join rather than a JOIN:
 	// joining insight_crumbs would repeat a Crumb once per revision it feeds,
 	// and a Crumb is never consumed, so that repetition is the normal case.
@@ -297,7 +292,6 @@ func (s *snapshot) Proposals(q ledger.PromotionQuery) ([]ledger.ProposalRow, err
 	w := newWhere()
 	w.inStrings("p.id", strs(q.IDs))
 	w.eq("p.insight_id", string(q.InsightID))
-	w.eq("p.content_hash", q.ContentHash)
 	w.inStrings("p.dest_kind", q.DestKinds)
 	if len(q.Statuses) > 0 {
 		w.inStrings(`COALESCE((SELECT CAST(m.status AS CHAR) FROM promotions m
@@ -429,7 +423,6 @@ func (s *snapshot) Events(q ledger.EventQuery) ([]ledger.EventRow, error) {
 		FROM authorities a`
 
 	w := newWhere()
-	w.gte("occurred_at", q.Since)
 	if len(q.Targets) > 0 {
 		var ors []string
 		for _, t := range q.Targets {
@@ -441,7 +434,7 @@ func (s *snapshot) Events(q ledger.EventQuery) ([]ledger.EventRow, error) {
 	query := `SELECT kind, id, target_kind, target_id, summary, scope,
 		destination_kind, destination_locator, rationale, occurred_at,
 		actor_id, actor_kind, actor_model, session_id FROM (` + union + `) e` +
-		w.clause() + ` ORDER BY occurred_at, id` + limitOffset(q.Limit, 0)
+		w.clause() + ` ORDER BY occurred_at, id`
 
 	return scanRows(s, query, w.args, func(rows *sql.Rows) (ledger.EventRow, error) {
 		var (
