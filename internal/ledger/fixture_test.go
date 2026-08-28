@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/brianevanmiller/beadcrumbs/internal/ledger"
 	"github.com/brianevanmiller/beadcrumbs/internal/redact"
@@ -107,10 +106,9 @@ func (f *fixture) crumb(id ledger.CrumbID) ledger.CrumbDetail {
 	return detail
 }
 
-// write runs a raw storage transaction. The tests that need a Harvest or an
-// Insight use it because CompleteHarvest and ReviseInsight land in a later
-// slice, and the property under test — that a Crumb is reusable and unmutated —
-// is a property of the Crumb, not of how the synthesis was written.
+// write runs a raw storage transaction. It exists for the few tests that need a
+// record no ledger operation writes yet — a validation, an orphaned link — and
+// never for Harvests or Insights, which go through the real operations.
 func (f *fixture) write(fn func(tx ledger.Tx) error) {
 	f.t.Helper()
 	if err := f.Store.Write(context.Background(), fn); err != nil {
@@ -118,43 +116,34 @@ func (f *fixture) write(fn func(tx ledger.Tx) error) {
 	}
 }
 
-// seedInsight writes one Insight revision supported by the given Crumbs.
+// seedInsight synthesises one Insight from the given Crumbs through the real
+// operation, so every test that needs an Insight exercises the path that
+// creates one in production. Synthesis is always a Harvest: revision 1 has no
+// other author.
 func (f *fixture) seedInsight(title string, crumbs ...ledger.CrumbID) ledger.RevisionID {
 	f.t.Helper()
-	rev := ledger.NewRevisionID()
-	f.write(func(tx ledger.Tx) error {
-		return tx.InsertRevision(ledger.InsightRevision{
-			ID: rev, InsightID: ledger.NewInsightID(), Revision: 1,
-			Title: title, Content: "body", ContentHash: strings.Repeat("a", 64),
-			Class: "learning", Confidence: 0.6, CreatedAt: time.Now().UTC().Truncate(time.Microsecond),
-			Provenance: f.Actor,
-		}, crumbs)
+	res, err := f.L.CompleteHarvest(context.Background(), ledger.CompleteHarvest{
+		Mode: ledger.HarvestManual, Crumbs: crumbs,
+		Title: title, Content: "body", Class: "learning", Confidence: 0.6,
 	})
-	return rev
+	if err != nil {
+		f.t.Fatalf("synthesising %q: %v", title, err)
+	}
+	return res.Revision.ID
 }
 
-// seedHarvest writes one completed Harvest that considered the given Crumbs.
+// seedHarvest records one completed Harvest that weighed the given Crumbs and
+// concluded nothing. Weighing a Crumb neither consumes nor mutates it, which is
+// the property most of these tests are about.
 func (f *fixture) seedHarvest(crumbs ...ledger.CrumbID) ledger.HarvestID {
 	f.t.Helper()
-	id := ledger.NewHarvestID()
-	at := time.Now().UTC().Truncate(time.Microsecond)
-	links := make([]ledger.HarvestCrumb, 0, len(crumbs))
-	for i, c := range crumbs {
-		role := ledger.RoleConsidered
-		if i == 0 {
-			role = ledger.RoleSelected
-		}
-		links = append(links, ledger.HarvestCrumb{CrumbID: c, Role: role})
-	}
-	f.write(func(tx ledger.Tx) error {
-		return tx.InsertHarvest(ledger.Harvest{
-			ID: id, Mode: ledger.HarvestManual, Outcome: ledger.HarvestCompleted,
-			CrumbsConsidered: len(crumbs), CrumbsSelected: 1,
-			PolicyVersion: "1", RedactionVersion: "1",
-			StartedAt: at, FinishedAt: at, Provenance: f.Actor,
-		}, links)
+	res, err := f.L.CompleteHarvest(context.Background(), ledger.CompleteHarvest{
+		Mode: ledger.HarvestManual, Crumbs: crumbs,
 	})
-	return id
+	if err != nil {
+		f.t.Fatalf("harvesting: %v", err)
+	}
+	return res.Harvest.ID
 }
 
 func (f *fixture) count(query string, args ...any) int {

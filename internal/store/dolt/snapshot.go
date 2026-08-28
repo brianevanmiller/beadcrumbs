@@ -65,6 +65,16 @@ func (s *snapshot) Crumbs(q ledger.CrumbQuery) ([]ledger.CrumbRow, error) {
 	w.lt("captured_at", q.Before)
 	w.eq("session_id", q.SessionID)
 	w.eq("harvest_id", string(q.HarvestID))
+	// The supporting set of a revision is a semi-join rather than a JOIN:
+	// joining insight_crumbs would repeat a Crumb once per revision it feeds,
+	// and a Crumb is never consumed, so that repetition is the normal case.
+	if revisions := strs(q.RevisionIDs); len(revisions) > 0 {
+		w.conds = append(w.conds, `id IN (SELECT ic.crumb_id FROM insight_crumbs ic
+			WHERE ic.revision_id IN (`+placeholders(len(revisions))+`))`)
+		for _, id := range revisions {
+			w.args = append(w.args, id)
+		}
+	}
 	query := `SELECT ` + crumbColumns + ` FROM crumbs` + w.clause() +
 		` ORDER BY captured_at DESC, id DESC` + limitOffset(q.Limit, q.Offset)
 	return scanRows(s, query, w.args, scanCrumb)

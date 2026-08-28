@@ -24,9 +24,12 @@ func TestCrumbReusedAcrossHarvestsAndInsights(t *testing.T) {
 	f.seedInsight("embedded Dolt selects its database once", first.ID, second.ID)
 	f.seedInsight("open two engines in sequence on init", first.ID)
 
+	// Four Harvests, not two: a synthesis is itself a Harvest, so seedInsight
+	// contributes one each. That is the real shape — revision 1 has no author
+	// other than CompleteHarvest.
 	detail := f.crumb(first.ID)
-	if len(detail.Harvests) != 2 {
-		t.Fatalf("expected the Crumb to feed 2 Harvests, got %d", len(detail.Harvests))
+	if len(detail.Harvests) != 4 {
+		t.Fatalf("expected the Crumb to feed 4 Harvests, got %d", len(detail.Harvests))
 	}
 	if len(detail.Insights) != 2 {
 		t.Fatalf("expected the Crumb to support 2 Insight revisions, got %d", len(detail.Insights))

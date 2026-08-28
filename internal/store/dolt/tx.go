@@ -152,9 +152,17 @@ func (t *tx) InsertHarvest(h ledger.Harvest, links []ledger.HarvestCrumb) error 
 		}, provArgs(h.Provenance)...)...); err != nil {
 		return err
 	}
+	return t.AppendHarvestCrumbs(h.ID, links)
+}
+
+// AppendHarvestCrumbs links Crumbs to a Harvest row that already exists. The
+// split from InsertHarvest is what a Harvest that captures its own Crumbs
+// needs: crumbs.harvest_id requires the Harvest first, harvest_crumbs.crumb_id
+// requires the Crumb first, and no single call can satisfy both.
+func (t *tx) AppendHarvestCrumbs(id ledger.HarvestID, links []ledger.HarvestCrumb) error {
 	for _, l := range links {
 		if err := t.exec(`INSERT INTO harvest_crumbs (harvest_id, crumb_id, role) VALUES (?,?,?)`,
-			string(h.ID), string(l.CrumbID), string(l.Role)); err != nil {
+			string(id), string(l.CrumbID), string(l.Role)); err != nil {
 			return err
 		}
 	}

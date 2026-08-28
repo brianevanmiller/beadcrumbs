@@ -166,11 +166,6 @@ func TestSecretInLocatorAbortsWrite(t *testing.T) {
 
 // A redactor that cannot resolve a finding aborts the write, and the abort is
 // complete: no Crumb, no Reference, nothing in any version of any table.
-//
-// The harvest-level counterpart — a `harvests` row recorded by a second
-// transaction with failure_code='redaction_failed' — belongs to the slice that
-// owns CompleteHarvest; this is the same guarantee at the write path that
-// exists today.
 func TestRedactionFailureAbortsCaptureWithNoWrite(t *testing.T) {
 	f := newFixtureWith(t, refusingRedactor{}, agentActor())
 	_, err := f.L.CaptureCrumb(context.Background(), ledger.CaptureCrumb{
@@ -185,6 +180,42 @@ func TestRedactionFailureAbortsCaptureWithNoWrite(t *testing.T) {
 	}
 	if f.count(`SELECT COUNT(*) FROM crumbs`) != 0 {
 		t.Fatal("a redaction abort still wrote a Crumb")
+	}
+}
+
+// The harvest counterpart, and the one place `failed` is observable: the
+// transaction rolls back with nothing in it, and a second transaction records a
+// `harvests` row carrying failure_code='redaction_failed' and no content of any
+// kind. That row is how a caller learns the harvest happened and produced
+// nothing, which is what exit code 7 promises.
+func TestRedactionFailureAbortsHarvestWithNoWrite(t *testing.T) {
+	f := newFixtureWith(t, refusingRedactor{}, agentActor())
+	_, err := f.L.CompleteHarvest(context.Background(), ledger.CompleteHarvest{
+		Mode:     ledger.HarvestAutomatic,
+		Captures: []ledger.CaptureCrumb{{Content: "one fragment worth keeping", Confidence: 0.5}},
+		Title:    "a conclusion", Content: "body", Class: "learning", Confidence: 0.5,
+	})
+	if !errors.Is(err, ledger.ErrRedaction) {
+		t.Fatalf("expected a redaction abort, got %v", err)
+	}
+	var le *ledger.Error
+	if !errors.As(err, &le) || le.Code != "redaction_failed" {
+		t.Fatalf("expected redaction_failed, got %v", err)
+	}
+
+	var outcome, code string
+	if err := f.Store.DB().QueryRowContext(context.Background(),
+		`SELECT CAST(outcome AS CHAR), COALESCE(failure_code,'') FROM harvests`).
+		Scan(&outcome, &code); err != nil {
+		t.Fatalf("the failed harvest was not recorded: %v", err)
+	}
+	if outcome != string(ledger.HarvestFailed) || code != "redaction_failed" {
+		t.Fatalf("expected failed/redaction_failed, got %s/%s", outcome, code)
+	}
+	for _, table := range []string{"crumbs", "insights", "insight_revisions", "harvest_crumbs", "insight_crumbs"} {
+		if n := f.count(`SELECT COUNT(*) FROM ` + table); n != 0 {
+			t.Fatalf("a redaction abort left %d row(s) in %s", n, table)
+		}
 	}
 }
 

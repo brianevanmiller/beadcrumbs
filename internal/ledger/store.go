@@ -53,6 +53,14 @@ type Tx interface {
 
 	InsertHarvest(Harvest, []HarvestCrumb) error
 
+	// AppendHarvestCrumbs records the role of Crumbs the Harvest row already
+	// exists for. It is separate from InsertHarvest because crumbs.harvest_id
+	// points at the Harvest while harvest_crumbs.crumb_id points at the Crumb:
+	// a Crumb captured *by* a Harvest can only be inserted after the Harvest
+	// row, so its role can only be linked after that. One call cannot satisfy
+	// both foreign keys.
+	AppendHarvestCrumbs(HarvestID, []HarvestCrumb) error
+
 	// InsertRevision creates the Insight itself on revision 1 and links the
 	// supporting Crumbs. Splitting the two would allow a revision with no
 	// Insight, or an Insight with no revision, both of which the reads assume
@@ -197,14 +205,22 @@ func (r *StoreReport) Add(name, status, detail string) {
 // Queries. A zero-valued query means "everything", so a caller that forgets a
 // filter gets a wide answer rather than an empty one it might mistake for a fact.
 type CrumbQuery struct {
-	IDs       []CrumbID
-	States    []ReviewState
-	Since     time.Time
-	Before    time.Time
-	SessionID string
-	HarvestID HarvestID
-	Limit     int
-	Offset    int
+	IDs    []CrumbID
+	States []ReviewState
+	Since  time.Time
+	Before time.Time
+
+	// SessionID and HarvestID are capture provenance: which session recorded
+	// the Crumb and which Harvest captured it. RevisionIDs runs the other way —
+	// the Crumbs supporting one or more Insight revisions — and is what makes
+	// `bdc insight show` a keyed lookup instead of a walk of every Crumb in the
+	// ledger.
+	SessionID   string
+	HarvestID   HarvestID
+	RevisionIDs []RevisionID
+
+	Limit  int
+	Offset int
 }
 
 // InsightQuery's Verdicts and AuthorityLevels filter on the *latest* event for

@@ -71,8 +71,8 @@ func New(s Store, opts Options) *Ledger
 func (l *Ledger) CaptureCrumb(ctx context.Context, c CaptureCrumb) (CaptureResult, error)
 func (l *Ledger) ReviewCrumb(ctx context.Context, c ReviewCrumb) (ReviewResult, error)  // `crumb review <id>...` is a batch
 func (l *Ledger) PruneCrumbs(ctx context.Context, c PruneCrumbs) (PruneResult, error)
-func (l *Ledger) CompleteHarvest(ctx context.Context, c CompleteHarvest) (Harvest, error)
-func (l *Ledger) ReviseInsight(ctx context.Context, c ReviseInsight) (InsightRevision, error)
+func (l *Ledger) CompleteHarvest(ctx context.Context, c CompleteHarvest) (HarvestResult, error)
+func (l *Ledger) ReviseInsight(ctx context.Context, c ReviseInsight) (RevisionResult, error)
 func (l *Ledger) RecordValidation(ctx context.Context, c RecordValidation) (Validation, error)
 func (l *Ledger) GrantAuthority(ctx context.Context, c GrantAuthority) (Authority, error)
 func (l *Ledger) AttachReference(ctx context.Context, c AttachReference) (AttachResult, error)  // {reference, link}
@@ -84,7 +84,7 @@ func (l *Ledger) FailPromotion(ctx context.Context, c FailPromotion) (Promotion,
 // Reads — snapshot-consistent, no storage concepts in the result types.
 func (l *Ledger) Crumbs(ctx context.Context, q CrumbQuery) (CrumbPage, error)  // page + the total the filter matched
 func (l *Ledger) Crumb(ctx context.Context, id CrumbID) (CrumbDetail, error)
-func (l *Ledger) Insights(ctx context.Context, q InsightQuery) ([]InsightView, error)
+func (l *Ledger) Insights(ctx context.Context, q InsightQuery) (InsightPage, error)  // page + the total the filter matched
 func (l *Ledger) Insight(ctx context.Context, id InsightID, o InsightOptions) (InsightDetail, error)
 func (l *Ledger) References(ctx context.Context, q ReferenceQuery, o ReferenceOptions) ([]ReferenceView, error)
 func (l *Ledger) Promotions(ctx context.Context, q PromotionQuery) ([]PromotionView, error)
@@ -120,6 +120,7 @@ type Tx interface {
     AppendCrumbReview(CrumbReviewEvent) error
     DeleteCrumbs([]CrumbID) (int, error)                     // deletes each Crumb *and* its polymorphic dependents
     InsertHarvest(Harvest, []HarvestCrumb) error
+    AppendHarvestCrumbs(HarvestID, []HarvestCrumb) error     // a Harvest's own captured Crumbs; see below
     InsertRevision(InsightRevision, []CrumbID) error         // creates the Insight on revision 1
     SetInsightHead(InsightID, int) error                     // keeps the materialised head honest
     UpsertReference(Reference) (ReferenceID, error)
@@ -173,6 +174,15 @@ type Enricher interface {
     Enrich(ctx context.Context, locator, workspace string) (label string, meta []byte, fetchedAt time.Time, err error)
 }
 ```
+
+Every write result carries its redaction findings, which is why `CompleteHarvest`, `ReviseInsight`,
+and `Insights` return a result type rather than the bare record: findings become `warnings[]`, and
+a bare record cannot report that the text it holds was rewritten before it was stored.
+`AppendHarvestCrumbs` is separate from `InsertHarvest` because `crumbs.harvest_id` needs the
+Harvest row first while `harvest_crumbs.crumb_id` needs the Crumb first — a Harvest that captures
+its own Crumbs cannot satisfy both in one call. `CrumbQuery.RevisionIDs` is the matching read:
+without it, `bdc insight show` would have to walk every Crumb in the ledger to find the ones
+supporting a revision.
 
 `Tx` embeds `Snapshot` because five writes are defined in terms of the current row and would
 otherwise be unimplementable: `AppendCrumbReview` reads the crumb to fill `from_state`,

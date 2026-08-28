@@ -136,44 +136,77 @@ func joinRelations() string {
 // nothing persisted rather than with a rolled-back write that still touched the
 // journal.
 func (l *Ledger) CaptureCrumb(ctx context.Context, c CaptureCrumb) (CaptureResult, error) {
-	if err := l.actor.Validate(); err != nil {
+	crumb, findings, err := l.prepareCrumb(c)
+	if err != nil {
 		return CaptureResult{}, err
 	}
-	if err := ValidateConfidence(c.Confidence); err != nil {
+
+	result := CaptureResult{References: c.References, Findings: findings}
+	err = l.store.Write(ctx, func(tx Tx) error {
+		existing, duplicate, err := l.sessionDuplicate(tx, crumb.ContentHash)
+		if err != nil {
+			return err
+		}
+		if duplicate {
+			result.Crumb, result.Deduplicated = existing, true
+			return nil
+		}
+		if err := insertCrumb(tx, crumb, c.References); err != nil {
+			return err
+		}
+		result.Crumb = crumb
+		return nil
+	})
+	if err != nil {
 		return CaptureResult{}, err
+	}
+	return result, nil
+}
+
+// prepareCrumb validates, redacts, and mints one Crumb without writing it.
+// Capture and harvest both go through it, because a Crumb a Harvest captured
+// must pass exactly the same gate as one a human typed — and a second
+// implementation of this sequence is how a write path ends up persisting text
+// the redactor never saw.
+func (l *Ledger) prepareCrumb(c CaptureCrumb) (Crumb, []Finding, error) {
+	if err := l.actor.Validate(); err != nil {
+		return Crumb{}, nil, err
+	}
+	if err := ValidateConfidence(c.Confidence); err != nil {
+		return Crumb{}, nil, err
 	}
 	content := strings.TrimSpace(c.Content)
 	if content == "" {
-		return CaptureResult{}, Fail(ErrInvalidInput, "invalid_content", "a Crumb needs content")
+		return Crumb{}, nil, Fail(ErrInvalidInput, "invalid_content", "a Crumb needs content")
 	}
 	if c.Automatic {
 		if err := rejectTranscriptShape(content); err != nil {
-			return CaptureResult{}, err
+			return Crumb{}, nil, err
 		}
 	}
 	if n := utf8.RuneCountInString(content); n > maxCrumbChars {
-		return CaptureResult{}, Fail(ErrInvalidInput, "invalid_content_size",
+		return Crumb{}, nil, Fail(ErrInvalidInput, "invalid_content_size",
 			"a Crumb is a fragment: %d characters exceeds the %d-character limit", n, maxCrumbChars)
 	}
 
 	clean, findings, err := l.redactField("content", content)
 	if err != nil {
-		return CaptureResult{}, err
+		return Crumb{}, nil, err
 	}
 	if n := utf8.RuneCountInString(clean); n > maxCrumbChars {
-		return CaptureResult{}, Fail(ErrInvalidInput, "invalid_content_size",
+		return Crumb{}, nil, Fail(ErrInvalidInput, "invalid_content_size",
 			"the redacted Crumb is %d characters, which exceeds the %d-character limit", n, maxCrumbChars)
 	}
 
 	for _, ref := range c.References {
 		if err := ref.Validate(); err != nil {
-			return CaptureResult{}, err
+			return Crumb{}, nil, err
 		}
 		// Identity columns reject rather than redact: rewriting a locator would
 		// silently change which record it names, producing a Reference that
 		// resolves to nothing while looking valid.
 		if err := l.rejectSecrets("reference locator", ref.Locator); err != nil {
-			return CaptureResult{}, err
+			return Crumb{}, nil, err
 		}
 	}
 
@@ -190,52 +223,53 @@ func (l *Ledger) CaptureCrumb(ctx context.Context, c CaptureCrumb) (CaptureResul
 		Provenance:       l.actor,
 	}
 	if crumb.HarvestID != "" && crumb.PolicyVersion == "" {
-		return CaptureResult{}, Fail(ErrIntegrity, "integrity_harvest_policy",
+		return Crumb{}, nil, Fail(ErrIntegrity, "integrity_harvest_policy",
 			"a Crumb captured by a harvest must carry the policy version that judged it")
 	}
 	l.assertRedacted("crumbs.content", crumb.Content)
+	return crumb, findings, nil
+}
 
-	result := CaptureResult{References: c.References, Findings: findings}
-	err = l.store.Write(ctx, func(tx Tx) error {
-		// uq_crumbs_hash_session makes repeated automatic capture within one
-		// session a duplicate. Answering with the Crumb already held is what
-		// that key is for; letting the insert fail would turn a dedupe into an
-		// error the caller has to interpret.
-		if l.actor.SessionID != "" {
-			existing, err := tx.Crumbs(CrumbQuery{SessionID: l.actor.SessionID})
-			if err != nil {
-				return err
-			}
-			for _, e := range existing {
-				if e.ContentHash == crumb.ContentHash {
-					result.Crumb, result.Deduplicated = e, true
-					return nil
-				}
-			}
+// sessionDuplicate answers uq_crumbs_hash_session before the insert does.
+// Repeated automatic capture within one session is a duplicate, and answering
+// with the Crumb already held is what that key is for; letting the insert fail
+// would turn a dedupe into an error the caller has to interpret.
+func (l *Ledger) sessionDuplicate(snap Snapshot, hash string) (Crumb, bool, error) {
+	if l.actor.SessionID == "" {
+		return Crumb{}, false, nil
+	}
+	existing, err := snap.Crumbs(CrumbQuery{SessionID: l.actor.SessionID})
+	if err != nil {
+		return Crumb{}, false, err
+	}
+	for _, e := range existing {
+		if e.ContentHash == hash {
+			return e, true, nil
 		}
-		if err := tx.InsertCrumb(crumb); err != nil {
+	}
+	return Crumb{}, false, nil
+}
+
+// insertCrumb writes a prepared Crumb and its References inside an open
+// transaction.
+func insertCrumb(tx Tx, crumb Crumb, refs []RefSpec) error {
+	if err := tx.InsertCrumb(crumb); err != nil {
+		return err
+	}
+	record := RecordRef{Kind: KindCrumb, ID: string(crumb.ID)}
+	for _, ref := range refs {
+		id, err := tx.UpsertReference(Reference{
+			ID: NewReferenceID(), Kind: ref.Kind, Locator: ref.Locator,
+			Workspace: ref.Workspace, CreatedAt: crumb.CapturedAt,
+		})
+		if err != nil {
 			return err
 		}
-		record := RecordRef{Kind: KindCrumb, ID: string(crumb.ID)}
-		for _, ref := range c.References {
-			id, err := tx.UpsertReference(Reference{
-				ID: NewReferenceID(), Kind: ref.Kind, Locator: ref.Locator,
-				Workspace: ref.Workspace, CreatedAt: crumb.CapturedAt,
-			})
-			if err != nil {
-				return err
-			}
-			if err := tx.LinkReference(record, id, ref.Relation); err != nil {
-				return err
-			}
+		if err := tx.LinkReference(record, id, ref.Relation); err != nil {
+			return err
 		}
-		result.Crumb = crumb
-		return nil
-	})
-	if err != nil {
-		return CaptureResult{}, err
 	}
-	return result, nil
+	return nil
 }
 
 // ReviewCrumb is a batch because `bdc crumb review <id>...` is: reviewing five
