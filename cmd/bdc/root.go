@@ -321,6 +321,20 @@ func (a *app) handle(fn func(*cobra.Command, []string) (result, error)) func(*co
 	}
 }
 
+// handleLedger is handle for a command that needs the domain module. Opening it
+// is the same four lines in every such body and the one thing they all do first,
+// so the seam between "this command needs a ledger" and "here is what it does
+// with one" belongs in the signature.
+func (a *app) handleLedger(fn func(*cobra.Command, []string, *ledger.Ledger) (result, error)) func(*cobra.Command, []string) error {
+	return a.handle(func(cmd *cobra.Command, args []string) (result, error) {
+		led, err := a.ledger(cmd.Context())
+		if err != nil {
+			return result{}, err
+		}
+		return fn(cmd, args, led)
+	})
+}
+
 // commandName is the dotted envelope command: `bdc crumb list` -> "crumb.list".
 func commandName(cmd *cobra.Command) string {
 	parts := strings.Fields(cmd.CommandPath())

@@ -50,11 +50,7 @@ func (a *app) newCrumbListCommand() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 0, "return at most this many Crumbs")
 	cmd.Flags().IntVar(&offset, "offset", 0, "skip this many Crumbs")
 
-	cmd.RunE = a.handle(func(cmd *cobra.Command, _ []string) (result, error) {
-		led, err := a.ledger(cmd.Context())
-		if err != nil {
-			return result{}, err
-		}
+	cmd.RunE = a.handleLedger(func(cmd *cobra.Command, _ []string, led *ledger.Ledger) (result, error) {
 		parsedStates, err := parseReviewStates(states)
 		if err != nil {
 			return result{}, err
@@ -88,11 +84,7 @@ func (a *app) newCrumbShowCommand() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&events, "events", false, "include the review history in the human rendering")
 
-	cmd.RunE = a.handle(func(cmd *cobra.Command, args []string) (result, error) {
-		led, err := a.ledger(cmd.Context())
-		if err != nil {
-			return result{}, err
-		}
+	cmd.RunE = a.handleLedger(func(cmd *cobra.Command, args []string, led *ledger.Ledger) (result, error) {
 		detail, err := led.Crumb(cmd.Context(), ledger.CrumbID(args[0]))
 		if err != nil {
 			return result{}, err
@@ -118,11 +110,7 @@ func (a *app) newCrumbReviewCommand() *cobra.Command {
 	_ = cmd.MarkFlagRequired("state")
 	_ = cmd.MarkFlagRequired("rationale")
 
-	cmd.RunE = a.handle(func(cmd *cobra.Command, args []string) (result, error) {
-		led, err := a.ledger(cmd.Context())
-		if err != nil {
-			return result{}, err
-		}
+	cmd.RunE = a.handleLedger(func(cmd *cobra.Command, args []string, led *ledger.Ledger) (result, error) {
 		ids := make([]ledger.CrumbID, 0, len(args))
 		for _, raw := range args {
 			id, err := ledger.ParseID(ledger.PrefixCrumb, raw)
@@ -169,11 +157,7 @@ func (a *app) newCrumbPruneCommand() *cobra.Command {
 	cmd.Flags().StringVar(&state, "state", "", "candidate; prune refuses any other state")
 	cmd.Flags().BoolVar(&yes, "yes", false, "confirm the deletion (required)")
 
-	cmd.RunE = a.handle(func(cmd *cobra.Command, _ []string) (result, error) {
-		led, err := a.ledger(cmd.Context())
-		if err != nil {
-			return result{}, err
-		}
+	cmd.RunE = a.handleLedger(func(cmd *cobra.Command, _ []string, led *ledger.Ledger) (result, error) {
 		parsed := make([]ledger.CrumbID, 0, len(ids))
 		for _, raw := range ids {
 			id, err := ledger.ParseID(ledger.PrefixCrumb, raw)

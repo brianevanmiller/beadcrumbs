@@ -46,7 +46,13 @@ One versioned JSON envelope on every command, prose on stderr, and stable exit c
 - **Added**: `capture`, `crumb list|show|review|prune`, `harvest`, `insight list|show|revise`,
   `validate`, `authority`, `reference add|list`, `promote propose|record|reject|fail|list`,
   `context`, `handoff`, `prime`, `backup`, `restore`, `gc`, `hooks install|uninstall|run`.
-  `init`, `doctor`, and `version` were rewritten, not edited.
+  `migrate`. `init`, `doctor`, and `version` were rewritten, not edited.
+- `bdc doctor` runs the domain's own invariant checks (`polymorphic_targets`, `head_revision`)
+  alongside the storage ones, and reports the optional tracker under `beads`. It is the one
+  command that stays useful on a ledger that will not open, so it always exits 0 with the
+  diagnosis in `data` — read `data.ok` and `data.checks[]`, not the exit code.
+- `bdc migrate` applies the schema migrations a build ships and a ledger has not. It is the
+  repair for a `schema_version` mismatch; `bdc init` is not.
 - **Removed with no alias and no deprecation shim**: `thread`, `origin`, `origins`, `timeline`,
   `pivots`, `decisions`, `questions`, `feedback`, `trace`, `link`, `list`, `show`, `locate`,
   `spawn`, `import`, `export`, `linear`, `slack`, `github`, `setup`, `upgrade`, `stealth`,
@@ -60,7 +66,10 @@ One versioned JSON envelope on every command, prose on stderr, and stable exit c
   Explicit `bdc` commands and the JSON envelope are the whole cross-agent contract.
 - Optional Beads enrichment through supported `bd --json` commands, behind a detection ladder.
   Beadcrumbs never reads Beads' database, and an absent or stale `bd` is a warning, never a
-  blocked write.
+  blocked write. `--no-enrich` skips detection entirely.
+- Provenance defaults to `agent` when a run carries both `--model`/`BDC_ACTOR_MODEL` and
+  `--session`/`BDC_SESSION`, and an agent's writes are never attributed to `$USER`. `human` is
+  the value every authority gate is satisfied by, so it is not the value you get by forgetting.
 - Automatic harvesting is **off by default** and opted into per repository with
   `bdc hooks install --auto-harvest`. Redaction runs before any write and its failure aborts with
   nothing persisted.

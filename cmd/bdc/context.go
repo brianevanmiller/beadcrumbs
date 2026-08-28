@@ -43,11 +43,7 @@ func (a *app) newContextCommand() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 0, "how many Insights and Crumbs to consider (default 10)")
 	budgetFlag(cmd, &budget)
 
-	cmd.RunE = a.handle(func(cmd *cobra.Command, _ []string) (result, error) {
-		led, err := a.ledger(cmd.Context())
-		if err != nil {
-			return result{}, err
-		}
+	cmd.RunE = a.handleLedger(func(cmd *cobra.Command, _ []string, led *ledger.Ledger) (result, error) {
 		at, err := parseTimeFlag("--since", since)
 		if err != nil {
 			return result{}, err

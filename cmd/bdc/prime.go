@@ -29,11 +29,7 @@ func (a *app) newPrimeCommand() *cobra.Command {
 	}
 	budgetFlag(cmd, &budget)
 
-	cmd.RunE = a.handle(func(cmd *cobra.Command, _ []string) (result, error) {
-		led, err := a.ledger(cmd.Context())
-		if err != nil {
-			return result{}, err
-		}
+	cmd.RunE = a.handleLedger(func(cmd *cobra.Command, _ []string, led *ledger.Ledger) (result, error) {
 		n, err := led.Narrative(cmd.Context(), ledger.NarrativeQuery{
 			Mode: ledger.ModePrime, Budget: budget,
 		})

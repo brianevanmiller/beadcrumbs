@@ -43,11 +43,7 @@ func (a *app) newAuthorityCommand() *cobra.Command {
 	cmd.Flags().StringVar(&rationale, "rationale", "", "why this level (required)")
 	_ = cmd.MarkFlagRequired("rationale")
 
-	cmd.RunE = a.handle(func(cmd *cobra.Command, args []string) (result, error) {
-		led, err := a.ledger(cmd.Context())
-		if err != nil {
-			return result{}, err
-		}
+	cmd.RunE = a.handleLedger(func(cmd *cobra.Command, args []string, led *ledger.Ledger) (result, error) {
 		target, err := ledger.TargetRef(args[0])
 		if err != nil {
 			return result{}, err

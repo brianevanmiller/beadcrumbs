@@ -78,8 +78,10 @@ jobs:
 
 Both deliver `{session_id, transcript_path, cwd, hook_event_name}` as JSON on
 stdin, so `hooks/bdc-hook.sh` serves both. It reads `session_id` and `cwd`, sets
-`BDC_SESSION` and `BDC_ACTOR_KIND=agent`, and shells out to a documented
-command. It never reads `transcript_path`: raw transcript is exactly what
+`BDC_SESSION`, `BDC_ACTOR_KIND=agent`, and `BDC_ACTOR_MODEL` (from the
+environment, or `unknown`), and shells out to a documented command. All three
+matter: the ledger refuses an agent actor that does not name both a model and a
+session. It never reads `transcript_path`: raw transcript is exactly what
 Beadcrumbs does not persist.
 
 | Event | Action | Writes? |
@@ -92,6 +94,12 @@ Beadcrumbs does not persist.
 `Stop` reports and never writes even with `--auto-harvest` on: a turn ending is
 not a durable completion point, and blocking a stop to harvest is worse than the
 reminder.
+
+A trigger that may harvest waits up to 60 s for a ledger another `bdc` is
+holding, because giving up early is what loses the harvest. `Stop` writes
+nothing, so it declines after 2 s instead — which is why its harness timeout can
+be short while `PreCompact` and `SessionEnd` need 90. Every trigger exits 0
+either way and names what it skipped on stderr.
 
 ### Claude Code
 

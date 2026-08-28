@@ -64,11 +64,7 @@ func (a *app) newReferenceAddCommand() *cobra.Command {
 	_ = cmd.MarkFlagRequired("kind")
 	_ = cmd.MarkFlagRequired("locator")
 
-	cmd.RunE = a.handle(func(cmd *cobra.Command, args []string) (result, error) {
-		led, err := a.ledger(cmd.Context())
-		if err != nil {
-			return result{}, err
-		}
+	cmd.RunE = a.handleLedger(func(cmd *cobra.Command, args []string, led *ledger.Ledger) (result, error) {
 		target, err := ledger.TargetRef(args[0])
 		if err != nil {
 			return result{}, err
@@ -123,11 +119,7 @@ func (a *app) newReferenceListCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&refresh, "refresh", false, "re-observe the cache through an installed enricher")
 	cmd.Flags().IntVar(&limit, "limit", 0, "return at most this many references")
 
-	cmd.RunE = a.handle(func(cmd *cobra.Command, _ []string) (result, error) {
-		led, err := a.ledger(cmd.Context())
-		if err != nil {
-			return result{}, err
-		}
+	cmd.RunE = a.handleLedger(func(cmd *cobra.Command, _ []string, led *ledger.Ledger) (result, error) {
 		q := ledger.ReferenceQuery{Kinds: kinds, Limit: limit}
 		if target != "" {
 			ref, err := ledger.TargetRef(target)

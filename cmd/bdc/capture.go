@@ -48,11 +48,7 @@ func (a *app) newCaptureCommand() *cobra.Command {
 		"attach a reference as kind:locator[@relation] (repeatable; relation defaults to subject)")
 	cmd.Flags().StringVar(&fromFile, "from-file", "", "read the fragment from a file")
 
-	cmd.RunE = a.handle(func(cmd *cobra.Command, args []string) (result, error) {
-		led, err := a.ledger(cmd.Context())
-		if err != nil {
-			return result{}, err
-		}
+	cmd.RunE = a.handleLedger(func(cmd *cobra.Command, args []string, led *ledger.Ledger) (result, error) {
 		content, err := readContent(cmd.InOrStdin(), args, fromFile)
 		if err != nil {
 			return result{}, err

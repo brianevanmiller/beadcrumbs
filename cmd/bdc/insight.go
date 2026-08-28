@@ -64,11 +64,7 @@ func (a *app) newInsightListCommand() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 0, "return at most this many Insights")
 	cmd.Flags().IntVar(&offsetFlag, "offset", 0, "skip this many Insights")
 
-	cmd.RunE = a.handle(func(cmd *cobra.Command, _ []string) (result, error) {
-		led, err := a.ledger(cmd.Context())
-		if err != nil {
-			return result{}, err
-		}
+	cmd.RunE = a.handleLedger(func(cmd *cobra.Command, _ []string, led *ledger.Ledger) (result, error) {
 		at, err := parseTimeFlag("--since", since)
 		if err != nil {
 			return result{}, err
@@ -112,11 +108,7 @@ func (a *app) newInsightShowCommand() *cobra.Command {
 	cmd.Flags().IntVar(&revision, "revision", 0, "show this revision instead of the head")
 	cmd.Flags().BoolVar(&lineage, "lineage", false, "include the derivation chain")
 
-	cmd.RunE = a.handle(func(cmd *cobra.Command, args []string) (result, error) {
-		led, err := a.ledger(cmd.Context())
-		if err != nil {
-			return result{}, err
-		}
+	cmd.RunE = a.handleLedger(func(cmd *cobra.Command, args []string, led *ledger.Ledger) (result, error) {
 		id, err := ledger.ParseID(ledger.PrefixInsight, args[0])
 		if err != nil {
 			return result{}, err
@@ -162,11 +154,7 @@ func (a *app) newInsightReviseCommand() *cobra.Command {
 	cmd.Flags().StringArrayVar(&crumbs, "crumb", nil, "add this Crumb as supporting evidence (repeatable)")
 	_ = cmd.MarkFlagRequired("rationale")
 
-	cmd.RunE = a.handle(func(cmd *cobra.Command, args []string) (result, error) {
-		led, err := a.ledger(cmd.Context())
-		if err != nil {
-			return result{}, err
-		}
+	cmd.RunE = a.handleLedger(func(cmd *cobra.Command, args []string, led *ledger.Ledger) (result, error) {
 		id, err := ledger.ParseID(ledger.PrefixInsight, args[0])
 		if err != nil {
 			return result{}, err
