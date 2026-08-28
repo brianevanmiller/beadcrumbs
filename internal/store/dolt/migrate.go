@@ -12,10 +12,11 @@ import (
 // MigrationResult is what `bdc init` and `bdc doctor` report about schema state.
 type MigrationResult = ledger.MigrationResult
 
-// Migrate applies every embedded migration above the ledger's current version.
-// v1 ships exactly one, so on a healthy ledger this reports From == To and
-// applies nothing; it exists so a version mismatch is a repairable state rather
-// than an error the user can only work around by re-initialising.
+// Migrate is `bdc migrate`: it applies every embedded migration above the
+// ledger's current version. v1 ships exactly one, so on a healthy ledger this
+// reports From == To and applies nothing; it exists so a version mismatch is a
+// repairable state rather than an error the user can only work around by
+// re-initialising, which is why `bdc doctor` names it as the remediation.
 func (s *Store) Migrate(ctx context.Context) (MigrationResult, error) {
 	res, err := applyPending(ctx, s.db)
 	if err != nil {
@@ -29,12 +30,13 @@ func (s *Store) Migrate(ctx context.Context) (MigrationResult, error) {
 	return res, nil
 }
 
-// applyPending is the single migration applier: `bdc init` and Migrate both go
-// through it, so there is one answer to "what does applying a migration mean".
-// Each script records its own schema_meta row as its last statement, which is
-// what keeps this function from having to know that table's shape — and the
-// version assertion afterwards is what turns a script that forgot into a loud
-// failure instead of a silent re-run next time.
+// applyPending is the single migration applier: `bdc init` and `bdc migrate`
+// both go through it, so there is one answer to "what does applying a migration
+// mean". Each script records the version itself as its last statement — 001
+// inserts schema_meta's singleton row, a later script REPLACEs it — which keeps
+// this function from having to know that table's shape, and the version
+// assertion afterwards turns a script that forgot into a loud failure instead
+// of a silent re-run next time.
 func applyPending(ctx context.Context, db *sql.DB) (MigrationResult, error) {
 	ms, err := migrations()
 	if err != nil {

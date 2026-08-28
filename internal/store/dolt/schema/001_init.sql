@@ -14,8 +14,12 @@
 -- insight_revisions, refs before ref_links and receipts, promotion_proposals
 -- before promotions before receipts.
 --
--- The script's last statement records its own schema_meta row. That is what
--- keeps the migration runner from having to know this table's shape.
+-- The script's last statement records the schema version in schema_meta, which
+-- is what keeps the migration runner from having to know this table's shape.
+-- The table is a singleton: 001 inserts the row, and every later script ends by
+-- REPLACEing it. A second INSERT would collide with the primary key, so the
+-- protocol is a replace, not an append — the migration history lives in Dolt's
+-- own commit log, which is the one place it cannot drift from the data.
 
 CREATE TABLE schema_meta (
   id          TINYINT     NOT NULL PRIMARY KEY DEFAULT 1,
@@ -347,7 +351,8 @@ INSERT INTO repo_config (k, v, updated_at) VALUES
   ('redact.patterns',                  '[]',               UTC_TIMESTAMP(6)),
   ('ledger.created_at',                UTC_TIMESTAMP(6),   UTC_TIMESTAMP(6));
 
--- Last statement, always: the migration records its own version. bdc_version
--- names the release this migration shipped in, not the build that ran it.
+-- Last statement, always: the migration records its version. A later script
+-- ends with the REPLACE form of this statement. bdc_version names the release
+-- the migration shipped in, not the build that ran it.
 INSERT INTO schema_meta (id, version, bdc_version, applied_at)
 VALUES (1, 1, '1.0.0', UTC_TIMESTAMP(6));

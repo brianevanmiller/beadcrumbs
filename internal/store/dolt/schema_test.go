@@ -243,3 +243,32 @@ func TestSchemaTreatsCaseVariantLocatorsAsDistinct(t *testing.T) {
 		t.Fatalf("expected two distinct References, got %d", n)
 	}
 }
+
+// TestSchemaVersionIsRecordedByReplacingTheSingleton is the migration protocol
+// a 002 script has to follow. schema_meta carries CHECK (id = 1), so a second
+// INSERT cannot record a version: the last statement of every later migration
+// is a REPLACE, and SchemaVersion reads it back. Written as SQL because the
+// runner takes its scripts from the embedded filesystem, so a fixture migration
+// would prove nothing about the ones that ship.
+func TestSchemaVersionIsRecordedByReplacingTheSingleton(t *testing.T) {
+	ctx := context.Background()
+	s := openLedger(t, initLedger(t, fixtureRepo(t), false), Config{Command: t.Name()})
+
+	if _, err := s.DB().ExecContext(ctx,
+		`INSERT INTO schema_meta (id, version, bdc_version, applied_at) VALUES (2, 2, '1.1.0', UTC_TIMESTAMP(6))`,
+	); err == nil {
+		t.Fatal("schema_meta accepted a second row; the singleton constraint is not enforced")
+	}
+	if _, err := s.DB().ExecContext(ctx,
+		`REPLACE INTO schema_meta (id, version, bdc_version, applied_at) VALUES (1, 2, '1.1.0', UTC_TIMESTAMP(6))`,
+	); err != nil {
+		t.Fatalf("a migration cannot record its version: %v", err)
+	}
+	version, err := s.SchemaVersion(ctx)
+	if err != nil {
+		t.Fatalf("reading the schema version: %v", err)
+	}
+	if version != 2 {
+		t.Fatalf("schema version = %d, want the version the replacement recorded", version)
+	}
+}

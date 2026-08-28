@@ -69,7 +69,7 @@ func TestRestoreSwapIsAtomic(t *testing.T) {
 	if got := countRows(t, swapped.DB(), "SELECT COUNT(*) FROM round_trip"); got != 4 {
 		t.Fatalf("restored ledger has %d rows, want the backup's 4", got)
 	}
-	if leftovers := restoreLeftovers(targetLoc); len(leftovers) != 0 {
+	if leftovers := leftoversOf(t, targetLoc); len(leftovers) != 0 {
 		t.Fatalf("a completed restore left %v behind", leftovers)
 	}
 	if err := swapped.Close(); err != nil {
@@ -84,7 +84,7 @@ func TestRestoreSwapIsAtomic(t *testing.T) {
 	if got := countRows(t, survivor.DB(), "SELECT COUNT(*) FROM round_trip"); got != 4 {
 		t.Fatalf("a failed restore left %d rows, want the previous 4", got)
 	}
-	if leftovers := restoreLeftovers(targetLoc); len(leftovers) != 0 {
+	if leftovers := leftoversOf(t, targetLoc); len(leftovers) != 0 {
 		t.Fatalf("a failed restore left %v behind", leftovers)
 	}
 }
@@ -132,7 +132,7 @@ func TestKilledRestoreLeavesOriginalIntact(t *testing.T) {
 
 	// Exactly one of two states is legal: the live ledger works, or it is gone
 	// and doctor names the copy that still holds the data.
-	leftovers := restoreLeftovers(targetLoc)
+	leftovers := leftoversOf(t, targetLoc)
 	if ledgerExists(targetLoc.Dir) {
 		store := openLedger(t, targetLoc, Config{Command: "check-killed"})
 		rows := countRows(t, store.DB(), "SELECT COUNT(*) FROM round_trip")
@@ -160,6 +160,18 @@ func TestKilledRestoreLeavesOriginalIntact(t *testing.T) {
 		t.Fatalf("no live ledger at %s and no recoverable copy in %v", targetLoc.Dir, leftovers)
 	}
 	assertLeftoversReported(t, DiagnoseUnopened(targetLoc, nil), leftovers)
+}
+
+// leftoversOf reads the interrupted-restore copies on disk. An unreadable
+// parent is a test failure rather than an empty answer, which is the same
+// distinction the check itself now makes.
+func leftoversOf(t *testing.T, loc Location) []string {
+	t.Helper()
+	out, err := restoreLeftovers(loc)
+	if err != nil {
+		t.Fatalf("reading restore leftovers for %s: %v", loc.Dir, err)
+	}
+	return out
 }
 
 func assertLeftoversReported(t *testing.T, report StoreReport, leftovers []string) {
@@ -204,7 +216,7 @@ func TestRestoreRefusesWhileAnotherProcessHoldsTheLedger(t *testing.T) {
 	if _, err := Restore(ctx, targetLoc, dest, RestoreOptions{Force: true}); !errors.Is(err, ledger.ErrBusy) {
 		t.Fatalf("restore err = %v, want ledger busy while another process holds %s", err, targetLoc.Dir)
 	}
-	if leftovers := restoreLeftovers(targetLoc); len(leftovers) != 0 {
+	if leftovers := leftoversOf(t, targetLoc); len(leftovers) != 0 {
 		t.Fatalf("the refused restore left %v behind", leftovers)
 	}
 }
@@ -257,7 +269,7 @@ func TestRestoreRefusesANewerSchema(t *testing.T) {
 	if got := countRows(t, survivor.DB(), "SELECT COUNT(*) FROM round_trip"); got != 5 {
 		t.Fatalf("the refused restore left %d rows, want the previous 5", got)
 	}
-	if leftovers := restoreLeftovers(targetLoc); len(leftovers) != 0 {
+	if leftovers := leftoversOf(t, targetLoc); len(leftovers) != 0 {
 		t.Fatalf("the refused restore left %v behind", leftovers)
 	}
 }

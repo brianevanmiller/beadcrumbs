@@ -40,7 +40,7 @@ func (s *Store) Diagnose(ctx context.Context) (StoreReport, error) {
 		r.Add("schema_version", StatusOK, fmt.Sprintf("schema version %d", version))
 	case version < want:
 		r.Add("schema_version", StatusFail,
-			fmt.Sprintf("ledger is at schema version %d, this build expects %d; run `bdc init`", version, want))
+			fmt.Sprintf("ledger is at schema version %d, this build expects %d; run `bdc migrate`", version, want))
 	default:
 		r.Add("schema_version", StatusFail,
 			fmt.Sprintf("ledger is at schema version %d, newer than this build's %d; upgrade bdc", version, want))
@@ -86,7 +86,14 @@ func DiagnoseUnopened(loc Location, openErr error) StoreReport {
 // its commit point, so both directories on disk is a recoverable state — but
 // only if doctor names the aside path.
 func addLeftoverChecks(r *StoreReport, loc Location) {
-	leftovers := restoreLeftovers(loc)
+	leftovers, err := restoreLeftovers(loc)
+	if err != nil {
+		// "I could not look" is not "there is nothing there": reporting the
+		// second would hide the ledger copy that still holds the data.
+		r.Add("restore_leftovers", StatusWarn,
+			fmt.Sprintf("cannot read %s to check for an interrupted restore: %v", filepath.Dir(loc.Dir), err))
+		return
+	}
 	if len(leftovers) == 0 {
 		r.Add("restore_leftovers", StatusOK, "no interrupted restore")
 		return
@@ -96,11 +103,11 @@ func addLeftoverChecks(r *StoreReport, loc Location) {
 			strings.Join(leftovers, ", ")))
 }
 
-func restoreLeftovers(loc Location) []string {
+func restoreLeftovers(loc Location) ([]string, error) {
 	parent, base := filepath.Dir(loc.Dir), filepath.Base(loc.Dir)
 	entries, err := os.ReadDir(parent)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var out []string
 	for _, e := range entries {
@@ -109,5 +116,5 @@ func restoreLeftovers(loc Location) []string {
 			out = append(out, filepath.Join(parent, name))
 		}
 	}
-	return out
+	return out, nil
 }

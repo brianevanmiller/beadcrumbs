@@ -34,9 +34,10 @@ const (
 )
 
 // schemaFS holds the numbered migrations. Each script is named NNN_<name>.sql
-// and is responsible for recording its own row in schema_meta as its last
-// statement — that is what makes SchemaVersion the migration state and keeps the
-// runner from having to know the table's shape.
+// and is responsible for recording its version in schema_meta as its last
+// statement — 001 inserts the singleton row, every later script replaces it —
+// which is what makes SchemaVersion the migration state and keeps the runner
+// from having to know the table's shape.
 //
 //go:embed all:schema
 var schemaFS embed.FS
@@ -151,8 +152,8 @@ func (s *Store) Close() error {
 	return s.closeErr
 }
 
-// SchemaVersion is MAX(schema_meta.version), or 0 when the table does not exist
-// yet — an initialised-but-unmigrated ledger, not an error.
+// SchemaVersion is the version schema_meta records, or 0 when the table does
+// not exist yet — an initialised-but-unmigrated ledger, not an error.
 func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
 	return schemaVersion(ctx, s.db)
 }
@@ -262,11 +263,14 @@ type migration struct {
 }
 
 // CurrentSchemaVersion is the highest embedded migration version, and therefore
-// what a freshly initialised ledger reports.
+// what a freshly initialised ledger reports. The scripts are compiled into the
+// binary, so an unreadable set is a broken build rather than a user condition:
+// answering 0 would have `bdc doctor` tell every user their ledger came from
+// the future and `bdc restore` accept a backup it cannot read.
 func CurrentSchemaVersion() int {
 	ms, err := migrations()
 	if err != nil || len(ms) == 0 {
-		return 0
+		panic(fmt.Sprintf("beadcrumbs: this build embeds no usable schema: %v", err))
 	}
 	return ms[len(ms)-1].version
 }

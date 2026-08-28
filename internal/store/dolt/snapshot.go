@@ -542,6 +542,20 @@ func (s *snapshot) HeadRevisionDrift() ([]ledger.HeadDriftRow, error) {
 	})
 }
 
+// tally is one `GROUP BY` row. The count is scanned as an integer rather than
+// parsed out of a string: a COUNT(*) that did not read as a number would
+// otherwise become a silent zero, which is indistinguishable from an empty
+// ledger.
+type tally struct {
+	name string
+	n    int
+}
+
+func scanTally(rows *sql.Rows) (tally, error) {
+	var t tally
+	return t, rows.Scan(&t.name, &t.n)
+}
+
 func (s *snapshot) Counts(q ledger.CountQuery) (ledger.Counts, error) {
 	c := ledger.Counts{
 		CrumbsByState:      map[ledger.ReviewState]int{},
@@ -550,30 +564,21 @@ func (s *snapshot) Counts(q ledger.CountQuery) (ledger.Counts, error) {
 	since := newWhere()
 	since.gte("captured_at", q.Since)
 	crumbs, err := scanRows(s, `SELECT CAST(review_state AS CHAR), COUNT(*) FROM crumbs`+
-		since.clause()+` GROUP BY review_state`, since.args,
-		func(rows *sql.Rows) ([2]string, error) {
-			var pair [2]string
-			return pair, rows.Scan(&pair[0], &pair[1])
-		})
+		since.clause()+` GROUP BY review_state`, since.args, scanTally)
 	if err != nil {
 		return c, err
 	}
-	for _, pair := range crumbs {
-		n, _ := strconv.Atoi(pair[1])
-		c.CrumbsByState[ledger.ReviewState(pair[0])] = n
+	for _, t := range crumbs {
+		c.CrumbsByState[ledger.ReviewState(t.name)] = t.n
 	}
 
 	promotions, err := scanRows(s, `SELECT CAST(status AS CHAR), COUNT(*) FROM promotions GROUP BY status`,
-		nil, func(rows *sql.Rows) ([2]string, error) {
-			var pair [2]string
-			return pair, rows.Scan(&pair[0], &pair[1])
-		})
+		nil, scanTally)
 	if err != nil {
 		return c, err
 	}
-	for _, pair := range promotions {
-		n, _ := strconv.Atoi(pair[1])
-		c.PromotionsByStatus[ledger.PromotionStatus(pair[0])] = n
+	for _, t := range promotions {
+		c.PromotionsByStatus[ledger.PromotionStatus(t.name)] = t.n
 	}
 
 	for _, t := range []struct {
