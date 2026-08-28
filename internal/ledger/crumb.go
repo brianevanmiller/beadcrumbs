@@ -91,8 +91,11 @@ var relations = []Relation{RelationSource, RelationEvidence, RelationSubject, Re
 func ParseRefSpec(arg string, fallback Relation) (RefSpec, error) {
 	kind, rest, ok := strings.Cut(strings.TrimSpace(arg), ":")
 	if !ok {
+		// The argument is never echoed. A mistyped `--ref` is routinely a
+		// token whose owner typed it into the wrong flag, and --json output is
+		// logged and pasted; naming the shape says everything the caller needs.
 		return RefSpec{}, Fail(ErrInvalidInput, "invalid_reference",
-			"%q is not a reference; expected kind:locator[@relation]", arg)
+			"a reference is kind:locator[@relation]; this argument has no colon separating the kind")
 	}
 	spec := RefSpec{Kind: kind, Locator: rest, Relation: fallback}
 	if at := strings.LastIndex(rest, "@"); at >= 0 {

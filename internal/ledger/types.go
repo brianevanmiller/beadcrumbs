@@ -1,6 +1,7 @@
 package ledger
 
 import (
+	"encoding/json"
 	"math"
 	"slices"
 	"strings"
@@ -155,6 +156,18 @@ type RecordRef struct {
 
 func (r RecordRef) Zero() bool     { return r.Kind == "" && r.ID == "" }
 func (r RecordRef) String() string { return string(r.Kind) + ":" + r.ID }
+
+// MarshalJSON renders a reference to no record as null. `omitempty` does not
+// apply to structs, so an absent supersession or subject would otherwise be
+// {"kind":"","id":""} — a shape that reads like a record whose kind and id
+// happen to be empty, which is not a thing that exists.
+func (r RecordRef) MarshalJSON() ([]byte, error) {
+	if r.Zero() {
+		return []byte("null"), nil
+	}
+	type ref RecordRef
+	return json.Marshal(ref(r))
+}
 
 // Crumb is an atomic captured fragment. Content is always post-redaction: raw
 // text never reaches this struct's way to the database.

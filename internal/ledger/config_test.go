@@ -1,7 +1,9 @@
 package ledger
 
 import (
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -39,6 +41,10 @@ func TestParseRepoConfigRefusesToGuess(t *testing.T) {
 			ConfigAgentMaySetDefault: "maybe",
 		},
 		"missing versions": {ConfigHarvestAuto: "0"},
+		"absent flag": {
+			ConfigPolicyVersion: "1", ConfigRedactionVersion: "1",
+			ConfigHarvestAuto: "0",
+		},
 		"patterns are not a JSON array": {
 			ConfigPolicyVersion: "1", ConfigRedactionVersion: "1",
 			ConfigRedactPatterns: "not json",
@@ -94,5 +100,56 @@ func TestCapabilityEncodingIsCanonical(t *testing.T) {
 	}
 	if _, err := DecodeCapabilities("append-only,invented"); !errors.Is(err, ErrIntegrity) {
 		t.Fatalf("an unknown stored capability must be an integrity error, got %v", err)
+	}
+}
+
+// The JSON envelope's error.message is a stable contract, so it carries the
+// ledger's own sentence and nothing else. The cause stays reachable for
+// errors.Is; splicing it into the message would publish the engine's own text,
+// which changes between upstream releases and interpolates key values.
+func TestErrorMessageCarriesOnlyTheLedgersOwnText(t *testing.T) {
+	cause := errors.New("duplicate primary key value (id='crb_1')")
+	err := FailWith(ErrIntegrity, "integrity_example", cause, "the write could not be applied")
+	if err.Error() != "the write could not be applied" {
+		t.Fatalf("message = %q, want the ledger's sentence alone", err.Error())
+	}
+	if !errors.Is(err, cause) || !errors.Is(err, ErrIntegrity) {
+		t.Fatal("the cause and the kind must both stay matchable")
+	}
+}
+
+// A reference or destination argument is never echoed back. A mistyped --ref is
+// routinely a token typed into the wrong flag, and --json output is logged and
+// pasted; the error names the shape instead.
+func TestParseDoesNotEchoTheArgument(t *testing.T) {
+	const secret = "ghp_000000000000000000000000000000000000"
+	for name, err := range map[string]error{
+		"reference":   second(ParseRefSpec(secret, RelationSource)),
+		"destination": second(ParseDestination(secret)),
+	} {
+		if err == nil {
+			t.Fatalf("%s: an argument with no colon must not parse", name)
+		}
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("%s: the error echoes its argument: %s", name, err)
+		}
+	}
+}
+
+func second[T any](_ T, err error) error { return err }
+
+// A reference to no record renders as null. `omitempty` does not apply to
+// structs, so without this an absent supersession is {"kind":"","id":""} —
+// a record shape describing a record that does not exist.
+func TestAbsentRecordRefMarshalsAsNull(t *testing.T) {
+	encoded, err := json.Marshal(Validation{ID: "val_1", Target: RecordRef{Kind: KindCrumb, ID: "crb_1"}})
+	if err != nil {
+		t.Fatalf("marshalling: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"superseded_by":null`) {
+		t.Fatalf("absent supersession rendered as %s", encoded)
+	}
+	if !strings.Contains(string(encoded), `"target":{"kind":"crumb","id":"crb_1"}`) {
+		t.Fatalf("a present reference must still render as an object: %s", encoded)
 	}
 }

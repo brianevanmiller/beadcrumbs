@@ -39,12 +39,12 @@ type Error struct {
 	cause error
 }
 
-func (e *Error) Error() string {
-	if e.cause != nil {
-		return fmt.Sprintf("%s: %v", e.Message, e.cause)
-	}
-	return e.Message
-}
+// Error is the message and nothing else. The JSON envelope's error.message is
+// built from it, and that is a stable contract: splicing the cause in would
+// publish go-mysql-server's own text — which interpolates key values and
+// changes between upstream releases — into a field callers match on. The cause
+// stays reachable through errors.Is and errors.As.
+func (e *Error) Error() string { return e.Message }
 
 // Unwrap exposes both the kind and the cause so errors.Is matches either.
 func (e *Error) Unwrap() []error {
@@ -60,8 +60,9 @@ func Fail(kind error, code, format string, a ...any) *Error {
 	return &Error{Kind: kind, Code: code, Message: fmt.Sprintf(format, a...)}
 }
 
-// FailWith is Fail with an underlying cause preserved for errors.Is and for
-// operator-facing logs. The cause is never shown as the JSON error code.
+// FailWith is Fail with an underlying cause preserved for errors.Is. The cause
+// is never part of what a caller reads: not the JSON error code, and not the
+// message either.
 func FailWith(kind error, code string, cause error, format string, a ...any) *Error {
 	return &Error{Kind: kind, Code: code, Message: fmt.Sprintf(format, a...), cause: cause}
 }

@@ -58,8 +58,10 @@ type Destination struct {
 func ParseDestination(arg string) (Destination, error) {
 	kind, locator, ok := strings.Cut(strings.TrimSpace(arg), ":")
 	if !ok {
+		// Not echoed, for the same reason ParseRefSpec does not echo: an
+		// unparseable locator is exactly where a secret ends up by accident.
 		return Destination{}, Fail(ErrInvalidInput, "invalid_destination",
-			"%q is not a destination; expected kind:locator", arg)
+			"a destination is kind:locator; this argument has no colon separating the kind")
 	}
 	d := Destination{Kind: kind, Locator: locator}
 	return d, d.validate()

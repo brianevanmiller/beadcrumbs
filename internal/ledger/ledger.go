@@ -28,8 +28,8 @@ type RepoConfig struct {
 	RedactPatterns     []string `json:"redact_patterns,omitempty"`
 }
 
-// ParseRepoConfig reads the raw key/value rows. A malformed value is an
-// integrity error rather than a default: silently treating an unparseable
+// ParseRepoConfig reads the raw key/value rows. A value that is missing or does
+// not parse is an integrity error rather than a default: silently treating
 // `authority.agent_may_set_default` as false would be a policy decision made by
 // a bug.
 func ParseRepoConfig(kv map[string]string) (RepoConfig, error) {
@@ -58,15 +58,25 @@ func ParseRepoConfig(kv map[string]string) (RepoConfig, error) {
 	return c, nil
 }
 
+// parseFlag reads one boolean policy key. An absent key is as much an integrity
+// error as an unparseable one: the seeds write every key, so a missing
+// `authority.agent_may_set_default` means this is not a ledger this build
+// initialised — and answering false for it would be a policy decision made by a
+// bug rather than by the repository.
 func parseFlag(kv map[string]string, key string) (bool, error) {
-	switch kv[key] {
+	raw, ok := kv[key]
+	if !ok {
+		return false, Fail(ErrIntegrity, "integrity_config_missing",
+			"repo_config is missing %s; the ledger was not initialised by this build", key)
+	}
+	switch raw {
 	case "1", "true":
 		return true, nil
-	case "0", "false", "":
+	case "0", "false":
 		return false, nil
 	default:
 		return false, Fail(ErrIntegrity, "integrity_config_invalid",
-			"repo_config %s is %q, which is not 0 or 1", key, kv[key])
+			"repo_config %s is %q, which is not 0 or 1", key, raw)
 	}
 }
 
