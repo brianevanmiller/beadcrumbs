@@ -243,6 +243,7 @@ See [Linear Integration Guide](docs/guides/linear.md) for full setup and trouble
 ## Project Setup Guides
 
 * **[AI Agent Guide](BDC_GUIDE.md)** — Copy into your CLAUDE.md or AI agent config for automatic bdc usage
+* **[Reasoning Ledger Modernization Plan](docs/2026-08-27-reasoning-ledger-design.md)** — Plan the standalone Dolt reasoning ledger
 * **[Lifecycle Guide](docs/guides/lifecycle.md)** — 6-phase workflow from session start to cross-session resumption
 * **[Project Config Template](docs/guides/project-config.md)** — Author naming, thread conventions, signal vs noise guidance
 * **[Insight Types Deep Dive](docs/insight-types.md)** — When to use each of the 6 insight types
