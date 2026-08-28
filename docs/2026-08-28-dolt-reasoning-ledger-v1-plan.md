@@ -995,18 +995,18 @@ fails mid-transaction rolls back and reports one error.
 | `bdc crumb review <id>...` | `--state accepted\|rejected` `--rationale` (required) | `{crumbs[], events[]}` |
 | `bdc crumb prune` | `--id` (repeatable) `--before` `--state candidate` `--yes` (required) | `{pruned, pruned_ids[], blocked[]}` |
 | `bdc harvest` | `--crumb` (repeatable) `--since` `--title` `--content\|--content-file` `--class` `--confidence` `--auto` `--dry-run` | `{harvest, insight, revision, crumbs_captured[], redaction:{version, findings}}` |
-| `bdc insight list` | `--class` `--since` `--verdict` `--authority` `--limit` | `{insights[], total}` |
+| `bdc insight list` | `--class` `--since` `--verdict` `--authority` `--limit` `--offset` | `{insights[], total}` |
 | `bdc insight show <id>` | `--revision` `--lineage` | `{insight, revision, revisions[], crumbs[], references[], validations[], authorities[], proposals[]}` |
 | `bdc insight revise <id>` | `--content\|--content-file` `--rationale` (required) `--title` `--class` `--confidence` `--crumb` | `{insight, revision}` |
 | `bdc validate <target-id>` | `--verdict` `--rationale` (required) `--evidence kind:locator` `--superseded-by` | `{validation, effective_verdict}` |
 | `bdc authority <target-id>` | `--level` `--scope` `--destination kind:locator` `--rationale` (required) | `{authority, effective_level}` |
 | `bdc reference add <target-id>` | `--kind` `--locator` `--workspace` `--relation` `--label` | `{reference, link}` |
-| `bdc reference list` | `--target` `--kind` `--relation` `--refresh` | `{references[]}` each with `fetched_at` |
+| `bdc reference list` | `--target` `--kind` `--relation` `--refresh` `--limit` | `{references[]}` each with `fetched_at` |
 | `bdc promote propose` | `--insight` `--revision` `--class` `--destination kind:locator` `--workspace` `--capability` (repeatable) `--evidence kind:locator[@relation]` (repeatable) `--content\|--content-file` `--authority` `--supersedes` `--confidence` | `{proposal, created, content_hash, authority_required}` |
 | `bdc promote record <proposal-id>` | `--locator` (required) `--anchor` `--external-hash` `--verified` | `{promotion, receipt, durable}` |
 | `bdc promote reject <proposal-id>` | `--rationale` (required) | `{promotion}` |
 | `bdc promote fail <proposal-id>` | `--detail` (required) | `{promotion}` |
-| `bdc promote list` | `--insight` `--status` `--destination-kind` | `{proposals[]}` each with `attempts[]`, `receipt` |
+| `bdc promote list` | `--insight` `--status` `--destination-kind` `--limit` | `{proposals[]}` each with `attempts[]`, `receipt` |
 | `bdc context` | `--since` `--insight` `--limit` `--budget` | `{summary, insights[], open_questions[], recent_crumbs[], promotions[]}` |
 | `bdc handoff` | `--since` `--budget` | `{summary, state, unreviewed_crumbs, open_proposals[], workspace}` |
 | `bdc prime` | `--budget` | `{summary, working_defaults[], mandatory[], cautions[]}` |
@@ -1021,6 +1021,10 @@ fails mid-transaction rolls back and reports one error.
 
 `--budget` bounds `context`/`handoff`/`prime` output in approximate tokens; the default is
 declared in the skill so agents can rely on it.
+
+`--limit`/`--offset` are pagination on the three listings that can grow without bound; they were
+implemented beyond this table and are recorded here rather than removed, because a listing a
+caller cannot page is a listing that eventually stops being usable.
 
 `bdc migrate` is what makes a schema-version mismatch a repairable state rather than one the
 user can only escape by re-initialising, and it is the command `bdc doctor` names for that
