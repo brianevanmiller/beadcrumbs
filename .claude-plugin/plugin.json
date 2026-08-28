@@ -1,0 +1,15 @@
+{
+  "name": "beadcrumbs",
+  "description": "The Beadcrumbs skill plus optional Claude Code session hooks. The skill is the portable contract; the hooks are convenience and nothing depends on them.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Brian Miller",
+    "url": "https://github.com/brianevanmiller/beadcrumbs"
+  },
+  "homepage": "https://github.com/brianevanmiller/beadcrumbs",
+  "repository": "https://github.com/brianevanmiller/beadcrumbs",
+  "license": "MIT",
+  "keywords": ["reasoning-ledger", "decisions", "adr", "knowledge-capture"],
+  "skills": ["skills/beadcrumbs"],
+  "hooks": "./hooks/hooks.json"
+}

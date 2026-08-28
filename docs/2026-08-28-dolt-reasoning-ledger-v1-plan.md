@@ -1014,7 +1014,7 @@ fails mid-transaction rolls back and reports one error.
 | `bdc backup <dest-url>` | — | `{destination, bytes, schema_version}` |
 | `bdc restore <src-url>` | `--force` (required if a ledger exists) | `{restored, schema_version, records}` |
 | `bdc gc` | — | `{before_bytes, after_bytes, duration_ms}` |
-| `bdc hooks install\|uninstall` | `--force` | `{hooks[], chained[]}` |
+| `bdc hooks install\|uninstall` | `--force` `--auto-harvest` (install: the per-repository opt-in) | `{hooks[], chained[], auto_harvest}` |
 | `bdc hooks run <hook>` | — | `{hook, action, result}` |
 | `bdc version` | — | `{version, schema_version, dolt_driver, go, platform}` |
 
@@ -1334,9 +1334,10 @@ is serial because each slice reads the previous one's domain types.
    the abort behavior, and which columns redact versus reject (§1.4). The specific high-confidence
    secret shapes are a table in `internal/redact` that will grow; the release gate tests the
    sequence and the column coverage, not a fixed list.
-4. **Codex global skill path.** `~/.codex/skills` (what the installer writes) versus
-   `$HOME/.agents/skills` (what Codex documents) must be verified against the installed Codex
-   build in S8 rather than assumed.
+4. ~~**Codex global skill path.**~~ Resolved in S8, measured against codex-cli 0.150.1:
+   `codex debug prompt-input` reports both as skill roots (`r0 = ~/.codex/skills`,
+   `r1 = ~/.agents/skills`) alongside the project's `<repo>/.agents/skills`. Both global paths
+   work; project-scoped `.agents/skills` remains the preferred install.
 5. **Binary size.** 141 MB stripped with static ICU is accepted, not solved. If distribution size
    becomes a blocker the decision reopens; nothing in this plan depends on it.
 6. **The transcript-shape heuristic.** §2.5.11 fixes that automatic capture rejects
