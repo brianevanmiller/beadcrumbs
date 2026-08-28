@@ -403,19 +403,26 @@ func (s *snapshot) Attempts(ids []ledger.ProposalID) ([]ledger.PromotionRow, []l
 // Events interleaves the three append-only histories oldest first, because every
 // narrative read wants a timeline rather than three lists to merge itself.
 func (s *snapshot) Events(q ledger.EventQuery) ([]ledger.EventRow, error) {
+	// scope and the destination columns exist only on authorities; the other two
+	// branches select NULL so the union keeps one shape. They are carried
+	// because the promotion gate reads a grant's narrowing through this row.
 	union := `SELECT 'review' AS kind, e.id AS id, 'crumb' AS target_kind, e.crumb_id AS target_id,
-			CAST(e.to_state AS CHAR) AS summary, e.rationale AS rationale, e.occurred_at AS occurred_at,
+			CAST(e.to_state AS CHAR) AS summary, NULL AS scope,
+			NULL AS destination_kind, NULL AS destination_locator,
+			e.rationale AS rationale, e.occurred_at AS occurred_at,
 			e.actor_id AS actor_id, CAST(e.actor_kind AS CHAR) AS actor_kind,
 			e.actor_model AS actor_model, e.session_id AS session_id
 		FROM crumb_review_events e
 		UNION ALL
 		SELECT 'validation', v.id, CAST(v.target_kind AS CHAR), v.target_id,
-			CAST(v.verdict AS CHAR), v.rationale, v.occurred_at,
+			CAST(v.verdict AS CHAR), NULL, NULL, NULL,
+			v.rationale, v.occurred_at,
 			v.actor_id, CAST(v.actor_kind AS CHAR), v.actor_model, v.session_id
 		FROM validations v
 		UNION ALL
 		SELECT 'authority', a.id, CAST(a.target_kind AS CHAR), a.target_id,
-			CAST(a.level AS CHAR), a.rationale, a.occurred_at,
+			CAST(a.level AS CHAR), a.scope, a.destination_kind, a.destination_locator,
+			a.rationale, a.occurred_at,
 			a.actor_id, CAST(a.actor_kind AS CHAR), a.actor_model, a.session_id
 		FROM authorities a`
 
@@ -429,24 +436,30 @@ func (s *snapshot) Events(q ledger.EventQuery) ([]ledger.EventRow, error) {
 		}
 		w.conds = append(w.conds, "("+strings.Join(ors, " OR ")+")")
 	}
-	query := `SELECT kind, id, target_kind, target_id, summary, rationale, occurred_at,
+	query := `SELECT kind, id, target_kind, target_id, summary, scope,
+		destination_kind, destination_locator, rationale, occurred_at,
 		actor_id, actor_kind, actor_model, session_id FROM (` + union + `) e` +
 		w.clause() + ` ORDER BY occurred_at, id` + limitOffset(q.Limit, 0)
 
 	return scanRows(s, query, w.args, func(rows *sql.Rows) (ledger.EventRow, error) {
 		var (
-			e        ledger.EventRow
-			kind     string
-			target   string
-			occurred time.Time
-			prov     provScan
+			e           ledger.EventRow
+			kind        string
+			target      string
+			scope       sql.NullString
+			destKind    sql.NullString
+			destLocator sql.NullString
+			occurred    time.Time
+			prov        provScan
 		)
-		if err := rows.Scan(&kind, &e.ID, &target, &e.Target.ID, &e.Summary, &e.Rationale, &occurred,
+		if err := rows.Scan(&kind, &e.ID, &target, &e.Target.ID, &e.Summary,
+			&scope, &destKind, &destLocator, &e.Rationale, &occurred,
 			&prov.id, &prov.kind, &prov.model, &prov.session); err != nil {
 			return e, err
 		}
 		e.Kind = ledger.EventKind(kind)
 		e.Target.Kind = ledger.RecordKind(target)
+		e.Scope, e.DestinationKind, e.DestinationLocator = scope.String, destKind.String, destLocator.String
 		e.OccurredAt = occurred.UTC()
 		e.Provenance = prov.value()
 		return e, nil

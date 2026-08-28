@@ -551,9 +551,7 @@ func narrativePromotions(snap Snapshot, q PromotionQuery) ([]NarrativePromotion,
 			}
 		}
 		if item.AuthorityRequired == RequireHuman {
-			held, err := humanAuthorityHeld(snap,
-				RecordRef{Kind: KindProposal, ID: string(p.ID)},
-				RecordRef{Kind: KindRevision, ID: string(p.RevisionID)})
+			held, err := humanAuthorityHeld(snap, gateFor(p))
 			if err != nil {
 				return nil, err
 			}

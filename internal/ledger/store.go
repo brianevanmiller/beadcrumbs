@@ -312,13 +312,21 @@ const (
 // EventRow is the common shape of the three histories. Summary is the
 // kind-specific verb — the new review state, the verdict, or the authority level
 // — so a narrative can render a timeline without switching on Kind.
+//
+// Scope and Destination are the authority narrowings, empty on the other two
+// kinds. They are on the row because the promotion gate is the only reader of
+// an authority grant that matters, and a gate that cannot see how a grant was
+// narrowed can only treat every grant as blanket.
 type EventRow struct {
-	Kind       EventKind `json:"kind"`
-	ID         string    `json:"id"`
-	Target     RecordRef `json:"target"`
-	Summary    string    `json:"summary"`
-	Rationale  string    `json:"rationale"`
-	OccurredAt time.Time `json:"occurred_at"`
+	Kind               EventKind `json:"kind"`
+	ID                 string    `json:"id"`
+	Target             RecordRef `json:"target"`
+	Summary            string    `json:"summary"`
+	Scope              string    `json:"scope,omitempty"`
+	DestinationKind    string    `json:"destination_kind,omitempty"`
+	DestinationLocator string    `json:"destination_locator,omitempty"`
+	Rationale          string    `json:"rationale"`
+	OccurredAt         time.Time `json:"occurred_at"`
 	Provenance
 }
 

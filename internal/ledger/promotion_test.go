@@ -443,3 +443,113 @@ func TestReceiptLocatorMayDifferFromTheProposal(t *testing.T) {
 		t.Fatalf("refs rows for the written locator = %d, want 1", n)
 	}
 }
+
+// grant makes one human authority grant and fails the test if the ledger
+// refuses it. The grants below are all the ones a human can express through
+// `bdc authority`, which is the point: each of them means something different
+// to the promotion gate.
+func grant(t *testing.T, f *fixture, c ledger.GrantAuthority) {
+	t.Helper()
+	human := ledgerWithConfig(t, f, humanActor(), func(*ledger.RepoConfig) {})
+	if c.Rationale == "" {
+		c.Rationale = "confirming this is the settled default for day-to-day use"
+	}
+	if _, err := human.GrantAuthority(context.Background(), c); err != nil {
+		t.Fatalf("granting %s on %s: %v", c.Level, c.Target, err)
+	}
+}
+
+// TestRevisionGrantDoesNotAuthorizePolicyPromotion is the repro for the
+// authority bypass: a human grant made on the Insight revision for an unrelated
+// reason must not let an agent promote a policy-class proposal it authored.
+// Invariant §2.5.4 says `policy` always requires a human, and a grant that
+// never saw this proposal's content is not that human decision.
+func TestRevisionGrantDoesNotAuthorizePolicyPromotion(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	insight, revision := seedPromotable(t, f, "how the store is used")
+
+	grant(t, f, ledger.GrantAuthority{
+		Target: ledger.RecordRef{Kind: ledger.KindRevision, ID: string(revision)},
+		Level:  ledger.AuthorityDefault,
+	})
+
+	intent := ledger.ProposePromotion{
+		InsightID: insight, Class: "policy", Destination: docsTo("docs/policy/fresh.md"),
+		Content: "agent-authored policy change, never reviewed by a human", Confidence: 0.6,
+	}
+	blocked, err := f.L.ProposePromotion(ctx, intent)
+	if !errors.Is(err, ledger.ErrAuthorityDenied) {
+		t.Fatalf("propose err = %v, want authority denied: a revision grant is not a decision about this proposal", err)
+	}
+	if _, err := f.L.RecordPromotion(ctx, ledger.RecordPromotion{
+		ProposalID: blocked.Proposal.ID, Locator: "docs/policy/fresh.md",
+	}); !errors.Is(err, ledger.ErrAuthorityDenied) {
+		t.Fatalf("record err = %v, want authority denied", err)
+	}
+
+	// The grant the exit-3 message actually prescribes does unblock it.
+	grant(t, f, ledger.GrantAuthority{
+		Target: ledger.RecordRef{Kind: ledger.KindProposal, ID: string(blocked.Proposal.ID)},
+		Level:  ledger.AuthorityDefault, Rationale: "read the content and approved it",
+	})
+	if _, err := f.L.RecordPromotion(ctx, ledger.RecordPromotion{
+		ProposalID: blocked.Proposal.ID, Locator: "docs/policy/fresh.md",
+	}); err != nil {
+		t.Fatalf("recording after a grant on the proposal: %v", err)
+	}
+}
+
+// TestNarrowedGrantCoversOnlyWhatItNames is the repro for the second half of
+// the bypass: `bdc authority --scope` and `--destination` were recorded and
+// then ignored, so a grant a human deliberately narrowed unlocked every
+// destination. A narrowing the ledger cannot check never widens.
+func TestNarrowedGrantCoversOnlyWhatItNames(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	insight, revision := seedPromotable(t, f, "where decisions are written")
+	revisionRef := ledger.RecordRef{Kind: ledger.KindRevision, ID: string(revision)}
+
+	adr := ledger.ProposePromotion{
+		InsightID: insight, Class: "decision",
+		Destination: docsTo("docs/adr/0001.md", ledger.CapStableAnchor),
+		Content:     "Decisions live in the ADR tree.", Confidence: 0.7,
+		RequestedAuthority: ledger.AuthorityMandatory,
+	}
+	blocked, err := f.L.ProposePromotion(ctx, adr)
+	if !errors.Is(err, ledger.ErrAuthorityDenied) {
+		t.Fatalf("propose err = %v, want authority denied", err)
+	}
+
+	// A grant scoped to something the ledger cannot interpret, pointed at a
+	// different destination, is exactly the grant that used to unlock this one.
+	grant(t, f, ledger.GrantAuthority{
+		Target: revisionRef, Level: ledger.AuthorityDefault,
+		Scope: "wiki-only", DestinationKind: "wiki", DestinationLocator: "https://example.test/other",
+	})
+	if _, err := f.L.ProposePromotion(ctx, adr); !errors.Is(err, ledger.ErrAuthorityDenied) {
+		t.Fatalf("propose err = %v, want authority denied: the grant names another destination", err)
+	}
+
+	// Naming this destination, with no scope, is the grant that covers it.
+	grant(t, f, ledger.GrantAuthority{
+		Target: revisionRef, Level: ledger.AuthorityDefault,
+		DestinationKind: "docs", DestinationLocator: "docs/adr/0001.md",
+		Rationale: "this conclusion may be written to the ADR tree",
+	})
+	if _, err := f.L.ProposePromotion(ctx, adr); err != nil {
+		t.Fatalf("propose after a matching destination grant: %v", err)
+	}
+	if _, err := f.L.RecordPromotion(ctx, ledger.RecordPromotion{
+		ProposalID: blocked.Proposal.ID, Locator: "docs/adr/0001.md", Anchor: "sha:1",
+	}); err != nil {
+		t.Fatalf("recording after a matching destination grant: %v", err)
+	}
+
+	// The same grant does not reach a second destination.
+	other := adr
+	other.Destination = docsTo("docs/adr/0002.md", ledger.CapStableAnchor)
+	if _, err := f.L.ProposePromotion(ctx, other); !errors.Is(err, ledger.ErrAuthorityDenied) {
+		t.Fatalf("propose err = %v, want authority denied for a destination no grant names", err)
+	}
+}

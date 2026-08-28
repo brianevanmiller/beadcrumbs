@@ -31,8 +31,8 @@ const (
 	RequireNone AuthorityRequirement = "none"
 
 	// RequireHuman means a human has to have decided: either a human is the
-	// actor proposing or recording, or a human granted the proposal — or the
-	// Insight revision behind it — an authority level above advisory.
+	// actor proposing or recording, or a human grant covers this promotion.
+	// Which grants cover it is humanAuthorityHeld's whole subject.
 	RequireHuman AuthorityRequirement = "human"
 )
 
@@ -108,21 +108,80 @@ func (l *Ledger) mayGrant(level AuthorityLevel) error {
 	}
 }
 
-// humanAuthorityHeld reports whether a human has granted any of these targets a
-// level above advisory. Advisory does not count: it is informational by
-// definition — cite it, do not act on it as settled — so treating it as
-// approval would make the weakest grant satisfy the strictest requirement.
-func humanAuthorityHeld(snap Snapshot, targets ...RecordRef) (bool, error) {
+// authorityGate is what one promotion needs a human grant to cover. It travels
+// as one value because every rule below reads more than one of its fields: a
+// caller that passed the proposal without its destination would silently get
+// blanket unlocking back.
+type authorityGate struct {
+	proposal    RecordRef
+	revision    RecordRef
+	destKind    string
+	destLocator string
+
+	// proposalOnly is set when the requirement comes from the semantic class or
+	// a declared capability rather than from the level that was asked for.
+	// Those are judgements about *this proposal's content*, so only a grant
+	// naming this proposal can answer them.
+	proposalOnly bool
+}
+
+func gateFor(p Proposal) authorityGate {
+	return authorityGate{
+		proposal:     RecordRef{Kind: KindProposal, ID: string(p.ID)},
+		revision:     RecordRef{Kind: KindRevision, ID: string(p.RevisionID)},
+		destKind:     p.DestKind,
+		destLocator:  p.DestLocator,
+		proposalOnly: requiresProposalGrant(p.Class, p.Capabilities),
+	}
+}
+
+// requiresProposalGrant is the class-and-capability half of the requirement,
+// separated from AuthorityRequiredFor because the gate needs to know not just
+// that a human is required but *why*: a requirement that came from the class is
+// a statement about content, and no grant made elsewhere can satisfy it.
+func requiresProposalGrant(class string, caps []Capability) bool {
+	return slices.Contains(humanAuthorityClasses, class) || slices.Contains(caps, CapRequiresHumanAuthority)
+}
+
+// humanAuthorityHeld reports whether a human grant covers this promotion. Four
+// rules, each of them a narrowing a human can express and therefore one the
+// gate has to honour:
+//
+//   - Advisory does not count. It is informational by definition — cite it, do
+//     not act on it as settled — so treating it as approval would make the
+//     weakest grant satisfy the strictest requirement.
+//   - A grant carrying a scope does not count. Scope is free text the ledger
+//     never interprets, so it cannot show that `wiki-only` covers
+//     `docs/adr/0001.md`; the honest answer to a narrowing we cannot check is
+//     no, and a human who meant the promotion can grant it on the proposal.
+//   - A grant naming a destination counts only for that destination, which is
+//     what `bdc authority --destination` says it does.
+//   - A grant on the Insight revision is about the conclusion's standing, not
+//     about writing it somewhere, so it counts only when it names this
+//     destination — and never for a proposalOnly gate.
+func humanAuthorityHeld(snap Snapshot, g authorityGate) (bool, error) {
+	targets := []RecordRef{g.proposal}
+	if !g.proposalOnly {
+		targets = append(targets, g.revision)
+	}
 	events, err := snap.Events(EventQuery{Targets: targets})
 	if err != nil {
 		return false, err
 	}
 	for _, e := range events {
-		if e.Kind != EventAuthority || e.ActorKind != ActorHuman {
+		if e.Kind != EventAuthority || e.ActorKind != ActorHuman || e.Scope != "" {
 			continue
 		}
 		switch AuthorityLevel(e.Summary) {
 		case AuthorityDefault, AuthorityMandatory:
+		default:
+			continue
+		}
+		named := e.DestinationKind != "" || e.DestinationLocator != ""
+		if named && (e.DestinationKind != g.destKind || e.DestinationLocator != g.destLocator) {
+			continue
+		}
+		if e.Target == g.proposal || named {
 			return true, nil
 		}
 	}

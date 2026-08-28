@@ -243,7 +243,7 @@ func (l *Ledger) ProposePromotion(ctx context.Context, c ProposePromotion) (Prop
 			out.Notices = append(out.Notices, notices...)
 		}
 
-		blocked, err = l.authorityUnmet(tx, required, record, stored[0].RevisionID)
+		blocked, err = l.authorityUnmet(tx, required, gateFor(stored[0]))
 		return err
 	})
 	if err != nil {
@@ -269,13 +269,12 @@ func (l *Ledger) ProposePromotion(ctx context.Context, c ProposePromotion) (Prop
 
 // authorityUnmet reports whether the effective requirement is still unsatisfied.
 // A human actor satisfies it directly — a human running the command is a human
-// decision — and otherwise a human must have granted the proposal or the
-// revision behind it a level above advisory.
-func (l *Ledger) authorityUnmet(snap Snapshot, required AuthorityRequirement, proposal RecordRef, revision RevisionID) (bool, error) {
+// decision — and otherwise a human grant has to cover this promotion.
+func (l *Ledger) authorityUnmet(snap Snapshot, required AuthorityRequirement, g authorityGate) (bool, error) {
 	if required == RequireNone || l.actor.ActorKind == ActorHuman {
 		return false, nil
 	}
-	held, err := humanAuthorityHeld(snap, proposal, RecordRef{Kind: KindRevision, ID: string(revision)})
+	held, err := humanAuthorityHeld(snap, g)
 	return !held, err
 }
 
@@ -463,7 +462,7 @@ func (l *Ledger) RecordPromotion(ctx context.Context, c RecordPromotion) (Receip
 		// exactly the bypass the authority axis exists to prevent. This one
 		// rolls back: an unauthorised attempt is not a fact worth keeping.
 		required := AuthorityRequiredFor(proposal.Class, proposal.Capabilities, proposal.RequestedAuthority)
-		unmet, err := l.authorityUnmet(tx, required, RecordRef{Kind: KindProposal, ID: string(proposal.ID)}, proposal.RevisionID)
+		unmet, err := l.authorityUnmet(tx, required, gateFor(proposal))
 		if err != nil {
 			return err
 		}
