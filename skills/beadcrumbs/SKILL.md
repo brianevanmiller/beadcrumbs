@@ -14,11 +14,26 @@ stdout.
 
 ## Before anything else
 
+Say who you are, once, before any `bdc` command:
+
+```
+export BDC_ACTOR_KIND=agent BDC_ACTOR_MODEL="<your model id>" BDC_SESSION="<this session id>"
+```
+
+All three or none — the ledger refuses an agent actor that does not name both a
+model and a session. Without them your writes are recorded as a **human's**, and
+human is the value every authority gate is satisfied by: you would be granting
+yourself authority nobody gave you, under the repository owner's name. `BDC_SESSION`
+is also what makes two identical captures in one session resolve to one Crumb.
+
 Run `bdc version --json`. Absent, or below 1.0 → say so once and stop; do not
 guess at commands.
 
-Run `bdc doctor --json`. An error code beginning `no_ledger` (exit 5) means this
-repository has no ledger: offer `bdc init`, and never run it without asking.
+Run `bdc doctor --json`. It reports health *inside* the envelope and exits 0 even
+when there is no ledger, so branch on `data`, never on the exit code: a check
+`{"name": "ledger_present", "status": "fail"}` means this repository has no
+ledger — offer `bdc init`, and never run it without asking. `data.ok: false` with
+any other failing check is something to report, not to repair.
 
 ## During the session
 
@@ -30,6 +45,9 @@ fragment per Crumb.
 bdc capture "Discovery reads Git structure, so a worktree and the root resolve the same ledger." \
   --confidence 0.7 --ref beads:bdc-7ah@subject --json
 ```
+
+Provenance comes from the environment exported above; pass `--actor-kind agent
+--model … --session …` explicitly on any command that runs without it.
 
 Never paste secrets, credentials, or raw transcript. Capture the conclusion, not
 the transcript. Redaction runs before any write and a finding it cannot resolve

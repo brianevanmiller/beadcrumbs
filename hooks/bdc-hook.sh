@@ -32,9 +32,16 @@ if ! command -v bdc >/dev/null 2>&1; then
 	exit 0
 fi
 
+# Agent provenance is all three or none: the ledger refuses a write from an
+# actor that names a kind but not a model and a session. The payload carries the
+# session; no harness puts the model in it, so the model comes from the
+# environment when one exports it and is recorded as "unknown" otherwise —
+# an honest gap in the record is better than a hook that fails every turn.
 BDC_SESSION="$(field session_id)"
+[ -n "$BDC_SESSION" ] || BDC_SESSION=unknown
+BDC_ACTOR_MODEL="${BDC_ACTOR_MODEL:-unknown}"
 BDC_ACTOR_KIND=agent
-export BDC_SESSION BDC_ACTOR_KIND
+export BDC_SESSION BDC_ACTOR_MODEL BDC_ACTOR_KIND
 
 cwd="$(field cwd)"
 [ -n "$cwd" ] && [ -d "$cwd" ] && cd "$cwd"

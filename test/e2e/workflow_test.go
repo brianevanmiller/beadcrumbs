@@ -478,3 +478,94 @@ func TestAgentPromotionRequiresHumanAuthority(t *testing.T) {
 		t.Errorf("the retry created proposal %s rather than reusing %s", got, proposalID)
 	}
 }
+
+// TestHarnessShimRecordsUsableAgentProvenance runs the shipped session-hook shim
+// the way a harness does — event on argv, payload on stdin. The shim declares an
+// agent actor, and the ledger refuses an agent that does not also name a model
+// and a session, so a shim that sets only the session makes every hooked
+// invocation fail behind the `2>/dev/null` that keeps hooks quiet.
+func TestHarnessShimRecordsUsableAgentProvenance(t *testing.T) {
+	s := newSession(t, nil)
+	s.bdc("init")
+
+	binDir := filepath.Dir(bdcBinary(t))
+	env := append(os.Environ(),
+		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"BDC_ACTOR_MODEL=", "BDC_ACTOR_KIND=", "BDC_SESSION=", "BDC_ACTOR=")
+
+	var stdout, stderr bytes.Buffer
+	shim := exec.Command("sh", repoPath(t, "hooks", "bdc-hook.sh"), "SessionStart")
+	shim.Dir = s.dir
+	shim.Env = env
+	shim.Stdin = strings.NewReader(
+		`{"session_id":"sess-e2e","cwd":"` + s.dir + `","hook_event_name":"SessionStart"}`)
+	shim.Stdout = &stdout
+	shim.Stderr = &stderr
+	if err := shim.Run(); err != nil {
+		t.Fatalf("the shim exited nonzero, which a hook may never do: %v\n%s", err, stderr.String())
+	}
+	if strings.TrimSpace(stdout.String()) == "" {
+		t.Fatalf("SessionStart injected nothing, so `bdc prime` failed inside the shim\nstderr: %s",
+			stderr.String())
+	}
+
+	// The same environment the shim exports, on a write: an agent harness that
+	// names a model and a session is recorded as an agent without having to
+	// remember a flag, and never as whoever owns the login.
+	agent := &session{t: t, binary: s.binary, dir: s.dir, vars: map[string]string{},
+		env: append(env, "BDC_ACTOR_MODEL=test-model", "BDC_SESSION=sess-e2e")}
+	crumb := agent.bdc("capture", "Provenance is recorded, not assumed.", "--confidence", "0.5")
+	if got := agent.field(crumb, "crumb.actor_kind"); got != "agent" {
+		t.Errorf("a run carrying a model and a session recorded actor_kind %q, want agent", got)
+	}
+	if got := agent.field(crumb, "crumb.actor_id"); got == os.Getenv("USER") {
+		t.Errorf("an agent's write was attributed to the logged-in user %q", got)
+	}
+}
+
+// TestDoctorReportsAMissingLedgerInsideTheEnvelope pins the skill's first
+// instruction to what the binary does. `doctor` is ledgerOptional: it always
+// exits 0 with `error: null`, and an agent branching on the exit code or on
+// `error.code` — which the rest of the contract trains it to do — would decide
+// the ledger exists and never offer `bdc init`.
+func TestDoctorReportsAMissingLedgerInsideTheEnvelope(t *testing.T) {
+	s := newSession(t, nil)
+
+	env, exit := s.try("doctor")
+	if exit != 0 || !env.OK || env.Error != nil {
+		t.Fatalf("doctor on a repository with no ledger exited %d with error %+v; "+
+			"the skill's instruction depends on it succeeding", exit, env.Error)
+	}
+	if got := s.field(env, "ok"); got != "false" {
+		t.Errorf("doctor reports data.ok=%s with no ledger present", got)
+	}
+
+	const check = "ledger_present"
+	var data struct {
+		Checks []struct {
+			Name   string `json:"name"`
+			Status string `json:"status"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal(env.Data, &data); err != nil {
+		t.Fatalf("decoding doctor data: %v", err)
+	}
+	found := false
+	for _, c := range data.Checks {
+		if c.Name == check {
+			found = true
+			if c.Status != "fail" {
+				t.Errorf("%s reports status %q with no ledger present", check, c.Status)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("doctor names no %q check, which is the signal the skill tells an agent to read", check)
+	}
+
+	// The instruction and the check name have to stay one fact.
+	skill := readFile(t, repoPath(t, "skills", "beadcrumbs", "SKILL.md"))
+	if !strings.Contains(skill, check) {
+		t.Errorf("SKILL.md does not tell an agent to read the %q check", check)
+	}
+}

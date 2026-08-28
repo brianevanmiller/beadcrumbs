@@ -101,8 +101,10 @@ func (a *app) newRootCommand() *cobra.Command {
 	f.BoolVar(&a.jsonOut, "json", false, "emit the JSON envelope on stdout")
 	f.BoolVar(&a.quiet, "quiet", false, "suppress warnings on stderr")
 	f.StringVarP(&a.directory, "directory", "C", "", "run as if bdc were started in this directory")
-	f.StringVar(&a.actor, "actor", defaultActor(), "who is acting (recorded as provenance)")
-	f.StringVar(&a.actorKind, "actor-kind", envOr("BDC_ACTOR_KIND", "human"), "human or agent")
+	f.StringVar(&a.actor, "actor", os.Getenv("BDC_ACTOR"),
+		"who is acting (recorded as provenance; default $BDC_ACTOR, then $USER for a human and the model for an agent)")
+	f.StringVar(&a.actorKind, "actor-kind", os.Getenv("BDC_ACTOR_KIND"),
+		"human or agent (default $BDC_ACTOR_KIND, then agent when both --model and --session are set)")
 	f.StringVar(&a.model, "model", os.Getenv("BDC_ACTOR_MODEL"), "acting agent's model identifier")
 	f.StringVar(&a.session, "session", os.Getenv("BDC_SESSION"), "session identifier for grouping provenance")
 	f.BoolVar(&a.noEnrich, "no-enrich", false, "skip optional tracker enrichment")
@@ -140,10 +142,12 @@ func (a *app) prepare(cmd *cobra.Command, _ []string) error {
 	a.out.quiet = a.quiet
 	a.out.schema = func() int { return dolt.CurrentSchemaVersion() }
 
+	a.actorKind = resolveActorKind(a.actorKind, a.model, a.session)
 	if a.actorKind != "human" && a.actorKind != "agent" {
 		return ledger.Fail(ledger.ErrInvalidInput, "invalid_actor_kind",
 			"--actor-kind must be human or agent, got %q", a.actorKind)
 	}
+	a.actor = resolveActor(a.actor, a.actorKind)
 
 	cwd := a.directory
 	if cwd == "" {
@@ -346,19 +350,38 @@ func durationAnnotation(cmd *cobra.Command, key string) time.Duration {
 	return d
 }
 
-func defaultActor() string {
-	if actor := os.Getenv("BDC_ACTOR"); actor != "" {
-		return actor
+// resolveActorKind decides who is acting when the caller did not say. `human` is
+// the value every authority gate is satisfied by, so a plain default of `human`
+// would make the privileged answer the one you get by forgetting a flag — and
+// the whole authority axis inert on any path that forgets it.
+//
+// A run that carries both a model identifier and a session id came from an agent
+// harness and is recorded as one. Both are required because that is what agent
+// provenance means: promoting a half-identified run to `agent` would only trade
+// a false `human` record for a rejected write.
+func resolveActorKind(declared, model, session string) string {
+	if declared != "" {
+		return declared
+	}
+	if model != "" && session != "" {
+		return string(ledger.ActorAgent)
+	}
+	return string(ledger.ActorHuman)
+}
+
+// resolveActor names the actor. $USER is the right answer for a human at a
+// terminal and the wrong one for an agent: attributing an agent's decisions to
+// whoever owns the login is a false provenance record, which is worse than a
+// generic one.
+func resolveActor(declared, kind string) string {
+	if declared != "" {
+		return declared
+	}
+	if kind == string(ledger.ActorAgent) {
+		return "agent"
 	}
 	if user := os.Getenv("USER"); user != "" {
 		return user
 	}
 	return "unknown"
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }
