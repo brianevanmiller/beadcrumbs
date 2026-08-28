@@ -142,8 +142,9 @@ An agent should say who it is before its first write:
 export BDC_ACTOR_KIND=agent BDC_ACTOR_MODEL="<model id>" BDC_SESSION="<session id>"
 ```
 
-All three or none — an agent actor needs both a model and a session. With none of them a run is
-recorded as a human's, and `human` is the value every authority gate is satisfied by.
+All three or none — an agent actor needs both a model and a session, and declaring `agent`
+without them is refused. Undeclared, a run carrying both is recorded as an agent and anything
+else as a human, and `human` is the value every authority gate is satisfied by.
 
 It installs to `.agents/skills/beadcrumbs` and symlinks each detected agent directory at it. Pin
 the tag (`brianevanmiller/beadcrumbs/tree/v1.0.0/skills/beadcrumbs`) if you need a reproducible
@@ -188,7 +189,7 @@ Full command reference: **[BDC_GUIDE.md](BDC_GUIDE.md)**.
 
 ## Optional Beads integration
 
-If [Beads](https://github.com/steveyegge/beads) is installed, `bdc` enriches `beads:` references
+If [Beads](https://github.com/gastownhall/beads) is installed, `bdc` enriches `beads:` references
 with title and status through supported `bd --json` commands. It never reads Beads' database
 directly. If `bd` is absent, stale, or failing, references still resolve to their locator and the
 envelope carries a warning — a missing tracker never blocks a core write.

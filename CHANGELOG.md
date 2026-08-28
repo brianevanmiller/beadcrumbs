@@ -45,13 +45,13 @@ One versioned JSON envelope on every command, prose on stderr, and stable exit c
 
 - **Added**: `capture`, `crumb list|show|review|prune`, `harvest`, `insight list|show|revise`,
   `validate`, `authority`, `reference add|list`, `promote propose|record|reject|fail|list`,
-  `context`, `handoff`, `prime`, `backup`, `restore`, `gc`, `hooks install|uninstall|run`.
-  `migrate`. `init`, `doctor`, and `version` were rewritten, not edited.
+  `context`, `handoff`, `prime`, `backup`, `restore`, `gc`, `migrate`, and
+  `hooks install|uninstall|run`. `init`, `doctor`, and `version` were rewritten, not edited.
 - `bdc doctor` runs the domain's own invariant checks (`polymorphic_targets`, `head_revision`)
   alongside the storage ones, and reports the optional tracker under `beads` and the per-table
-  record counts under `counts`. It is the one
-  command that stays useful on a ledger that will not open, so it always exits 0 with the
-  diagnosis in `data` — read `data.ok` and `data.checks[]`, not the exit code.
+  record counts under `counts`. It is the one command that stays useful on a ledger that will
+  not open, so it always exits 0 with the diagnosis in `data` — read `data.ok` and
+  `data.checks[]`, not the exit code.
 - `bdc migrate` applies the schema migrations a build ships and a ledger has not. It is the
   repair for a `schema_version` mismatch; `bdc init` is not.
 - **Removed with no alias and no deprecation shim**: `thread`, `origin`, `origins`, `timeline`,

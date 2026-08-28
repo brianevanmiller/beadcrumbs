@@ -23,15 +23,16 @@ export BDC_ACTOR_KIND=agent BDC_ACTOR_MODEL="<your model id>" BDC_SESSION="<this
 ```
 
 Every record carries `{actor_id, actor_kind, actor_model, session_id}`. An agent
-actor needs both a model and a session or the write is refused; with neither set
-the run is recorded as a human, which satisfies every authority gate. `--actor`,
+actor needs both a model and a session or the write is refused with
+`invalid_provenance`. Undeclared, a run carrying both is recorded as an agent and
+anything else as a human — and human satisfies every authority gate. `--actor`,
 `--actor-kind`, `--model`, and `--session` override the environment per command.
 
 ## 1. Check the ledger
 
 ```
 bdc version --json      # {version, schema_version, dolt_driver, go, platform}
-bdc doctor --json       # {checks[], schema_version, journal_bytes, ledger_path, beads, ok}
+bdc doctor --json       # {checks[], schema_version, journal_bytes, ledger_path, beads, counts, ok}
 bdc init --json         # only after asking. {path, stealth, schema_version, created}
 ```
 
@@ -43,7 +44,8 @@ state, `ledger_lock` failing is another process holding the engine, and
 `bdc init`.
 
 `bdc init` is stealth by default: the ledger lives at `<git-common-dir>/beadcrumbs`
-and never appears in `git status`. `--visible` puts it at `<repo>/.beadcrumbs`.
+and never appears in `git status`. `--visible` puts it at
+`<main-worktree>/.beadcrumbs`, which every linked worktree still resolves to.
 
 ## 2. Capture
 

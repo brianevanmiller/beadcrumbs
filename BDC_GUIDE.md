@@ -41,18 +41,54 @@ On failure `ok` is `false`, `data` is `null`, and `error` is `{"code", "message"
 
 Exit 4 is retryable and exit 7 is not: a redaction abort means the text itself has to change.
 
+## Warning codes
+
+`warnings[]` is the non-fatal channel: something a caller has to see that does not make the write
+wrong. Every entry is `{code, message}`; the code is what a script matches. Warnings survive a
+failure — a proposal blocked on authority was still recorded, and its warnings describe that
+write.
+
+| Code | Raised by | Meaning |
+|---|---|---|
+| `redacted` | any write | the redactor rewrote the text; the message names the rule, offset, and length, never the match |
+| `crumb_deduplicated` | `capture` | an identical capture in the same session resolved to the existing Crumb |
+| `prune_blocked` | `crumb prune` | one Crumb was refused; see `blocked[]` for the reason code |
+| `validation_without_evidence` | `validate` | a verdict that is expected to cite evidence cited none |
+| `proposal_confidence_diverged` | `promote propose` | an idempotent hit asked for a different confidence; proposals are immutable, so the stored value stands |
+| `proposal_evidence_diverged` | `promote propose` | an idempotent hit cited evidence the stored proposal does not carry; it was not added |
+| `receipt_not_durable` | `promote record` | the destination declares no `stable-anchor`, so the receipt proves an attempt, not a durable record |
+| `receipt_without_anchor` | `promote record` | the destination declares `stable-anchor` but no `--anchor` was given |
+| `external_hash_not_content_addressable` | `promote record` | `--external-hash` was recorded against a destination that cannot verify one |
+| `receipt_unverified` | `promote record` | the write was asserted rather than observed; pass `--verified` only when it was read back |
+| `budget_truncated` | `prime`, `context`, `handoff` | the answer was trimmed to fit `--budget`; the message names what was dropped |
+| `budget_exceeded` | `prime` | nothing further may be dropped — the summary and any mandatory Insight are always reported |
+| `beads_unavailable` | `reference list --refresh` | `bd` is missing, too old, or has no workspace here; the reason is in the message |
+| `no_enricher` | `reference list --refresh` | no adapter serves that reference kind |
+| `enrich_failed` | `reference list --refresh` | the adapter answered for one reference and its answer could not be read |
+| `enrichment_disabled` | `reference list --refresh` | `--no-enrich` was given, so `--refresh` observed nothing |
+| `hook_skipped` | `hooks run` | the trigger did nothing, and why |
+| `unharvested_crumbs` | `hooks run` | outstanding candidates this repository harvests manually |
+| `hook_not_ours` | `hooks uninstall` | a hook bdc did not write was left exactly as it is |
+| `no_ledger` | `hooks uninstall` | there is no ledger here, so `harvest.auto` was not cleared |
+
 ## Global flags
 
-| Flag | Effect |
-|---|---|
-| `--json` | emit the envelope on stdout |
-| `--actor` | who is acting; recorded as provenance (default: the OS user) |
-| `--actor-kind` | `human` or `agent`. Only a human may grant `mandatory` authority |
-| `--model` | the acting agent's model identifier |
-| `--session` | session identifier for grouping provenance |
-| `-C`, `--directory` | run as if started in this directory |
-| `--quiet` | suppress warnings on stderr |
-| `--no-enrich` | skip optional tracker enrichment |
+| Flag | Environment default | Effect |
+|---|---|---|
+| `--json` | — | emit the envelope on stdout |
+| `--actor` | `$BDC_ACTOR` | who is acting; recorded as provenance. Falls back to `$USER` for a human and the literal `agent` for an agent — an agent's decisions are never attributed to whoever owns the login |
+| `--actor-kind` | `$BDC_ACTOR_KIND` | `human` or `agent`. Only a human may grant `mandatory` authority |
+| `--model` | `$BDC_ACTOR_MODEL` | the acting agent's model identifier |
+| `--session` | `$BDC_SESSION` | session identifier for grouping provenance, and the key `capture` deduplicates on |
+| `-C`, `--directory` | — | run as if started in this directory |
+| `--quiet` | — | suppress warnings on stderr |
+| `--no-enrich` | — | skip optional tracker enrichment |
+
+**The actor-kind default is not `human`.** Undeclared, a run that carries *both* a model and a
+session is recorded as `agent`; anything else is recorded as `human`. `human` is the value every
+authority gate is satisfied by, so it is deliberately not the value you get by setting half of
+an agent's identity. Declaring `agent` without both a model and a session is refused with
+`invalid_provenance`, exit 1.
 
 ---
 
@@ -70,9 +106,11 @@ Creates the ledger at `<git-common-dir>/beadcrumbs`, which every linked worktree
 ### `bdc doctor`
 `--verbose`
 
-→ `{checks[], schema_version, journal_bytes, ledger_path, beads, ok}` — each check is
-`{name, status, detail}`, and `beads` is what the optional tracker detection found
-(`null` under `--no-enrich`).
+→ `{checks[], schema_version, journal_bytes, ledger_path, beads, counts, ok}` — each check is
+`{name, status, detail}`, `beads` is what the optional tracker detection found (`null` under
+`--no-enrich`), and `counts` is the per-table record count (`null` when the ledger would not
+open, because a zero for every table would read as an empty ledger rather than an unreadable
+one).
 
 doctor reports health inside the envelope and always exits 0 with `error: null` — a ledger it
 cannot open is what it exists for. Branch on `data`, never on the exit code: `ledger_present`
@@ -138,7 +176,9 @@ Append-only. Reviewing again adds an event; it never rewrites one. → `{crumbs[
 `--id` (repeatable) `--before` `--state candidate` `--yes` (required)
 
 Retention, not erasure — see [README](README.md#retention-not-erasure). Refuses any state but
-`candidate`, and refuses a Crumb that feeds a Harvest. → `{pruned, pruned_ids[], blocked[]}`
+`candidate`, and refuses a Crumb that feeds a Harvest. → `{pruned, pruned_ids[], blocked[]}`,
+where each `blocked` entry is `{crumb_id, reason, code}` with `code` one of `not_candidate` or
+`supports_insight`. A blocked Crumb is also a `prune_blocked` warning; the command still succeeds.
 
 ---
 
@@ -150,7 +190,8 @@ Retention, not erasure — see [README](README.md#retention-not-erasure). Refuse
 
 Weighs Crumbs and synthesises them into a revisioned Insight. With no `--title`/`--content`/
 `--class` it records what it weighed and stops — the right answer when there are fragments but no
-conclusion yet. `--auto` marks the Harvest automatic; that mode is opt-in per repository.
+conclusion yet. `--auto` only labels the Harvest record as automatic; it is not itself gated. What
+is opt-in per repository is whether a hook runs one at all (`bdc hooks install --auto-harvest`).
 
 → `{harvest, insight, revision, crumbs_captured[], redaction:{version, findings}}`
 
