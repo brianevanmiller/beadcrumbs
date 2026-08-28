@@ -198,16 +198,27 @@ func readFile(t *testing.T, path string) string {
 // requireInstaller skips rather than fails when the installer cannot run. The
 // distinction matters: a missing npx says nothing about whether the skill is
 // correct, and failing on it would make the suite depend on a network.
+//
+// BDC_REQUIRE_INSTALLER=1 turns every skip here into a failure, which is how a
+// release run pins the one gate that drives the installed text — otherwise a
+// network-restricted runner loses it silently.
 func requireInstaller(t *testing.T) {
 	t.Helper()
+	give := func(format string, args ...any) {
+		t.Helper()
+		if os.Getenv("BDC_REQUIRE_INSTALLER") == "1" {
+			t.Fatalf(format, args...)
+		}
+		t.Skipf(format, args...)
+	}
 	if _, err := exec.LookPath("npx"); err != nil {
-		t.Skip("npx is not installed, so the skills installer cannot be exercised")
+		give("npx is not installed, so the skills installer cannot be exercised: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "npx", "--yes", installerVersion, "--version")
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Skipf("the %s installer could not be fetched: %v\n%s", installerVersion, err, out)
+		give("the %s installer could not be fetched: %v\n%s", installerVersion, err, out)
 	}
 }
 

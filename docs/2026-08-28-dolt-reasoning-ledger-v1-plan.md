@@ -1270,18 +1270,25 @@ without CGO and ICU4C — so the tag would only hide the tests that matter.
 | Missing Beads and destinations degrade without corrupting core | `TestEnrichFailureIsWarningNotError` (adapter tier), `TestCoreWorkflowWithoutBeads` (CLI tier — lives with the e2e workflow because it needs the whole CLI, which does not exist at S9) | `internal/beads/degrade_test.go`, `test/e2e/workflow_test.go` |
 | `bd --json` changes fail with a bounded adapter error | `TestPlainTextFailureIsNeverParsed`, `TestVersionBelowFloorDisablesAdapter`, `TestUnknownFieldsAreTolerated` | `internal/beads/contract_test.go` |
 | End-to-end workflow against a real ledger | `TestFullWorkflowInFixtureRepo` (capture→review→harvest→insight→propose→record→context→handoff, documented `bdc` commands only, no installer and no network) | `test/e2e/workflow_test.go` |
-| Skill installs in a clean fixture and completes the workflow | `TestSkillInstallAndFullWorkflow` (`npx skills add <local path>`, then the same sequence; skipped with a named reason when `npx` is unavailable, which is why the gate above exists separately) | `test/e2e/skill_test.go` |
+| Skill installs in a clean fixture and completes the workflow | `TestSkillInstallAndFullWorkflow` (`npx skills add <local path>`, then the same sequence; skipped with a named reason when `npx` is unavailable, which is why the gate above exists separately, and `BDC_REQUIRE_INSTALLER=1` turns the skip into a failure so a release run can pin it) | `test/e2e/skill_test.go` |
 | *(added)* exit codes are stable | `TestExitCodeForEachErrorClass` | `cmd/bdc/errors_test.go` |
 | *(added)* the authority-blocked envelope carries the recorded proposal | `TestGoldenEnvelope/promote.propose.authority_required` (exit 3, `data:null`, `error.details.proposal_id` present) | `cmd/bdc/golden_test.go` |
 | *(added)* Beads absence, staleness, and workspace absence are distinguishable | `TestDetectionLadderSeparatesNotInstalledFromNoWorkspace`, `TestVersionDetectionRunsWithoutDashC` | `internal/beads/detect_test.go` |
 | *(added)* optional Beads fields never gate the adapter | `TestMissingPrefixDoesNotDisableAdapter`, `TestWorktreeFlagIsNotWorkspaceIdentity` | `internal/beads/detect_test.go` |
 | *(added)* a hook that loses the lock degrades, it does not fail the git operation | `TestHookExitsZeroWhenLedgerBusy` | `cmd/bdc/hooks_test.go` |
+| *(added, review)* a report-only trigger does not spend the harvest budget | `TestReportOnlyTriggerDeclinesWithoutWaitingOutTheHarvestBudget` (`stop` declines fast, `pre-push` still waits) | `cmd/bdc/hooks_test.go` |
+| *(added, review)* Beads present is exercised, not only Beads absent | `TestCoreWorkflowWithBeads` (real `bd` workspace: `doctor.beads.present`, a live-enriched Reference, `handoff.workspace.enrichment`) | `test/e2e/workflow_test.go` |
+| *(added, review)* the authority gate fires end to end for an agent actor | `TestAgentPromotionRequiresHumanAuthority` (exit 3 → human `bdc authority` → exit 0 against the same proposal) | `test/e2e/workflow_test.go` |
+| *(added, review)* the shipped harness shim records usable agent provenance | `TestHarnessShimRecordsUsableAgentProvenance` (runs `hooks/bdc-hook.sh` the way a harness does) | `test/e2e/workflow_test.go` |
+| *(added, review)* the skill's no-ledger detection matches doctor's contract | `TestDoctorReportsAMissingLedgerInsideTheEnvelope` (exit 0, `error:null`, failing `ledger_present`, and SKILL.md names that check) | `test/e2e/workflow_test.go` |
+| *(added, review)* usage errors carry neither the rejected value nor the message twice | `TestUsageErrorsCarryNeitherTheValueNorTheMessageTwice` | `cmd/bdc/errors_test.go` |
 
 ### Release
 
 | Design bullet | Gate |
 |---|---|
-| Unit, integration, race, e2e pass on supported Go versions | CI matrix: go 1.26.2 and latest, `go test ./...` then `go test -race ./...`; no build tag, per this section's preamble |
+| Unit, integration, race, e2e pass on supported Go versions | CI matrix: go 1.26.2 and latest, `go test -race ./...` only — the race run is a superset of the plain one, and running both doubled a four-cell matrix to prove nothing more; no build tag, per this section's preamble |
+| The optional Beads path is exercised, not only skipped | CI installs the pinned `bd` release before the test job. The step is `continue-on-error`, so a third-party download cannot fail the build; `TestCoreWorkflowWithBeads` then skips with a named reason |
 | Release binaries carry no non-system dylibs | CI asserts `otool -L` (macOS) / `ldd` (Linux) on the `-tags icu_static` artifact — the dynamic build links an absolute Homebrew `icu4c@78` path and is not portable |
 | macOS and Linux package smoke tests use isolated prefixes | `test/packaging/smoke.sh` — runs the real `postinstall.js` against the published asset into `$(mktemp -d)`, verifies the checksum, asserts `otool -L`/`ldd` shows no non-system dylib, then runs `bdc version --json` **and** `bdc init` + `bdc capture` + `bdc doctor`. `version` alone exits before the engine opens, so it passes on a binary whose ICU linkage is broken |
 | Windows supported only if proven | not proven → README states "not supported", CI has no Windows job |
