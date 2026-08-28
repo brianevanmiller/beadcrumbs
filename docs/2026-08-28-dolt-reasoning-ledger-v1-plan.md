@@ -73,13 +73,13 @@ func (l *Ledger) ReviewCrumb(ctx context.Context, c ReviewCrumb) (ReviewResult, 
 func (l *Ledger) PruneCrumbs(ctx context.Context, c PruneCrumbs) (PruneResult, error)
 func (l *Ledger) CompleteHarvest(ctx context.Context, c CompleteHarvest) (HarvestResult, error)
 func (l *Ledger) ReviseInsight(ctx context.Context, c ReviseInsight) (RevisionResult, error)
-func (l *Ledger) RecordValidation(ctx context.Context, c RecordValidation) (Validation, error)
-func (l *Ledger) GrantAuthority(ctx context.Context, c GrantAuthority) (Authority, error)
+func (l *Ledger) RecordValidation(ctx context.Context, c RecordValidation) (ValidationResult, error)
+func (l *Ledger) GrantAuthority(ctx context.Context, c GrantAuthority) (AuthorityResult, error)
 func (l *Ledger) AttachReference(ctx context.Context, c AttachReference) (AttachResult, error)  // {reference, link}
-func (l *Ledger) ProposePromotion(ctx context.Context, c ProposePromotion) (Proposal, bool, error)
-func (l *Ledger) RecordPromotion(ctx context.Context, c RecordPromotion) (Receipt, error)
-func (l *Ledger) RejectPromotion(ctx context.Context, c RejectPromotion) (Promotion, error)
-func (l *Ledger) FailPromotion(ctx context.Context, c FailPromotion) (Promotion, error)
+func (l *Ledger) ProposePromotion(ctx context.Context, c ProposePromotion) (ProposalResult, error)
+func (l *Ledger) RecordPromotion(ctx context.Context, c RecordPromotion) (ReceiptResult, error)
+func (l *Ledger) RejectPromotion(ctx context.Context, c RejectPromotion) (PromotionResult, error)
+func (l *Ledger) FailPromotion(ctx context.Context, c FailPromotion) (PromotionResult, error)
 
 // Reads — snapshot-consistent, no storage concepts in the result types.
 func (l *Ledger) Crumbs(ctx context.Context, q CrumbQuery) (CrumbPage, error)  // page + the total the filter matched
@@ -92,8 +92,11 @@ func (l *Ledger) Narrative(ctx context.Context, q NarrativeQuery) (Narrative, er
 func (l *Ledger) Doctor(ctx context.Context) (Report, error)
 ```
 
-`ProposePromotion` returns `(proposal, created bool, err)`: `created=false` is the idempotent hit,
-not an error. `RejectPromotion` and `FailPromotion` are separate operations because they mean
+`ProposePromotion` returns `ProposalResult{proposal, created, content_hash, authority_required}`:
+`created=false` is the idempotent hit, not an error, and `authority_required` is a policy answer no
+command body can recompute. These six writes return a result type for the same reason
+`CompleteHarvest` does — findings become `warnings[]`, and `effective_verdict`, `effective_level`,
+and a receipt's durability have nowhere else to travel. `RejectPromotion` and `FailPromotion` are separate operations because they mean
 different things to a retry: a rejection is a decision not to write, a failure is a write that did
 not land. Without `FailPromotion` an external write that errors leaves the proposal permanently
 `proposed`, and the `failed` status and `ck_prm_detail` constraint are unreachable. `CompleteHarvest` is the single operation that both persists new candidate Crumbs
@@ -1000,7 +1003,7 @@ fails mid-transaction rolls back and reports one error.
 | `bdc reference add <target-id>` | `--kind` `--locator` `--workspace` `--relation` `--label` | `{reference, link}` |
 | `bdc reference list` | `--target` `--kind` `--relation` `--refresh` | `{references[]}` each with `fetched_at` |
 | `bdc promote propose` | `--insight` `--revision` `--class` `--destination kind:locator` `--workspace` `--capability` (repeatable) `--evidence kind:locator[@relation]` (repeatable) `--content\|--content-file` `--authority` `--supersedes` `--confidence` | `{proposal, created, content_hash, authority_required}` |
-| `bdc promote record <proposal-id>` | `--locator` (required) `--anchor` `--external-hash` `--verified` | `{promotion, receipt, warnings}` |
+| `bdc promote record <proposal-id>` | `--locator` (required) `--anchor` `--external-hash` `--verified` | `{promotion, receipt, durable}` |
 | `bdc promote reject <proposal-id>` | `--rationale` (required) | `{promotion}` |
 | `bdc promote fail <proposal-id>` | `--detail` (required) | `{promotion}` |
 | `bdc promote list` | `--insight` `--status` `--destination-kind` | `{proposals[]}` each with `attempts[]`, `receipt` |
