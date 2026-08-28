@@ -2,9 +2,9 @@
 // only the commands the documentation tells an agent to run. Everything else in
 // the suite tests a package; this tests the product.
 //
-// The binary is built here rather than assumed: `go test` inherits the CGO and
-// ICU flags the Makefile exports, so the child `go build` gets them too. There
-// is no installer, no network, and no global installation anywhere in this file.
+// The binary is built rather than assumed — see build_test.go for how, and for
+// why the build has to supply its own ICU flags. There is no installer, no
+// network, and no global installation anywhere in this file.
 package e2e
 
 import (
@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 )
 
@@ -35,35 +34,6 @@ type envelope struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`
 	} `json:"error"`
-}
-
-var (
-	buildOnce  sync.Once
-	binaryPath string
-	buildErr   error
-)
-
-func bdcBinary(t *testing.T) string {
-	t.Helper()
-	buildOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "bdc-e2e-")
-		if err != nil {
-			buildErr = err
-			return
-		}
-		binaryPath = filepath.Join(dir, "bdc")
-		cmd := exec.Command("go", "build", "-o", binaryPath, "./cmd/bdc")
-		cmd.Dir = "../.."
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			buildErr = err
-			t.Logf("go build: %s", out)
-		}
-	})
-	if buildErr != nil {
-		t.Fatalf("building bdc: %v", buildErr)
-	}
-	return binaryPath
 }
 
 // session is one repository plus the environment every invocation runs under.
