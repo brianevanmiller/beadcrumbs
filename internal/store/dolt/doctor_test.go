@@ -88,6 +88,24 @@ func TestDiagnoseReportsUninitialisedLedger(t *testing.T) {
 	}
 }
 
+// Outside a Git repository discovery resolves no path at all, so the
+// uninitialised-ledger sentence would name an empty directory and offer a
+// remedy that cannot work. The reason discovery gave is reported instead.
+func TestDiagnoseOutsideAGitRepositoryReportsWhy(t *testing.T) {
+	loc, err := Discover(context.Background(), t.TempDir())
+	if !errors.Is(err, ledger.ErrNoLedger) {
+		t.Fatalf("expected ErrNoLedger, got %v", err)
+	}
+
+	check := findCheck(t, DiagnoseUnopened(loc, err), "ledger_present")
+	if check.Status != StatusFail {
+		t.Fatalf("ledger_present must fail, got %+v", check)
+	}
+	if strings.Contains(check.Detail, "no ledger at ;") || strings.Contains(check.Detail, "bdc init") {
+		t.Fatalf("detail must name why discovery failed, not an empty path and `bdc init`: %q", check.Detail)
+	}
+}
+
 func TestDiagnoseReportsHealthyLedger(t *testing.T) {
 	repo := fixtureRepo(t)
 	loc := initLedger(t, repo, false)

@@ -70,6 +70,11 @@ func DiagnoseUnopened(loc Location, openErr error) StoreReport {
 	case errors.Is(openErr, ledger.ErrBusy):
 		r.Add("ledger_lock", StatusFail,
 			fmt.Sprintf("ledger %s is locked by another process; retry when that command finishes", loc.Dir))
+	case errors.Is(openErr, ledger.ErrNoLedger) && loc.Dir == "":
+		// Discovery never resolved a path — outside a Git repository, or inside
+		// a bare one. There is no directory to name and `bdc init` is not the
+		// remedy, so the reason discovery gave is what gets reported.
+		r.Add("ledger_present", StatusFail, openErr.Error())
 	case errors.Is(openErr, ledger.ErrNoLedger):
 		r.Add("ledger_present", StatusFail,
 			fmt.Sprintf("no ledger at %s; run `bdc init`", loc.Dir))

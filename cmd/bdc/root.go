@@ -102,7 +102,7 @@ func (a *app) newRootCommand() *cobra.Command {
 	f.BoolVar(&a.quiet, "quiet", false, "suppress warnings on stderr")
 	f.StringVarP(&a.directory, "directory", "C", "", "run as if bdc were started in this directory")
 	f.StringVar(&a.actor, "actor", os.Getenv("BDC_ACTOR"),
-		"who is acting (recorded as provenance; default $BDC_ACTOR, then $USER for a human and the model for an agent)")
+		"who is acting (recorded as provenance; default $BDC_ACTOR, then $USER for a human and `agent` for an agent)")
 	f.StringVar(&a.actorKind, "actor-kind", os.Getenv("BDC_ACTOR_KIND"),
 		"human or agent (default $BDC_ACTOR_KIND, then agent when both --model and --session are set)")
 	f.StringVar(&a.model, "model", os.Getenv("BDC_ACTOR_MODEL"), "acting agent's model identifier")
