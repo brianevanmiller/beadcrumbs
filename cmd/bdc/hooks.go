@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/brianevanmiller/beadcrumbs/internal/ledger"
+	"github.com/brianevanmiller/beadcrumbs/internal/store/dolt"
 )
 
 // Hooks are the optional half of Beadcrumbs, and they are optional in a precise
@@ -319,25 +320,17 @@ func (a *app) harvestAuto(ctx context.Context) (bool, error) {
 	return led.Config().HarvestAuto, nil
 }
 
-// setHarvestAuto is the opt-in and the opt-out. It writes one fixed key with
-// one of two fixed values, so it goes through the storage port directly rather
-// than through a domain operation that would only wrap it — and it changes
-// policy only: nothing already captured, harvested, or promoted is touched.
+// setHarvestAuto is the opt-in and the opt-out.
 func (a *app) setHarvestAuto(ctx context.Context, on bool) error {
-	if a.store == nil {
-		if a.openErr != nil {
-			return a.openErr
-		}
+	if a.store == nil && a.openErr == nil {
 		return ledger.Fail(ledger.ErrNoLedger, "no_ledger",
 			"automatic harvesting is a policy recorded in the ledger; run `bdc init` first")
 	}
-	value := "0"
-	if on {
-		value = "1"
+	led, err := a.ledger(ctx)
+	if err != nil {
+		return err
 	}
-	return a.store.Write(ctx, func(tx ledger.Tx) error {
-		return tx.SetConfig(ledger.ConfigHarvestAuto, value)
-	})
+	return led.SetHarvestAuto(ctx, on)
 }
 
 // hooksDir resolves where git will look for hooks, which is core.hooksPath when
@@ -350,7 +343,10 @@ func (a *app) hooksDir(ctx context.Context) (string, error) {
 	}
 	git := exec.CommandContext(ctx, "git", "-C", a.loc.RepoRoot,
 		"config", "--get", "core.hooksPath")
-	git.Env = hermeticGitEnv()
+	// `-C` does not override an inherited GIT_DIR, so a `bdc hooks install`
+	// run from inside a hook or a submodule would read core.hooksPath out of a
+	// different repository.
+	git.Env = dolt.HermeticGitEnv()
 	out, err := git.Output()
 	configured := strings.TrimSpace(string(out))
 	var exitErr *exec.ExitError
@@ -370,30 +366,6 @@ func (a *app) hooksDir(ctx context.Context) (string, error) {
 	}
 	// git resolves a relative core.hooksPath against the top of the worktree.
 	return filepath.Join(a.loc.RepoRoot, configured), nil
-}
-
-// hermeticGitEnv removes the Git environment variables a running hook exports.
-// `-C` does not override an inherited GIT_DIR, so `bdc hooks install` from
-// inside a hook or a submodule would read core.hooksPath out of a different
-// repository. internal/store/dolt strips the same variables from every `git` it
-// runs; this is a second copy because that helper is not exported, and the two
-// lists have to stay the same.
-func hermeticGitEnv() []string {
-	stripped := []string{
-		"GIT_DIR=", "GIT_WORK_TREE=", "GIT_COMMON_DIR=", "GIT_INDEX_FILE=", "GIT_OBJECT_DIRECTORY=",
-	}
-	src := os.Environ()
-	out := make([]string, 0, len(src))
-next:
-	for _, kv := range src {
-		for _, name := range stripped {
-			if strings.HasPrefix(kv, name) {
-				continue next
-			}
-		}
-		out = append(out, kv)
-	}
-	return out
 }
 
 // hookRunData is the `{hook, action, result}` from the CLI contract. Action is

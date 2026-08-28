@@ -144,6 +144,25 @@ func New(s Store, o Options) *Ledger {
 // Config exposes the repository policy the CLI reports in `bdc doctor`.
 func (l *Ledger) Config() RepoConfig { return l.config }
 
+// SetHarvestAuto records the per-repository automatic-harvest policy that
+// `bdc hooks install --auto-harvest` opts into and `bdc hooks uninstall` opts
+// out of. It changes policy only: nothing already captured, harvested, or
+// promoted is touched. The cached config moves with the write, so a later
+// Config() in the same process does not report the value it replaced.
+func (l *Ledger) SetHarvestAuto(ctx context.Context, on bool) error {
+	value := "0"
+	if on {
+		value = "1"
+	}
+	if err := l.store.Write(ctx, func(tx Tx) error {
+		return tx.SetConfig(ConfigHarvestAuto, value)
+	}); err != nil {
+		return err
+	}
+	l.config.HarvestAuto = on
+	return nil
+}
+
 // clock is UTC-truncated to microseconds, which is DATETIME(6)'s precision. A
 // Go time.Time carries nanoseconds, so without this a value read back never
 // equals the one written and every round-trip assertion becomes approximate.

@@ -75,23 +75,7 @@ func Discover(ctx context.Context, cwd string) (Location, error) {
 			"cannot resolve directory %q", cwd)
 	}
 
-	// Bare first: --git-common-dir succeeds in a bare repository but no working
-	// tree can ever reach a ledger created there.
-	bare, err := gitOutput(ctx, cwd, "rev-parse", "--is-bare-repository")
-	if err != nil {
-		return Location{}, ledger.FailWith(ledger.ErrNoLedger, "no_ledger_not_git", err,
-			"%s is not inside a Git repository", cwd)
-	}
-	if bare == "true" {
-		return Location{}, ledger.Fail(ledger.ErrNoLedger, "no_ledger_bare",
-			"%s is a bare repository; Beadcrumbs needs a working tree", cwd)
-	}
-
-	common, err := gitPath(ctx, cwd, "--git-common-dir")
-	if err != nil {
-		return Location{}, err
-	}
-	repoRoot, err := gitPath(ctx, cwd, "--show-toplevel")
+	common, repoRoot, err := revParse(ctx, cwd)
 	if err != nil {
 		return Location{}, err
 	}
@@ -217,7 +201,11 @@ var strippedGitEnv = []string{
 	"GIT_OBJECT_DIRECTORY",
 }
 
-func hermeticEnv() []string {
+// HermeticGitEnv is the environment for any `git` a bdc process runs, here or
+// above this package. It is exported because `bdc hooks` runs its own `git`
+// and must strip the same variables: `git -C` does not override an inherited
+// GIT_DIR, so a second list that drifted would read a different repository.
+func HermeticGitEnv() []string {
 	src := os.Environ()
 	out := make([]string, 0, len(src))
 next:
@@ -235,22 +223,52 @@ next:
 func gitOutput(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	cmd.Env = hermeticEnv()
+	cmd.Env = HermeticGitEnv()
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+	// stdout is returned alongside the error, not discarded: `rev-parse` with
+	// several flags prints the answers it resolved before the one that failed,
+	// and revParse reads them to tell a bare repository from a non-repository.
+	runErr := cmd.Run()
+	out := strings.TrimSpace(stdout.String())
+	if runErr != nil {
+		return out, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), runErr, strings.TrimSpace(stderr.String()))
 	}
-	return strings.TrimSpace(stdout.String()), nil
+	return out, nil
 }
 
-func gitPath(ctx context.Context, dir, flag string) (string, error) {
-	out, err := gitOutput(ctx, dir, "rev-parse", "--path-format=absolute", flag)
-	if err != nil {
-		return "", ledger.FailWith(ledger.ErrNoLedger, "no_ledger_not_git", err,
-			"cannot resolve %s for %s", flag, dir)
+// revParse asks Git the whole structural question about cwd in one process:
+// whether it is bare, where the common dir is, and where its worktree root is.
+// One invocation is also one point in time — three would leave room for the
+// answers to describe three different repository states.
+//
+// A bare repository resolves the first two and fails the third, so the exit
+// status alone is not the answer: git prints what it resolved before it failed,
+// and "true" on the first line is the bare rejection rather than "not a Git
+// repository". That ordering is why --is-bare-repository is asked first.
+func revParse(ctx context.Context, cwd string) (common, repoRoot string, err error) {
+	out, runErr := gitOutput(ctx, cwd, "rev-parse", "--path-format=absolute",
+		"--is-bare-repository", "--git-common-dir", "--show-toplevel")
+	lines := strings.Split(out, "\n")
+	if lines[0] == "true" {
+		return "", "", ledger.Fail(ledger.ErrNoLedger, "no_ledger_bare",
+			"%s is a bare repository; Beadcrumbs needs a working tree", cwd)
 	}
-	return realPath(out)
+	if runErr != nil {
+		return "", "", ledger.FailWith(ledger.ErrNoLedger, "no_ledger_not_git", runErr,
+			"%s is not inside a Git repository", cwd)
+	}
+	if len(lines) != 3 {
+		return "", "", ledger.Fail(ledger.ErrIntegrity, "integrity_git_rev_parse",
+			"git rev-parse answered %d line(s) for %s, expected 3", len(lines), cwd)
+	}
+	if common, err = realPath(lines[1]); err != nil {
+		return "", "", storageErr(err, "cannot resolve the git common dir %s", lines[1])
+	}
+	if repoRoot, err = realPath(lines[2]); err != nil {
+		return "", "", storageErr(err, "cannot resolve the repository root %s", lines[2])
+	}
+	return common, repoRoot, nil
 }
 
 // mainWorktree is the main worktree root, which every linked worktree reports
