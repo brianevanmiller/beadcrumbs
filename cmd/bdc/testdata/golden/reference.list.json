@@ -1,0 +1,28 @@
+{
+  "bdc": "1",
+  "command": "reference.list",
+  "ok": true,
+  "data": {
+    "references": [
+      {
+        "id": "<ref_2>",
+        "kind": "beads",
+        "locator": "bdc-7ah.20",
+        "workspace": "",
+        "created_at": "<time>",
+        "relation": "spawned-work",
+        "display": "bdc-7ah.20",
+        "freshness": {
+          "state": "never"
+        }
+      }
+    ]
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

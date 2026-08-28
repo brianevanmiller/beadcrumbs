@@ -1,0 +1,17 @@
+{
+  "bdc": "1",
+  "command": "insight.show",
+  "ok": false,
+  "data": null,
+  "warnings": [],
+  "error": {
+    "code": "not_found",
+    "message": "no insight with id <ins_2>",
+    "details": null
+  },
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

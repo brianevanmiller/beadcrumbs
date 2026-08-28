@@ -1,0 +1,105 @@
+{
+  "bdc": "1",
+  "command": "context",
+  "ok": true,
+  "data": {
+    "summary": "1 Insight(s) from <ins_1>: 1 mandatory, 0 unusable. 2 recent Crumb(s), 3 proposal(s), 2 open question(s).",
+    "insights": [
+      {
+        "id": "<ins_1>",
+        "revision_id": "<rev_2>",
+        "revision": 2,
+        "title": "One engine, one transaction, one close",
+        "class": "decision",
+        "confidence": 0.8,
+        "verdict": "supported",
+        "authority": "mandatory",
+        "standing": "mandatory",
+        "excerpt": "Every bdc invocation opens one short-lived engine and closes it before it returns. Reads state the freshness of anything cached, and a handoff never refreshes.",
+        "updated_at": "<time>"
+      }
+    ],
+    "open_questions": [
+      {
+        "kind": "unreviewed_crumbs",
+        "subject": {
+          "kind": "",
+          "id": ""
+        },
+        "question": "2 Crumb(s) are waiting on review",
+        "detail": "run `bdc crumb list --state candidate`, then `bdc crumb review \u003cid\u003e... --state accepted|rejected --rationale ...`"
+      },
+      {
+        "kind": "authority_required",
+        "subject": {
+          "kind": "promotion_proposal",
+          "id": "<pp_2>"
+        },
+        "question": "promoting to docs:docs/policy/ledger.md needs a human decision",
+        "detail": "a human grants it with `bdc authority <pp_2> --level default|mandatory --rationale ...`"
+      }
+    ],
+    "recent_crumbs": [
+      {
+        "id": "<crb_2>",
+        "state": "accepted",
+        "confidence": 0.6,
+        "captured_at": "<time>",
+        "excerpt": "A cached tracker label was mistaken for live state, so every read states its freshness."
+      },
+      {
+        "id": "<crb_1>",
+        "state": "accepted",
+        "confidence": 0.7,
+        "captured_at": "<time>",
+        "excerpt": "The engine holds an exclusive directory lock for the life of a command."
+      }
+    ],
+    "promotions": [
+      {
+        "id": "<pp_3>",
+        "insight_id": "<ins_1>",
+        "class": "learning",
+        "destination": "docs:docs/learnings/freshness.md",
+        "status": "rejected",
+        "authority_required": "none",
+        "authority_held": true,
+        "attempts": 1,
+        "durable": false,
+        "created_at": "<time>"
+      },
+      {
+        "id": "<pp_2>",
+        "insight_id": "<ins_1>",
+        "class": "policy",
+        "destination": "docs:docs/policy/ledger.md",
+        "status": "proposed",
+        "authority_required": "human",
+        "authority_held": false,
+        "attempts": 0,
+        "durable": false,
+        "created_at": "<time>"
+      },
+      {
+        "id": "<pp_1>",
+        "insight_id": "<ins_1>",
+        "class": "decision",
+        "destination": "docs:docs/decisions/0001-one-engine.md",
+        "status": "applied",
+        "authority_required": "none",
+        "authority_held": true,
+        "attempts": 2,
+        "durable": true,
+        "receipt_locator": "docs/decisions/0001-one-engine.md",
+        "created_at": "<time>"
+      }
+    ]
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

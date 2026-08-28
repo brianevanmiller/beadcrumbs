@@ -1,0 +1,19 @@
+{
+  "bdc": "1",
+  "command": "version",
+  "ok": true,
+  "data": {
+    "version": "1.0.0",
+    "schema_version": 1,
+    "dolt_driver": "<build>",
+    "go": "<build>",
+    "platform": "<build>"
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

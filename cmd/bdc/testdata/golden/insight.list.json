@@ -1,0 +1,31 @@
+{
+  "bdc": "1",
+  "command": "insight.list",
+  "ok": true,
+  "data": {
+    "insights": [
+      {
+        "id": "<ins_1>",
+        "head_revision": 1,
+        "created_at": "<time>",
+        "actor_id": "tester",
+        "actor_kind": "human",
+        "head_revision_id": "<rev_1>",
+        "title": "One engine, one transaction, one close",
+        "class": "decision",
+        "confidence": 0.8,
+        "updated_at": "<time>",
+        "verdict": "unreviewed",
+        "authority": "advisory"
+      }
+    ],
+    "total": 1
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

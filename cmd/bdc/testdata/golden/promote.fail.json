@@ -1,0 +1,24 @@
+{
+  "bdc": "1",
+  "command": "promote.fail",
+  "ok": true,
+  "data": {
+    "promotion": {
+      "id": "<prm_1>",
+      "proposal_id": "<pp_1>",
+      "attempt": 1,
+      "status": "failed",
+      "detail": "the docs write did not land: the branch was protected",
+      "occurred_at": "<time>",
+      "actor_id": "tester",
+      "actor_kind": "human"
+    }
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

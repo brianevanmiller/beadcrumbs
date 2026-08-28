@@ -1,0 +1,18 @@
+{
+  "bdc": "1",
+  "command": "init",
+  "ok": true,
+  "data": {
+    "path": "/private<tmp>/repo/.git/beadcrumbs",
+    "stealth": true,
+    "schema_version": 1,
+    "created": true
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

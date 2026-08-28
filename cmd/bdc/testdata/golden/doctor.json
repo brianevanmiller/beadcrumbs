@@ -1,0 +1,41 @@
+{
+  "bdc": "1",
+  "command": "doctor",
+  "ok": true,
+  "data": {
+    "checks": [
+      {
+        "name": "ledger_open",
+        "status": "ok",
+        "detail": "engine open at /private<tmp>/repo/.git/beadcrumbs"
+      },
+      {
+        "name": "schema_version",
+        "status": "ok",
+        "detail": "schema version 1"
+      },
+      {
+        "name": "journal_size",
+        "status": "ok",
+        "detail": "chunk journal is <size> bytes"
+      },
+      {
+        "name": "restore_leftovers",
+        "status": "ok",
+        "detail": "no interrupted restore"
+      }
+    ],
+    "schema_version": 1,
+    "journal_bytes": <size>,
+    "ledger_path": "/private<tmp>/repo/.git/beadcrumbs",
+    "beads": null,
+    "ok": true
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

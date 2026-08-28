@@ -1,0 +1,28 @@
+{
+  "bdc": "1",
+  "command": "crumb.prune",
+  "ok": true,
+  "data": {
+    "pruned": 0,
+    "pruned_ids": [],
+    "blocked": [
+      {
+        "crumb_id": "<crb_1>",
+        "code": "not_candidate",
+        "reason": "the Crumb is accepted; prune is allowed for candidates only"
+      }
+    ]
+  },
+  "warnings": [
+    {
+      "code": "prune_blocked",
+      "message": "<crb_1>: the Crumb is accepted; prune is allowed for candidates only"
+    }
+  ],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

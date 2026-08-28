@@ -1,0 +1,28 @@
+{
+  "bdc": "1",
+  "command": "authority",
+  "ok": true,
+  "data": {
+    "authority": {
+      "id": "<aut_1>",
+      "target": {
+        "kind": "insight_revision",
+        "id": "<rev_2>"
+      },
+      "level": "mandatory",
+      "scope": "",
+      "rationale": "this is how the store is used everywhere",
+      "occurred_at": "<time>",
+      "actor_id": "tester",
+      "actor_kind": "human"
+    },
+    "effective_level": "mandatory"
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

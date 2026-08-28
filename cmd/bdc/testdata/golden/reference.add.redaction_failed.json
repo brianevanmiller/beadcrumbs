@@ -1,0 +1,20 @@
+{
+  "bdc": "1",
+  "command": "reference.add",
+  "ok": false,
+  "data": null,
+  "warnings": [],
+  "error": {
+    "code": "redaction_failed",
+    "message": "the reference locator matches redaction rule \"aws-access-key-id\"; an identity value is never rewritten, so nothing was written",
+    "details": {
+      "field": "reference locator",
+      "rule": "aws-access-key-id"
+    }
+  },
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

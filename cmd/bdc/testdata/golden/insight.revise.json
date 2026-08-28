@@ -1,0 +1,36 @@
+{
+  "bdc": "1",
+  "command": "insight.revise",
+  "ok": true,
+  "data": {
+    "insight": {
+      "id": "<ins_1>",
+      "head_revision": 2,
+      "created_at": "<time>",
+      "actor_id": "tester",
+      "actor_kind": "human"
+    },
+    "revision": {
+      "id": "<rev_2>",
+      "insight_id": "<ins_1>",
+      "revision": 2,
+      "title": "One engine, one transaction, one close",
+      "content": "Every bdc invocation opens one short-lived engine and closes it before it returns. Reads state the freshness of anything cached, and a handoff never refreshes.",
+      "content_hash": "<sha256>",
+      "class": "decision",
+      "confidence": 0.8,
+      "rationale": "the close now happens before the command returns",
+      "parent_revision_id": "<rev_1>",
+      "created_at": "<time>",
+      "actor_id": "tester",
+      "actor_kind": "human"
+    }
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

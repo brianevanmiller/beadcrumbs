@@ -993,7 +993,7 @@ fails mid-transaction rolls back and reports one error.
 | `bdc crumb list` | `--state` `--since` `--session` `--limit` `--offset` | `{crumbs[], total}` |
 | `bdc crumb show <id>` | `--events` | `{crumb, review_events[], references[], harvests[], insights[]}` |
 | `bdc crumb review <id>...` | `--state accepted\|rejected` `--rationale` (required) | `{crumbs[], events[]}` |
-| `bdc crumb prune` | `--id` (repeatable) `--before` `--state candidate` `--yes` (required) | `{pruned, blocked[]}` |
+| `bdc crumb prune` | `--id` (repeatable) `--before` `--state candidate` `--yes` (required) | `{pruned, pruned_ids[], blocked[]}` |
 | `bdc harvest` | `--crumb` (repeatable) `--since` `--title` `--content\|--content-file` `--class` `--confidence` `--auto` `--dry-run` | `{harvest, insight, revision, crumbs_captured[], redaction:{version, findings}}` |
 | `bdc insight list` | `--class` `--since` `--verdict` `--authority` `--limit` | `{insights[], total}` |
 | `bdc insight show <id>` | `--revision` `--lineage` | `{insight, revision, revisions[], crumbs[], references[], validations[], authorities[], proposals[]}` |
@@ -1326,9 +1326,10 @@ is serial because each slice reads the previous one's domain types.
 
 1. **Human output formatting.** Table widths, colour, and truncation are left to implementation.
    Only the guarantee that human and JSON render the same domain result is contractual.
-2. **The `--budget` default.** `context`/`handoff`/`prime` need a token budget an agent can rely
-   on; the number should be set from measured output on a real ledger during S7, then written
-   into the skill.
+2. **The `--budget` default.** ~~Decided in S7~~: `ledger.DefaultBudgetTokens = 4000`, measured
+   against a ledger of 20 Insights, 60 Crumbs, 30 References, and 6 proposals, where `context`
+   renders at 2,973 tokens, `prime` at 2,800, and `handoff` at 387. S8 writes that number into
+   the skill.
 3. **Redaction pattern set.** The plan fixes the *sequence* (inspect → extract → redact → write),
    the abort behavior, and which columns redact versus reject (§1.4). The specific high-confidence
    secret shapes are a table in `internal/redact` that will grow; the release gate tests the

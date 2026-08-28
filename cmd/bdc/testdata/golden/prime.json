@@ -1,0 +1,46 @@
+{
+  "bdc": "1",
+  "command": "prime",
+  "ok": true,
+  "data": {
+    "summary": "1 working default(s) of 1 Insight(s), 1 of them mandatory, and 0 caution(s). Mandatory must be followed. A working default is settled unless a new review says otherwise. Anything not listed is advisory: citable, not settled. Disputed, rejected, and superseded Insights are unusable without a new review.",
+    "working_defaults": [
+      {
+        "id": "<ins_1>",
+        "revision_id": "<rev_2>",
+        "revision": 2,
+        "title": "One engine, one transaction, one close",
+        "class": "decision",
+        "confidence": 0.8,
+        "verdict": "supported",
+        "authority": "mandatory",
+        "standing": "mandatory",
+        "excerpt": "Every bdc invocation opens one short-lived engine and closes it before it returns. Reads state the freshness of anything cached, and a handoff never refreshes.",
+        "updated_at": "<time>"
+      }
+    ],
+    "mandatory": [
+      {
+        "id": "<ins_1>",
+        "revision_id": "<rev_2>",
+        "revision": 2,
+        "title": "One engine, one transaction, one close",
+        "class": "decision",
+        "confidence": 0.8,
+        "verdict": "supported",
+        "authority": "mandatory",
+        "standing": "mandatory",
+        "excerpt": "Every bdc invocation opens one short-lived engine and closes it before it returns. Reads state the freshness of anything cached, and a handoff never refreshes.",
+        "updated_at": "<time>"
+      }
+    ],
+    "cautions": []
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

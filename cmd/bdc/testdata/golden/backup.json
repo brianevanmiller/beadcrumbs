@@ -1,0 +1,17 @@
+{
+  "bdc": "1",
+  "command": "backup",
+  "ok": true,
+  "data": {
+    "destination": "file://<tmp>/backup",
+    "bytes": <size>,
+    "schema_version": 1
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

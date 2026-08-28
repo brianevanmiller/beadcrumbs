@@ -1,0 +1,38 @@
+{
+  "bdc": "1",
+  "command": "context",
+  "ok": true,
+  "data": {
+    "summary": "1 Insight(s) from the ledger: 1 mandatory, 0 unusable. 4 recent Crumb(s), 3 proposal(s), 2 open question(s).",
+    "insights": [
+      {
+        "id": "<ins_1>",
+        "revision_id": "<rev_2>",
+        "revision": 2,
+        "title": "One engine, one transaction, one close",
+        "class": "decision",
+        "confidence": 0.8,
+        "verdict": "supported",
+        "authority": "mandatory",
+        "standing": "mandatory",
+        "excerpt": "Every bdc invocation opens one short-lived engine and closes it before it returns. Reads state the freshness of anything cached, and a handoff never refreshes.",
+        "updated_at": "<time>"
+      }
+    ],
+    "open_questions": [],
+    "recent_crumbs": [],
+    "promotions": []
+  },
+  "warnings": [
+    {
+      "code": "budget_truncated",
+      "message": "context was trimmed to ~200 tokens; dropped 2 open question(s), 3 promotion(s), 4 recent crumb(s). Raise --budget, or pass --budget 0, for the whole answer"
+    }
+  ],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

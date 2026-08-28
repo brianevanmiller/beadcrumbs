@@ -1,0 +1,31 @@
+{
+  "bdc": "1",
+  "command": "validate",
+  "ok": true,
+  "data": {
+    "validation": {
+      "id": "<val_1>",
+      "target": {
+        "kind": "insight_revision",
+        "id": "<rev_2>"
+      },
+      "verdict": "supported",
+      "rationale": "reproduced against dolt 2.3.1",
+      "superseded_by": {
+        "kind": "",
+        "id": ""
+      },
+      "occurred_at": "<time>",
+      "actor_id": "tester",
+      "actor_kind": "human"
+    },
+    "effective_verdict": "supported"
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

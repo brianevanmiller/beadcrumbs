@@ -1,0 +1,61 @@
+{
+  "bdc": "1",
+  "command": "crumb.list",
+  "ok": true,
+  "data": {
+    "crumbs": [
+      {
+        "id": "<crb_4>",
+        "content": "The failing run logged [REDACTED:aws-access-key-id] into the build output.",
+        "content_hash": "<sha256>",
+        "review_state": "candidate",
+        "confidence": 0.4,
+        "captured_at": "<time>",
+        "redaction_version": "1",
+        "actor_id": "tester",
+        "actor_kind": "human"
+      },
+      {
+        "id": "<crb_3>",
+        "content": "An aside nobody followed up on.",
+        "content_hash": "<sha256>",
+        "review_state": "candidate",
+        "confidence": 0.2,
+        "captured_at": "<time>",
+        "redaction_version": "1",
+        "actor_id": "tester",
+        "actor_kind": "human"
+      },
+      {
+        "id": "<crb_2>",
+        "content": "A cached tracker label was mistaken for live state, so every read states its freshness.",
+        "content_hash": "<sha256>",
+        "review_state": "candidate",
+        "confidence": 0.6,
+        "captured_at": "<time>",
+        "redaction_version": "1",
+        "actor_id": "tester",
+        "actor_kind": "human"
+      },
+      {
+        "id": "<crb_1>",
+        "content": "The engine holds an exclusive directory lock for the life of a command.",
+        "content_hash": "<sha256>",
+        "review_state": "candidate",
+        "confidence": 0.7,
+        "captured_at": "<time>",
+        "redaction_version": "1",
+        "actor_id": "tester",
+        "actor_kind": "human"
+      }
+    ],
+    "total": 4
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

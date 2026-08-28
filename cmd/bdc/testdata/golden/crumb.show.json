@@ -1,0 +1,39 @@
+{
+  "bdc": "1",
+  "command": "crumb.show",
+  "ok": true,
+  "data": {
+    "crumb": {
+      "id": "<crb_1>",
+      "content": "The engine holds an exclusive directory lock for the life of a command.",
+      "content_hash": "<sha256>",
+      "review_state": "candidate",
+      "confidence": 0.7,
+      "captured_at": "<time>",
+      "redaction_version": "1",
+      "actor_id": "tester",
+      "actor_kind": "human"
+    },
+    "review_events": [],
+    "references": [
+      {
+        "id": "<ref_1>",
+        "kind": "docs",
+        "locator": "docs/design.md",
+        "workspace": "",
+        "fetched_at": "<time>",
+        "created_at": "<time>",
+        "relation": "source"
+      }
+    ],
+    "harvests": [],
+    "insights": []
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

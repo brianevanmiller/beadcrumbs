@@ -1,0 +1,17 @@
+{
+  "bdc": "1",
+  "command": "crumb.list",
+  "ok": false,
+  "data": null,
+  "warnings": [],
+  "error": {
+    "code": "no_ledger_uninitialized",
+    "message": "no ledger in /private<tmp>/repo; run `bdc init`",
+    "details": null
+  },
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}
