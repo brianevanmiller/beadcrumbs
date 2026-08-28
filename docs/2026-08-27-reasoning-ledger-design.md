@@ -489,6 +489,7 @@ The following begin only after the v1 ledger is proven:
 | Document | Description |
 |---|---|
 | **[README](../README.md)** | Introduce Beadcrumbs and link this design |
+| **[Wayfinder Path](reasoning-ledger-wayfinder.md)** | Preserve the dependency path across clones |
 | [AI Agent Guide](../BDC_GUIDE.md) | Describe the current agent-facing workflow |
 | [Product Plan](beadcrumbs-plan.md) | Capture the prototype-era roadmap |
 | [Stealth Mode Guide](guides/stealth-mode.md) | Explain the current local-store behavior |
