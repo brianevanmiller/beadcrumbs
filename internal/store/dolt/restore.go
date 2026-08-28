@@ -3,7 +3,9 @@ package dolt
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -18,6 +20,11 @@ const (
 	// Restore unpacks a whole ledger and verifies it twice, so it sets a larger
 	// lock budget than an ordinary command.
 	restoreMaxOpenWait = 2 * time.Minute
+
+	// evictMaxOpenWait bounds the check that nothing holds the live ledger. It
+	// is short on purpose: this is not a queue to join, it is a question with
+	// two answers, and "someone is writing" has to reach the user as exit 4.
+	evictMaxOpenWait = 2 * time.Second
 )
 
 // RestoreOptions configures Restore. Force is what authorises the
@@ -74,7 +81,18 @@ func Restore(ctx context.Context, loc Location, srcURL string, o RestoreOptions)
 	if err != nil {
 		return RestoreResult{}, err
 	}
-	if err := fsyncDir(staging); err != nil {
+	// A backup written by a newer build is rejected here, while the staging copy
+	// is still discardable. After the swap the previous ledger is gone and the
+	// mismatch is only reportable, not recoverable.
+	if want := CurrentSchemaVersion(); version > want {
+		return RestoreResult{}, ledger.Fail(ledger.ErrIntegrity, "integrity_schema_version",
+			"the backup is at schema version %d, newer than this build's %d; upgrade bdc before restoring it",
+			version, want)
+	}
+	if err := syncTree(staging); err != nil {
+		return RestoreResult{}, err
+	}
+	if err := assertUnheld(ctx, loc.Dir); err != nil {
 		return RestoreResult{}, err
 	}
 
@@ -86,6 +104,9 @@ func Restore(ctx context.Context, loc Location, srcURL string, o RestoreOptions)
 			return RestoreResult{}, storageErr(err, "cannot move %s aside to %s", loc.Dir, aside)
 		}
 		movedAside = true
+		if err := syncPath(parent); err != nil {
+			return RestoreResult{}, err
+		}
 	}
 	if err := os.Rename(staging, loc.Dir); err != nil {
 		if movedAside {
@@ -94,6 +115,12 @@ func Restore(ctx context.Context, loc Location, srcURL string, o RestoreOptions)
 		return RestoreResult{}, storageErr(err, "cannot move %s into place at %s", staging, loc.Dir)
 	}
 	stagingLive = false
+	// Each rename is durable only once the directory that holds the name is,
+	// so the parent is synced after both — otherwise a crash can leave the swap
+	// half-recorded even though every byte of the ledger is on disk.
+	if err := syncPath(parent); err != nil {
+		return RestoreResult{}, err
+	}
 
 	if _, _, err := verify(ctx, loc.Dir); err != nil {
 		return RestoreResult{}, ledger.FailWith(ledger.ErrIntegrity, "integrity_restore_unverified", err,
@@ -111,7 +138,7 @@ func Restore(ctx context.Context, loc Location, srcURL string, o RestoreOptions)
 // 'restore' is the only operation that needs no current database, which is why
 // the engine opens with an empty database name.
 func unpack(ctx context.Context, dir, srcURL string) error {
-	db, con, err := openEngine(ctx, dir, "", false, restoreMaxOpenWait)
+	db, con, err := openEngine(ctx, dir, "", restoreMaxOpenWait)
 	if err != nil {
 		return err
 	}
@@ -133,7 +160,7 @@ func verify(ctx context.Context, dir string) (version, records int, err error) {
 		return 0, 0, ledger.Fail(ledger.ErrIntegrity, "integrity_restore_no_database",
 			"%s holds no %s database after restore", dir, DatabaseName)
 	}
-	db, con, err := openEngine(ctx, dir, DatabaseName, false, restoreMaxOpenWait)
+	db, con, err := openEngine(ctx, dir, DatabaseName, restoreMaxOpenWait)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -186,16 +213,62 @@ func countRecords(ctx context.Context, db *sql.DB) (int, error) {
 	return total, nil
 }
 
-// fsyncDir makes the staging directory's contents durable before the rename that
-// commits to it.
-func fsyncDir(dir string) error {
-	f, err := os.Open(dir)
+// assertUnheld refuses to swap a ledger another process has open. POSIX lets a
+// directory be renamed and unlinked under an open handle, so without this the
+// holder survives pointing at deleted inodes and everything it writes
+// afterwards is silently lost. Taking Dolt's own exclusive directory lock and
+// dropping it immediately is the only way to ask; anything but ErrBusy means
+// nobody else can be using the directory either, and a restore over a ledger
+// too broken to open is exactly the case --force exists for.
+func assertUnheld(ctx context.Context, dir string) error {
+	if !ledgerExists(dir) {
+		return nil
+	}
+	db, con, err := openEngine(ctx, dir, DatabaseName, evictMaxOpenWait)
 	if err != nil {
-		return storageErr(err, "cannot open %s for fsync", dir)
+		if errors.Is(err, ledger.ErrBusy) {
+			return err
+		}
+		return nil
+	}
+	_ = db.Close()
+	_ = con.Close()
+	return nil
+}
+
+// syncTree makes a directory's contents durable: every regular file inside it,
+// then the directory itself. Syncing only the directory — which is what this
+// used to do — flushes its name entries and none of the chunk files Dolt just
+// unpacked into it.
+func syncTree(dir string) error {
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		return syncPath(path)
+	})
+	if err != nil {
+		if _, ok := err.(*ledger.Error); ok {
+			return err
+		}
+		return storageErr(err, "cannot walk %s to make it durable", dir)
+	}
+	return syncPath(dir)
+}
+
+// syncPath forces one file or directory to stable storage. On darwin fsync(2)
+// only hands the data to the drive, which is why fullSync exists.
+func syncPath(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return storageErr(err, "cannot open %s for fsync", path)
 	}
 	defer f.Close()
-	if err := f.Sync(); err != nil {
-		return storageErr(err, "cannot fsync %s", dir)
+	if err := fullSync(f); err != nil {
+		return storageErr(err, "cannot fsync %s", path)
 	}
 	return nil
 }

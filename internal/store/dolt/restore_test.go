@@ -2,12 +2,15 @@ package dolt
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/brianevanmiller/beadcrumbs/internal/ledger"
 )
 
 // backupOf builds a ledger with the given rows and returns a backup URL for it.
@@ -175,5 +178,86 @@ func assertLeftoversReported(t *testing.T, report StoreReport, leftovers []strin
 		if !strings.Contains(check.Detail, path) {
 			t.Fatalf("the check does not name %s: %s", path, check.Detail)
 		}
+	}
+}
+
+// TestRestoreRefusesWhileAnotherProcessHoldsTheLedger: the swap renames the
+// live directory and then deletes it, and POSIX lets that happen under an open
+// handle. A holder must therefore make the restore exit 4 rather than survive
+// pointing at inodes nothing will ever read again.
+func TestRestoreRefusesWhileAnotherProcessHoldsTheLedger(t *testing.T) {
+	ctx := context.Background()
+	dest, _ := backupOf(t, 4)
+
+	target := fixtureRepo(t)
+	targetLoc := initLedger(t, target, false)
+	existing, err := Open(ctx, targetLoc, Config{Command: "seed-target"})
+	if err != nil {
+		t.Fatalf("open target: %v", err)
+	}
+	seedRows(t, existing, 6)
+	if err := existing.Close(); err != nil {
+		t.Fatalf("close target: %v", err)
+	}
+
+	holdLedger(t, targetLoc.Dir)
+	if _, err := Restore(ctx, targetLoc, dest, RestoreOptions{Force: true}); !errors.Is(err, ledger.ErrBusy) {
+		t.Fatalf("restore err = %v, want ledger busy while another process holds %s", err, targetLoc.Dir)
+	}
+	if leftovers := restoreLeftovers(targetLoc); len(leftovers) != 0 {
+		t.Fatalf("the refused restore left %v behind", leftovers)
+	}
+}
+
+// TestRestoreRefusesANewerSchema: the check has to happen while the staging
+// copy is still discardable. Afterwards the previous ledger has been removed,
+// so a mismatch is only reportable — and doctor's remediation cannot undo it.
+func TestRestoreRefusesANewerSchema(t *testing.T) {
+	ctx := context.Background()
+
+	repo := fixtureRepo(t)
+	loc := initLedger(t, repo, false)
+	source, err := Open(ctx, loc, Config{Command: "seed-future"})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	seedRows(t, source, 2)
+	future := CurrentSchemaVersion() + 1
+	if _, err := source.DB().ExecContext(ctx,
+		`REPLACE INTO schema_meta (id, version, bdc_version, applied_at) VALUES (1, ?, '9.9.9', UTC_TIMESTAMP(6))`,
+		future); err != nil {
+		t.Fatalf("recording a future schema version: %v", err)
+	}
+	if err := source.Commit(ctx, "test: future schema"); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	dest := filepath.Join(t.TempDir(), "backup")
+	if _, err := source.Backup(ctx, dest); err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+	if err := source.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	target := fixtureRepo(t)
+	targetLoc := initLedger(t, target, false)
+	existing, err := Open(ctx, targetLoc, Config{Command: "seed-target"})
+	if err != nil {
+		t.Fatalf("open target: %v", err)
+	}
+	seedRows(t, existing, 5)
+	if err := existing.Close(); err != nil {
+		t.Fatalf("close target: %v", err)
+	}
+
+	if _, err := Restore(ctx, targetLoc, dest, RestoreOptions{Force: true}); !errors.Is(err, ledger.ErrIntegrity) {
+		t.Fatalf("restore err = %v, want an integrity error for schema version %d", err, future)
+	}
+	survivor := openLedger(t, targetLoc, Config{Command: "check-survivor"})
+	if got := countRows(t, survivor.DB(), "SELECT COUNT(*) FROM round_trip"); got != 5 {
+		t.Fatalf("the refused restore left %d rows, want the previous 5", got)
+	}
+	if leftovers := restoreLeftovers(targetLoc); len(leftovers) != 0 {
+		t.Fatalf("the refused restore left %v behind", leftovers)
 	}
 }

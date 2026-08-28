@@ -112,7 +112,7 @@ func Open(ctx context.Context, loc Location, cfg Config) (*Store, error) {
 	}
 
 	release := acquireProcessLock(loc.Dir, cfg.Command)
-	db, con, err := openEngine(ctx, loc.Dir, DatabaseName, false, cfg.MaxOpenWait)
+	db, con, err := openEngine(ctx, loc.Dir, DatabaseName, cfg.MaxOpenWait)
 	if err != nil {
 		release()
 		return nil, err
@@ -123,10 +123,11 @@ func Open(ctx context.Context, loc Location, cfg Config) (*Store, error) {
 	return s, nil
 }
 
-// Location and DB expose what the storage operations above this file need
-// without letting a Dolt symbol escape the package.
-func (s *Store) Location() Location { return s.loc }
-func (s *Store) DB() *sql.DB        { return s.db }
+// DB is the test-only escape hatch. The port deliberately cannot express the
+// assertions the release gate needs — a `dolt_history_*` scan, a constraint
+// violation, a raw row count — and proving those through the domain API would
+// prove only that the Go half agrees with itself.
+func (s *Store) DB() *sql.DB { return s.db }
 
 // Close is idempotent and unconditional: cmd/bdc closes from a defer that also
 // runs on a recovered panic.
@@ -167,8 +168,10 @@ func (s *Store) Commit(ctx context.Context, message string) error {
 	return nil
 }
 
-// openEngine is the single place a Dolt engine is constructed.
-func openEngine(ctx context.Context, dir, database string, multi bool, wait time.Duration) (*sql.DB, *embeddeddolt.Connector, error) {
+// openEngine is the single place a Dolt engine is constructed. Every statement
+// is issued singly — migrations are split before they are applied — so no
+// caller needs the driver's MultiStatements mode.
+func openEngine(ctx context.Context, dir, database string, wait time.Duration) (*sql.DB, *embeddeddolt.Connector, error) {
 	bo := backoff.NewExponentialBackOff()
 	bo.MaxElapsedTime = wait
 	bo.MaxInterval = time.Second
@@ -178,7 +181,6 @@ func openEngine(ctx context.Context, dir, database string, multi bool, wait time
 		CommitName:      commitName,
 		CommitEmail:     commitEmail,
 		Database:        database,
-		MultiStatements: multi,
 		// Non-nil BackOff is what makes journal lock contention return
 		// nbs.ErrDatabaseLocked instead of blocking for the holder's lifetime.
 		BackOff: bo,
@@ -219,7 +221,7 @@ func createDatabase(ctx context.Context, loc Location) error {
 	// Two engines, in sequence. The database cannot be selected before it
 	// exists, and the driver's current database is fixed at Connect: a `USE`
 	// issued afterwards does not survive to the next statement.
-	if err := withEngine(ctx, loc.Dir, "", false, func(db *sql.DB) error {
+	if err := withEngine(ctx, loc.Dir, "", func(db *sql.DB) error {
 		if _, err := db.ExecContext(ctx, "CREATE DATABASE IF NOT EXISTS "+DatabaseName); err != nil {
 			return storageErr(err, "cannot create database %s in %s", DatabaseName, loc.Dir)
 		}
@@ -228,7 +230,7 @@ func createDatabase(ctx context.Context, loc Location) error {
 		return err
 	}
 
-	return withEngine(ctx, loc.Dir, DatabaseName, true, func(db *sql.DB) error {
+	return withEngine(ctx, loc.Dir, DatabaseName, func(db *sql.DB) error {
 		if _, err := applySchema(ctx, db); err != nil {
 			return err
 		}
@@ -241,8 +243,8 @@ func createDatabase(ctx context.Context, loc Location) error {
 
 // withEngine opens an engine, runs fn, and always closes. Callers must already
 // hold the process lock.
-func withEngine(ctx context.Context, dir, database string, multi bool, fn func(*sql.DB) error) error {
-	db, con, err := openEngine(ctx, dir, database, multi, defaultMaxOpenWait)
+func withEngine(ctx context.Context, dir, database string, fn func(*sql.DB) error) error {
+	db, con, err := openEngine(ctx, dir, database, defaultMaxOpenWait)
 	if err != nil {
 		return err
 	}
