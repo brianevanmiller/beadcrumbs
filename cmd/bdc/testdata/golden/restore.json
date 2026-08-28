@@ -3,7 +3,7 @@
   "command": "restore",
   "ok": true,
   "data": {
-    "restored": "/private<tmp>/repo/.git/beadcrumbs",
+    "restored": "<tmp>/repo/.git/beadcrumbs",
     "schema_version": 1,
     "records": 36
   },

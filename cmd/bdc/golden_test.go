@@ -526,11 +526,16 @@ func newFixture(t *testing.T) *fixture {
 		}
 	}
 	// The ledger reports a symlink-resolved path on macOS, where the temp
-	// directory is /var -> /private/var; both spellings have to canonicalise.
+	// directory is /var -> /private/var; both spellings have to canonicalise to
+	// the same placeholder, and the resolved one has to be replaced first. The
+	// other order rewrites the /var suffix inside /private/var and leaves
+	// "/private<tmp>" — a macOS spelling baked into a golden that Linux, where
+	// the two are the same path, can never produce.
 	roots := []string{root}
 	if resolved, err := filepath.EvalSymlinks(root); err == nil && resolved != root {
 		roots = append(roots, resolved)
 	}
+	sort.Slice(roots, func(i, j int) bool { return len(roots[i]) > len(roots[j]) })
 	return &fixture{
 		dir:     repo,
 		backup:  filepath.Join(root, "backup"),

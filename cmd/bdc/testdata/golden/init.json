@@ -3,7 +3,7 @@
   "command": "init",
   "ok": true,
   "data": {
-    "path": "/private<tmp>/repo/.git/beadcrumbs",
+    "path": "<tmp>/repo/.git/beadcrumbs",
     "stealth": true,
     "schema_version": 1,
     "created": true

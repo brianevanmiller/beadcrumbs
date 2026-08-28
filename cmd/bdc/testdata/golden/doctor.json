@@ -7,7 +7,7 @@
       {
         "name": "ledger_open",
         "status": "ok",
-        "detail": "engine open at /private<tmp>/repo/.git/beadcrumbs"
+        "detail": "engine open at <tmp>/repo/.git/beadcrumbs"
       },
       {
         "name": "schema_version",
@@ -27,7 +27,7 @@
     ],
     "schema_version": 1,
     "journal_bytes": <size>,
-    "ledger_path": "/private<tmp>/repo/.git/beadcrumbs",
+    "ledger_path": "<tmp>/repo/.git/beadcrumbs",
     "beads": null,
     "ok": true
   },
