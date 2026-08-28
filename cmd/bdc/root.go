@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/brianevanmiller/beadcrumbs/internal/ledger"
+	"github.com/brianevanmiller/beadcrumbs/internal/redact"
 	"github.com/brianevanmiller/beadcrumbs/internal/store/dolt"
 )
 
@@ -45,6 +47,7 @@ type app struct {
 	loc     dolt.Location
 	store   *dolt.Store
 	openErr error
+	led     *ledger.Ledger
 
 	// Recorded by the command body so main can emit exactly one envelope.
 	command string
@@ -111,6 +114,8 @@ func (a *app) newRootCommand() *cobra.Command {
 		a.newBackupCommand(),
 		a.newRestoreCommand(),
 		a.newGCCommand(),
+		a.newCaptureCommand(),
+		a.newCrumbCommand(),
 	)
 	return root
 }
@@ -184,6 +189,55 @@ func (a *app) prepare(cmd *cobra.Command, _ []string) error {
 	}
 	a.out.schema = func() int { return schema }
 	return nil
+}
+
+// ledger builds the domain module for the command about to run, once per
+// invocation. It lives here because the Redactor is constructed from
+// repo_config, which has to be read from the open store *before* the Ledger
+// that injects it exists — so this is the one place that ordering is expressed.
+func (a *app) ledger(ctx context.Context) (*ledger.Ledger, error) {
+	if a.led != nil {
+		return a.led, nil
+	}
+	if a.store == nil {
+		if a.openErr != nil {
+			return nil, a.openErr
+		}
+		return nil, ledger.Fail(ledger.ErrNoLedger, "no_ledger",
+			"this command needs an open ledger; run `bdc init` first")
+	}
+	cfg, err := ledger.LoadRepoConfig(ctx, a.store)
+	if err != nil {
+		return nil, err
+	}
+	redactor, err := redact.New(redact.Config{
+		Version:  cfg.RedactionVersion,
+		Patterns: cfg.RedactPatterns,
+	})
+	if err != nil {
+		return nil, err
+	}
+	actor := ledger.Provenance{
+		ActorID:    a.actor,
+		ActorKind:  ledger.ActorKind(a.actorKind),
+		ActorModel: a.model,
+		SessionID:  a.session,
+	}
+	if err := actor.Validate(); err != nil {
+		return nil, err
+	}
+	a.led = ledger.New(a.store, ledger.Options{Actor: actor, Redactor: redactor, Config: cfg})
+	return a.led, nil
+}
+
+// warnRedaction reports that stored text was rewritten. A caller has to be able
+// to see that its content changed before it was persisted; the finding names the
+// rule and the position and never the secret.
+func (a *app) warnRedaction(findings []ledger.Finding) {
+	for _, f := range findings {
+		a.out.warn("redacted", fmt.Sprintf("rule %s replaced %d bytes at offset %d",
+			f.Rule, f.Length, f.Offset))
+	}
 }
 
 // handle adapts a command body to Cobra while recording the outcome, so main

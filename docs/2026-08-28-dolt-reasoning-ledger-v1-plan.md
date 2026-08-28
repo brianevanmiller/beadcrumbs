@@ -68,8 +68,8 @@ type Ledger struct{ /* store, redactor, policy, clock, ids */ }
 func New(s Store, opts Options) *Ledger
 
 // Writes — each is one bounded transaction.
-func (l *Ledger) CaptureCrumb(ctx context.Context, c CaptureCrumb) (Crumb, error)
-func (l *Ledger) ReviewCrumb(ctx context.Context, c ReviewCrumb) (Crumb, error)
+func (l *Ledger) CaptureCrumb(ctx context.Context, c CaptureCrumb) (CaptureResult, error)
+func (l *Ledger) ReviewCrumb(ctx context.Context, c ReviewCrumb) (ReviewResult, error)  // `crumb review <id>...` is a batch
 func (l *Ledger) PruneCrumbs(ctx context.Context, c PruneCrumbs) (PruneResult, error)
 func (l *Ledger) CompleteHarvest(ctx context.Context, c CompleteHarvest) (Harvest, error)
 func (l *Ledger) ReviseInsight(ctx context.Context, c ReviseInsight) (InsightRevision, error)
@@ -82,7 +82,7 @@ func (l *Ledger) RejectPromotion(ctx context.Context, c RejectPromotion) (Promot
 func (l *Ledger) FailPromotion(ctx context.Context, c FailPromotion) (Promotion, error)
 
 // Reads — snapshot-consistent, no storage concepts in the result types.
-func (l *Ledger) Crumbs(ctx context.Context, q CrumbQuery) ([]CrumbView, error)
+func (l *Ledger) Crumbs(ctx context.Context, q CrumbQuery) (CrumbPage, error)  // page + the total the filter matched
 func (l *Ledger) Crumb(ctx context.Context, id CrumbID) (CrumbDetail, error)
 func (l *Ledger) Insights(ctx context.Context, q InsightQuery) ([]InsightView, error)
 func (l *Ledger) Insight(ctx context.Context, id InsightID, o InsightOptions) (InsightDetail, error)
@@ -357,7 +357,8 @@ Detects and replaces high-confidence secret shapes (private key blocks, AWS/GCP/
 token prefixes, bearer tokens, `postgres://user:pass@`, `.env`-style `KEY=<high-entropy>`) plus
 repository-configured patterns. A finding it cannot confidently replace returns an error, the
 ledger aborts the write, and nothing is persisted — partial redaction is never written. The
-package has no I/O and no ledger dependency, so its table tests are the whole proof.
+package has no I/O; it imports `internal/ledger` only for `Finding` and the error constructors,
+because `ledger.Redactor` fixes both, so its table tests are the whole proof.
 
 ### 1.5 `internal/beads`
 
@@ -1327,5 +1328,6 @@ is serial because each slice reads the previous one's domain types.
 6. **The transcript-shape heuristic.** §2.5.11 fixes that automatic capture rejects
    transcript-shaped input and that the size caps are database constraints. The specific signals
    (speaker-turn prefix pattern, line-count ceiling) are tuned in S3 against real session material
-   and stored in `repo_config`; the release gate tests that a raw-transcript fixture is refused,
-   not the particular threshold.
+   as named constants in `internal/ledger/crumb.go` — not `repo_config`, whose seeds are fixed in
+   S2 and whose parsed shape lives in a file S3 does not own; the release gate tests that a
+   raw-transcript fixture is refused, not the particular threshold.
