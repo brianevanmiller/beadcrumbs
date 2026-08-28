@@ -1,9 +1,6 @@
 -- 001_init.sql — schema version 1.
 --
--- The whole ledger, authored once. No later migration adds DDL in v1: a single
--- script is what lets parallel implementation slices share one schema without
--- contending, and a slice that believes it needs a change has found a defect
--- here rather than a reason for 002.
+-- The whole ledger, authored once. No later migration adds DDL in v1.
 --
 -- Every table declares COLLATE=utf8mb4_0900_bin so identity comparison is
 -- byte-exact and independent of the server default. Under a case-insensitive

@@ -115,9 +115,9 @@ func (t *tx) AppendCrumbReview(e ledger.CrumbReviewEvent) error {
 
 // DeleteCrumbs removes each Crumb together with the ref_links and validations
 // whose polymorphic target is one of them. Those two columns carry no foreign
-// key, so nothing else can clean them: verified against dolt 2.3.1, deleting a
-// Crumb with one ref_link and one validation leaves both rows behind pointing at
-// an id that no longer exists, while crumb_review_events CASCADE correctly.
+// key, so nothing else can clean them and a Crumb deleted without this leaves
+// rows pointing at an id that no longer exists; crumb_review_events CASCADEs on
+// its own.
 func (t *tx) DeleteCrumbs(ids []ledger.CrumbID) (int, error) {
 	if len(ids) == 0 {
 		return 0, nil

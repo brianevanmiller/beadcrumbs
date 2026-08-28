@@ -348,16 +348,20 @@ type Receipt struct {
 	Provenance
 }
 
+// capabilities is the vocabulary in declaration order. Encoding, decoding, and
+// validation all read it, so a new member is added in one place and the stored
+// form stays canonical.
+var capabilities = []Capability{
+	CapRequiresHumanAuthority, CapSupportsSupersession, CapSupportsReviewThread,
+	CapAppendOnly, CapStableAnchor, CapContentAddressable,
+}
+
 // EncodeCapabilities renders a capability set as the comma-joined form a SQL SET
 // column accepts, deduplicated and in declaration order so the stored value is
 // canonical rather than insertion-ordered.
 func EncodeCapabilities(caps []Capability) string {
-	order := []Capability{
-		CapRequiresHumanAuthority, CapSupportsSupersession, CapSupportsReviewThread,
-		CapAppendOnly, CapStableAnchor, CapContentAddressable,
-	}
 	var out []string
-	for _, c := range order {
+	for _, c := range capabilities {
 		if slices.Contains(caps, c) {
 			out = append(out, string(c))
 		}
@@ -372,14 +376,10 @@ func DecodeCapabilities(raw string) ([]Capability, error) {
 	if raw == "" {
 		return nil, nil
 	}
-	known := []Capability{
-		CapRequiresHumanAuthority, CapSupportsSupersession, CapSupportsReviewThread,
-		CapAppendOnly, CapStableAnchor, CapContentAddressable,
-	}
 	var out []Capability
 	for _, part := range strings.Split(raw, ",") {
 		c := Capability(part)
-		if !slices.Contains(known, c) {
+		if !slices.Contains(capabilities, c) {
 			return nil, Fail(ErrIntegrity, "integrity_unknown_capability",
 				"stored capability %q is not one this build understands", part)
 		}
@@ -389,23 +389,22 @@ func DecodeCapabilities(raw string) ([]Capability, error) {
 }
 
 func ValidateCapabilities(caps []Capability) error {
-	known := []Capability{
-		CapRequiresHumanAuthority, CapSupportsSupersession, CapSupportsReviewThread,
-		CapAppendOnly, CapStableAnchor, CapContentAddressable,
-	}
 	for _, c := range caps {
-		if !slices.Contains(known, c) {
+		if !slices.Contains(capabilities, c) {
 			return Fail(ErrInvalidInput, "invalid_capability",
-				"%q is not a destination capability; expected one of %s", c, joinCaps(known))
+				"%q is not a destination capability; expected one of %s", c, joinNames(capabilities))
 		}
 	}
 	return nil
 }
 
-func joinCaps(caps []Capability) string {
-	parts := make([]string, len(caps))
-	for i, c := range caps {
-		parts[i] = string(c)
+// joinNames renders a closed vocabulary for the error that rejects a value not
+// in it. Every vocabulary in the package is a string type, so one helper covers
+// all of them and no list is written out twice.
+func joinNames[T ~string](values []T) string {
+	parts := make([]string, len(values))
+	for i, v := range values {
+		parts[i] = string(v)
 	}
 	return strings.Join(parts, ", ")
 }

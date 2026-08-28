@@ -79,7 +79,7 @@ func (l *Ledger) RecordValidation(ctx context.Context, c RecordValidation) (Vali
 	}
 	if !slices.Contains(verdicts, c.Verdict) {
 		return ValidationResult{}, Fail(ErrInvalidInput, "invalid_verdict",
-			"%q is not a verdict; expected one of %s", c.Verdict, joinVerdicts())
+			"%q is not a verdict; expected one of %s", c.Verdict, joinNames(verdicts))
 	}
 	if strings.TrimSpace(c.Rationale) == "" {
 		return ValidationResult{}, Fail(ErrInvalidInput, "invalid_rationale",
@@ -157,20 +157,14 @@ func (l *Ledger) RecordValidation(ctx context.Context, c RecordValidation) (Vali
 	return out, nil
 }
 
-// effectiveVerdict is the latest verdict for a target. Events arrive oldest
-// first, so the last validation row wins and no history means unreviewed.
+// effectiveVerdict is the latest verdict for one target, read through the same
+// fold every other caller uses.
 func effectiveVerdict(snap Snapshot, target RecordRef) (Verdict, error) {
-	events, err := snap.Events(EventQuery{Targets: []RecordRef{target}})
+	verdicts, _, err := latestJudgements(snap, []RecordRef{target})
 	if err != nil {
 		return "", err
 	}
-	verdict := VerdictUnreviewed
-	for _, e := range events {
-		if e.Kind == EventValidation {
-			verdict = Verdict(e.Summary)
-		}
-	}
-	return verdict, nil
+	return verdicts[target.ID], nil
 }
 
 // validateSupersession pairs the verdict with its successor. Both directions
@@ -208,10 +202,4 @@ func validateValidationTarget(ref RecordRef) error {
 	return err
 }
 
-func joinVerdicts() string {
-	parts := make([]string, len(verdicts))
-	for i, v := range verdicts {
-		parts[i] = string(v)
-	}
-	return strings.Join(parts, ", ")
-}
+

@@ -11,11 +11,9 @@ package redact
 
 import (
 	"fmt"
-	"math"
 	"regexp"
 	"sort"
 	"strings"
-	"unicode"
 
 	"github.com/brianevanmiller/beadcrumbs/internal/ledger"
 )
@@ -54,9 +52,8 @@ type rule struct {
 }
 
 // builtins are high-confidence secret shapes: each one is a token format whose
-// mere presence is the secret. The set grows; the sequence around it —
-// detect, replace, re-scan, abort on anything left — is what the release gate
-// tests, not this list.
+// mere presence is the secret. The list grows; what has to stay correct is the
+// sequence around it — detect, replace, re-scan, abort on anything left.
 func builtins() []rule {
 	must := func(id, expr string, group int) rule {
 		return rule{id: id, re: regexp.MustCompile(expr), group: group}
@@ -266,31 +263,4 @@ func covered(spans []span, offset int) bool {
 		}
 	}
 	return false
-}
-
-// Entropy is Shannon entropy in bits per character. It is exported because the
-// transcript and secret heuristics in the ledger want the same measure, and two
-// implementations of "how random is this string" would drift.
-func Entropy(s string) float64 {
-	if s == "" {
-		return 0
-	}
-	counts := map[rune]int{}
-	total := 0
-	for _, r := range s {
-		if unicode.IsSpace(r) {
-			continue
-		}
-		counts[r]++
-		total++
-	}
-	if total == 0 {
-		return 0
-	}
-	var h float64
-	for _, n := range counts {
-		p := float64(n) / float64(total)
-		h -= p * math.Log2(p)
-	}
-	return h
 }

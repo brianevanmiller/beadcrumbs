@@ -121,18 +121,12 @@ func (s RefSpec) Validate() error {
 		return Fail(ErrInvalidInput, "invalid_reference", "reference workspace is longer than 255 characters")
 	case !slices.Contains(relations, s.Relation):
 		return Fail(ErrInvalidInput, "invalid_relation",
-			"%q is not a reference relation; expected one of %s", s.Relation, joinRelations())
+			"%q is not a reference relation; expected one of %s", s.Relation, joinNames(relations))
 	}
 	return nil
 }
 
-func joinRelations() string {
-	parts := make([]string, len(relations))
-	for i, r := range relations {
-		parts[i] = string(r)
-	}
-	return strings.Join(parts, ", ")
-}
+
 
 // CaptureCrumb redacts, then writes. The order is the point: the redactor runs
 // before the transaction opens, so a finding it cannot resolve aborts with

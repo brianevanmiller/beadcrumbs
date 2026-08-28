@@ -11,10 +11,8 @@ import (
 type GCResult = ledger.GCResult
 
 // GCThresholdBytes is the journal size past which `bdc doctor` warns and
-// capture/harvest trigger GC opportunistically. Per-transaction commits reach
-// tens of megabytes within a few thousand rows, and DOLT_GC reclaims that in
-// well under a second, so the threshold is set low enough to keep the journal
-// from ever dominating the ledger.
+// capture/harvest trigger GC opportunistically. A commit per transaction grows
+// the journal fast, and DOLT_GC is cheap, so the threshold is low.
 const GCThresholdBytes int64 = 8 << 20
 
 // GC runs DOLT_GC. It reclaims the journal; it does not rewrite committed

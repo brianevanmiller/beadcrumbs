@@ -14,9 +14,8 @@ import (
 // asking the ledger.
 //
 // Every id fits CHAR(40): a four-character prefix plus the 36-character
-// canonical UUID. `pp_` is three characters and therefore 39, which Dolt 2.3.1
-// stores and returns unpadded — verified, because a padded CHAR would break
-// every foreign key that joins on it.
+// canonical UUID. `pp_` is 39, and CHAR returns it unpadded; a padded value
+// would break every foreign key that joins on it.
 const (
 	PrefixCrumb       = "crb_"
 	PrefixReviewEvent = "cre_"

@@ -33,12 +33,9 @@ const (
 	ModePrime   NarrativeMode = "prime"
 )
 
-// DefaultBudgetTokens is what `--budget` defaults to. It is measured, not
-// guessed: against a ledger of 20 Insights, 60 Crumbs, 30 References, and 6
-// proposals, `context` renders at 2,973 tokens, `prime` at 2,800, and `handoff`
-// at 387. 4,000 clears the two wide ones on a ledger that size, and it is a
-// fraction of a session's window. A caller that wants the whole answer passes
-// `--budget 0`.
+// DefaultBudgetTokens is what `--budget` defaults to: enough for `context` and
+// `prime` to render whole against a mid-sized ledger, and a fraction of a
+// session's window. A caller that wants the whole answer passes `--budget 0`.
 const DefaultBudgetTokens = 4000
 
 const (
@@ -458,9 +455,10 @@ func (l *Ledger) narratePrime(snap Snapshot, _ NarrativeQuery, n *Narrative) err
 }
 
 // narrativeInsights lists Insights with their standing, and quotes the head
-// revision when the caller asked for an excerpt. The content is fetched per
-// Insight because the listing read does not carry it; the set is bounded by the
-// query's limit, so this is a handful of reads and not a walk.
+// revision when the caller asked for an excerpt. `prime` and `handoff` pass no
+// limit on purpose — an agent that cannot see a mandatory rule will break it —
+// so the excerpt content is read in one query for every Insight at once rather
+// than one query each.
 func narrativeInsights(snap Snapshot, q InsightQuery, excerptLimit int) ([]NarrativeInsight, error) {
 	limit := q.Limit
 	q.Limit = 0
@@ -481,6 +479,21 @@ func narrativeInsights(snap Snapshot, q InsightQuery, excerptLimit int) ([]Narra
 		return nil, err
 	}
 
+	content := map[RevisionID]string{}
+	if excerptLimit > 0 && len(rows) > 0 {
+		ids := make([]InsightID, 0, len(rows))
+		for _, row := range rows {
+			ids = append(ids, row.ID)
+		}
+		revisions, err := snap.Revisions(ids...)
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range revisions {
+			content[r.ID] = r.Content
+		}
+	}
+
 	out := make([]NarrativeInsight, 0, len(rows))
 	for _, row := range rows {
 		item := NarrativeInsight{
@@ -492,15 +505,7 @@ func narrativeInsights(snap Snapshot, q InsightQuery, excerptLimit int) ([]Narra
 		}
 		item.Standing = standingOf(item.Verdict, item.Authority)
 		if excerptLimit > 0 {
-			revisions, err := snap.Revisions(row.ID)
-			if err != nil {
-				return nil, err
-			}
-			for _, r := range revisions {
-				if r.ID == row.HeadRevisionID {
-					item.Excerpt = excerpt(r.Content, excerptLimit)
-				}
-			}
+			item.Excerpt = excerpt(content[row.HeadRevisionID], excerptLimit)
 		}
 		out = append(out, item)
 	}
@@ -787,25 +792,45 @@ func (n *Narrative) fit(budget int) ([]Notice, error) {
 	if budget <= 0 {
 		return nil, nil
 	}
+	limit := budget * bytesPerToken
+	size, err := n.size()
+	if err != nil {
+		return nil, err
+	}
 	dropped := map[string]int{}
-	for {
-		size, err := n.tokens()
+	// Each drop subtracts the element's own encoding and the comma that
+	// separated it, which is exact for a JSON array; the document is re-encoded
+	// only when that running total says it fits, which both confirms the
+	// arithmetic and keeps this from re-marshalling the whole narrative once
+	// per dropped element.
+	for size > limit {
+		name, freed, err := n.dropOne()
 		if err != nil {
 			return nil, err
 		}
-		if size <= budget {
-			break
-		}
-		name, ok := n.dropOne()
-		if !ok {
+		if name == "" {
+			if size, err = n.size(); err != nil {
+				return nil, err
+			}
+			if size <= limit {
+				break
+			}
 			return []Notice{{
 				Code: "budget_exceeded",
 				Message: fmt.Sprintf("%s is about %d tokens, over the ~%d budget, and nothing "+
 					"further may be dropped: the summary and any mandatory Insights are always reported",
-					n.Mode, size, budget),
+					n.Mode, tokensIn(size), budget),
 			}}, nil
 		}
 		dropped[name]++
+		size -= freed
+		if size <= limit {
+			// The running total says it fits; prove it, because only the
+			// encoder knows what the separators actually cost.
+			if size, err = n.size(); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if len(dropped) == 0 {
 		return nil, nil
@@ -826,63 +851,99 @@ func (n *Narrative) fit(budget int) ([]Notice, error) {
 	}}, nil
 }
 
-func (n *Narrative) tokens() (int, error) {
+// size is the encoded narrative in bytes; the budget is stated in tokens, so
+// the comparison happens in bytes and only the reported figure is converted.
+func (n *Narrative) size() (int, error) {
 	encoded, err := json.Marshal(n)
 	if err != nil {
 		return 0, err
 	}
-	return (len(encoded) + bytesPerToken - 1) / bytesPerToken, nil
+	return len(encoded), nil
 }
 
-// dropOne removes the last element of the lowest-priority non-empty section and
-// names it. The priority order is the contract: what a reader loses least by
-// losing goes first.
-func (n *Narrative) dropOne() (string, bool) {
+func tokensIn(bytes int) int { return (bytes + bytesPerToken - 1) / bytesPerToken }
+
+// dropOne removes the last element of the lowest-priority non-empty section,
+// names it, and reports the bytes its removal frees. The priority order is the
+// contract: what a reader loses least by losing goes first. An empty name means
+// nothing further may be dropped.
+func (n *Narrative) dropOne() (name string, freed int, err error) {
 	switch n.Mode {
 	case ModeContext:
 		switch {
 		case len(n.RecentCrumbs) > 0:
-			n.RecentCrumbs = n.RecentCrumbs[:len(n.RecentCrumbs)-1]
-			return "recent crumb(s)", true
+			freed, err = dropLast(&n.RecentCrumbs)
+			return "recent crumb(s)", freed, err
 		case len(n.Promotions) > 0:
-			n.Promotions = n.Promotions[:len(n.Promotions)-1]
-			return "promotion(s)", true
+			freed, err = dropLast(&n.Promotions)
+			return "promotion(s)", freed, err
 		case len(n.OpenQuestions) > 0:
-			n.OpenQuestions = n.OpenQuestions[:len(n.OpenQuestions)-1]
-			return "open question(s)", true
+			freed, err = dropLast(&n.OpenQuestions)
+			return "open question(s)", freed, err
 		case len(n.Insights) > 0:
-			n.Insights = n.Insights[:len(n.Insights)-1]
-			return "insight(s)", true
+			freed, err = dropLast(&n.Insights)
+			return "insight(s)", freed, err
 		}
 	case ModeHandoff:
 		switch {
 		case len(n.OpenProposals) > 0:
-			n.OpenProposals = n.OpenProposals[:len(n.OpenProposals)-1]
-			return "open proposal(s)", true
+			freed, err = dropLast(&n.OpenProposals)
+			return "open proposal(s)", freed, err
 		case len(n.Workspace.References) > 0:
-			n.Workspace.References = n.Workspace.References[:len(n.Workspace.References)-1]
-			return "workspace reference kind(s)", true
+			freed, err = dropLast(&n.Workspace.References)
+			return "workspace reference kind(s)", freed, err
 		}
 	case ModePrime:
 		switch {
 		case len(n.Cautions) > 0:
-			n.Cautions = n.Cautions[:len(n.Cautions)-1]
-			return "caution(s)", true
+			freed, err = dropLast(&n.Cautions)
+			return "caution(s)", freed, err
 		case len(n.WorkingDefaults) > len(n.Mandatory):
 			// Only the non-mandatory tail is droppable; mandatory Insights
 			// appear in both lists and are never removed from either.
-			n.WorkingDefaults = dropLastNonMandatory(n.WorkingDefaults)
-			return "working default(s)", true
+			freed, err = dropLastNonMandatory(&n.WorkingDefaults)
+			return "working default(s)", freed, err
 		}
 	}
-	return "", false
+	return "", 0, nil
 }
 
-func dropLastNonMandatory(items []NarrativeInsight) []NarrativeInsight {
-	for i := len(items) - 1; i >= 0; i-- {
-		if items[i].Standing != StandingMandatory {
-			return append(items[:i:i], items[i+1:]...)
-		}
+// dropLast removes the last element and reports what its removal takes out of
+// the encoded document: the element itself, plus the comma that separated it
+// from the one before.
+func dropLast[T any](items *[]T) (int, error) {
+	s := *items
+	freed, err := elementBytes(s[len(s)-1], len(s))
+	if err != nil {
+		return 0, err
 	}
-	return items
+	*items = s[:len(s)-1]
+	return freed, nil
+}
+
+func dropLastNonMandatory(items *[]NarrativeInsight) (int, error) {
+	s := *items
+	for i := len(s) - 1; i >= 0; i-- {
+		if s[i].Standing == StandingMandatory {
+			continue
+		}
+		freed, err := elementBytes(s[i], len(s))
+		if err != nil {
+			return 0, err
+		}
+		*items = append(s[:i:i], s[i+1:]...)
+		return freed, nil
+	}
+	return 0, nil
+}
+
+func elementBytes(v any, length int) (int, error) {
+	encoded, err := json.Marshal(v)
+	if err != nil {
+		return 0, err
+	}
+	if length > 1 {
+		return len(encoded) + 1, nil // the separating comma goes with it
+	}
+	return len(encoded), nil
 }

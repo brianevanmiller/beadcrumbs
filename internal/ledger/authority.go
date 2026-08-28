@@ -111,20 +111,14 @@ func (l *Ledger) GrantAuthority(ctx context.Context, c GrantAuthority) (Authorit
 	return out, nil
 }
 
-// effectiveAuthority is the latest level for a target. Events arrive oldest
-// first, so the last authority row wins and no history means advisory.
+// effectiveAuthority is the latest level for one target, read through the same
+// fold every other caller uses.
 func effectiveAuthority(snap Snapshot, target RecordRef) (AuthorityLevel, error) {
-	events, err := snap.Events(EventQuery{Targets: []RecordRef{target}})
+	_, authorities, err := latestJudgements(snap, []RecordRef{target})
 	if err != nil {
 		return "", err
 	}
-	level := AuthorityAdvisory
-	for _, e := range events {
-		if e.Kind == EventAuthority {
-			level = AuthorityLevel(e.Summary)
-		}
-	}
-	return level, nil
+	return authorities[target.ID], nil
 }
 
 func validateAuthorityTarget(ref RecordRef) error {

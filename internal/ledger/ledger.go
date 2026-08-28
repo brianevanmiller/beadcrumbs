@@ -96,8 +96,7 @@ func LoadRepoConfig(ctx context.Context, s Store) (RepoConfig, error) {
 }
 
 // Options is everything one invocation's Ledger needs. Actor is per-invocation
-// rather than per-call because one `bdc` run is one actor by construction, and
-// threading it through every command struct would be eleven chances to forget it.
+// rather than per-call because one `bdc` run is one actor by construction.
 type Options struct {
 	Actor    Provenance
 	Redactor Redactor
@@ -144,9 +143,6 @@ func New(s Store, o Options) *Ledger {
 
 // Config exposes the repository policy the CLI reports in `bdc doctor`.
 func (l *Ledger) Config() RepoConfig { return l.config }
-
-// Actor is the provenance every write this Ledger performs will carry.
-func (l *Ledger) Actor() Provenance { return l.actor }
 
 // clock is UTC-truncated to microseconds, which is DATETIME(6)'s precision. A
 // Go time.Time carries nanoseconds, so without this a value read back never

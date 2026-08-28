@@ -5,47 +5,28 @@ import (
 	"fmt"
 )
 
-// Report is `bdc doctor`. It merges the storage diagnosis with the checks only
-// the domain can make: the three polymorphic target columns that carry no
-// foreign key, and the materialised head revision that nothing else verifies.
+// Report is `bdc doctor`: the storage diagnosis plus the checks only the domain
+// can make — the three polymorphic target columns that carry no foreign key,
+// and the materialised head revision that nothing else verifies.
+//
+// StoreReport is embedded rather than copied field by field. A parallel struct
+// would be a second place for a field to go missing, and Add is then one
+// method with one answer to "what makes a report not OK".
 type Report struct {
-	LedgerPath    string  `json:"ledger_path"`
-	Stealth       bool    `json:"stealth"`
-	SchemaVersion int     `json:"schema_version"`
-	JournalBytes  int64   `json:"journal_bytes"`
-	TotalBytes    int64   `json:"total_bytes"`
-	GCRecommended bool    `json:"gc_recommended"`
-	Counts        Counts  `json:"counts"`
-	Checks        []Check `json:"checks"`
-	OK            bool    `json:"ok"`
+	StoreReport
+	Counts Counts `json:"counts"`
 }
 
-// Add appends a check, mirroring StoreReport.Add: only a failure flips OK.
-func (r *Report) Add(name, status, detail string) {
-	r.Checks = append(r.Checks, Check{Name: name, Status: status, Detail: detail})
-	if status == StatusFail {
-		r.OK = false
-	}
-}
-
-// Doctor reports on an open ledger. It never repairs: an orphan or a drifted
-// head is a defect in a write path, and silently fixing one would hide the bug
-// that produced it.
+// Doctor reports on an open ledger. It is what `bdc doctor` calls: the storage
+// half alone cannot see an orphaned polymorphic target or a drifted head, which
+// are the two defects the schema cannot express as constraints. It never
+// repairs — silently fixing one would hide the write-path bug that produced it.
 func (l *Ledger) Doctor(ctx context.Context) (Report, error) {
 	store, err := l.store.Diagnose(ctx)
 	if err != nil {
 		return Report{}, err
 	}
-	r := Report{
-		LedgerPath:    store.LedgerPath,
-		Stealth:       store.Stealth,
-		SchemaVersion: store.SchemaVersion,
-		JournalBytes:  store.JournalBytes,
-		TotalBytes:    store.TotalBytes,
-		GCRecommended: store.GCRecommended,
-		Checks:        store.Checks,
-		OK:            store.OK,
-	}
+	r := Report{StoreReport: store}
 
 	err = l.store.Read(ctx, func(snap Snapshot) error {
 		orphans, err := snap.OrphanTargets()

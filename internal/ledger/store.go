@@ -92,7 +92,10 @@ type Snapshot interface {
 	Crumbs(CrumbQuery) ([]CrumbRow, error)
 	CrumbLinks(CrumbID) (CrumbLinkRows, error)
 	Insights(InsightQuery) ([]InsightRow, error)
-	Revisions(InsightID) ([]RevisionRow, error)
+	// Revisions is every revision of the named Insights, oldest first within
+	// each. No ids means every revision in the ledger: the readings that walk
+	// revisions want one query, not one per Insight.
+	Revisions(...InsightID) ([]RevisionRow, error)
 	References(ReferenceQuery) ([]ReferenceRow, error)
 	ReferenceLinks(RecordRef) ([]ReferenceLinkRow, error)
 	Proposals(PromotionQuery) ([]ProposalRow, error)

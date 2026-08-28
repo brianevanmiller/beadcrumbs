@@ -270,7 +270,7 @@ func (l *Ledger) References(ctx context.Context, q ReferenceQuery, o ReferenceOp
 	for _, rel := range q.Relations {
 		if !slices.Contains(relations, rel) {
 			return nil, Fail(ErrInvalidInput, "invalid_relation",
-				"%q is not a reference relation; expected one of %s", rel, joinRelations())
+				"%q is not a reference relation; expected one of %s", rel, joinNames(relations))
 		}
 	}
 
@@ -506,9 +506,8 @@ func validateTarget(ref RecordRef) error {
 }
 
 // assertTargetExists is the substitute for the foreign key ref_links.record_id
-// cannot have. The revision and validation lookups walk rather than seek: the
-// storage port has no by-id read for either, and inventing one belongs to the
-// slice that owns the port, not to this one.
+// cannot have. The revision and validation lookups walk rather than seek,
+// because the port has no by-id read for either.
 func assertTargetExists(snap Snapshot, ref RecordRef) error {
 	found, err := targetExists(snap, ref)
 	if err != nil {
@@ -529,19 +528,13 @@ func targetExists(snap Snapshot, ref RecordRef) (bool, error) {
 		rows, err := snap.Proposals(PromotionQuery{IDs: []ProposalID{ProposalID(ref.ID)}})
 		return len(rows) > 0, err
 	case KindRevision:
-		insights, err := snap.Insights(InsightQuery{})
+		revisions, err := snap.Revisions()
 		if err != nil {
 			return false, err
 		}
-		for _, insight := range insights {
-			revisions, err := snap.Revisions(insight.ID)
-			if err != nil {
-				return false, err
-			}
-			for _, rev := range revisions {
-				if string(rev.ID) == ref.ID {
-					return true, nil
-				}
+		for _, rev := range revisions {
+			if string(rev.ID) == ref.ID {
+				return true, nil
 			}
 		}
 		return false, nil

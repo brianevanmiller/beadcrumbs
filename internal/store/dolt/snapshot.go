@@ -216,9 +216,11 @@ func (s *snapshot) Insights(q ledger.InsightQuery) ([]ledger.InsightRow, error) 
 
 // Revisions is the full lineage, oldest first: a revision list is read as a
 // history, not as a feed.
-func (s *snapshot) Revisions(id ledger.InsightID) ([]ledger.RevisionRow, error) {
-	return scanRows(s, `SELECT `+revisionColumns+` FROM insight_revisions
-		WHERE insight_id = ? ORDER BY revision`, []any{string(id)}, scanRevision)
+func (s *snapshot) Revisions(ids ...ledger.InsightID) ([]ledger.RevisionRow, error) {
+	w := newWhere()
+	w.inStrings("insight_id", strs(ids))
+	return scanRows(s, `SELECT `+revisionColumns+` FROM insight_revisions`+
+		w.clause()+` ORDER BY insight_id, revision`, w.args, scanRevision)
 }
 
 func (s *snapshot) References(q ledger.ReferenceQuery) ([]ledger.ReferenceRow, error) {

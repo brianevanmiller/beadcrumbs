@@ -679,7 +679,7 @@ func (l *Ledger) Promotions(ctx context.Context, q PromotionQuery) ([]PromotionV
 	for _, status := range q.Statuses {
 		if !slices.Contains(promotionStatuses, status) {
 			return nil, Fail(ErrInvalidInput, "invalid_status",
-				"%q is not a promotion status; expected one of %s", status, joinStatuses())
+				"%q is not a promotion status; expected one of %s", status, joinNames(promotionStatuses))
 		}
 	}
 	if q.InsightID != "" {
@@ -744,10 +744,4 @@ var promotionStatuses = []PromotionStatus{
 	PromotionProposed, PromotionApplied, PromotionRejected, PromotionFailed, PromotionSuperseded,
 }
 
-func joinStatuses() string {
-	parts := make([]string, len(promotionStatuses))
-	for i, s := range promotionStatuses {
-		parts[i] = string(s)
-	}
-	return strings.Join(parts, ", ")
-}
+
