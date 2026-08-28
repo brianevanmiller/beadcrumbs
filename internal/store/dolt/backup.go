@@ -13,12 +13,9 @@ import (
 	"github.com/brianevanmiller/beadcrumbs/internal/ledger"
 )
 
-// BackupResult is what `bdc backup` reports.
-type BackupResult struct {
-	Destination   string `json:"destination"`
-	Bytes         int64  `json:"bytes"`
-	SchemaVersion int    `json:"schema_version"`
-}
+// BackupResult is what `bdc backup` reports. The port owns the type; this alias
+// keeps the storage package's surface readable without a second definition.
+type BackupResult = ledger.BackupResult
 
 // Backup pushes the ledger — history included, not just the working set — to
 // destURL. A bare filesystem path is accepted and normalised to file://.

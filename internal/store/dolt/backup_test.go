@@ -19,6 +19,13 @@ func TestBackupRestoreRoundTrip(t *testing.T) {
 	seedRows(t, sourceStore, rows)
 
 	wantRows := countRows(t, sourceStore.DB(), "SELECT COUNT(*) FROM round_trip")
+	// Records is every row in the ledger, schema_meta and repo_config included,
+	// so it is measured the same way on both sides rather than assumed equal to
+	// the fixture table's row count.
+	wantRecords, err := countRecords(ctx, sourceStore.DB())
+	if err != nil {
+		t.Fatalf("counting source records: %v", err)
+	}
 	wantCommits := countRows(t, sourceStore.DB(), "SELECT COUNT(*) FROM dolt_log")
 	wantSchema, err := sourceStore.SchemaVersion(ctx)
 	if err != nil {
@@ -52,8 +59,8 @@ func TestBackupRestoreRoundTrip(t *testing.T) {
 	if restored.SchemaVersion != wantSchema {
 		t.Fatalf("restore reports schema %d, want %d", restored.SchemaVersion, wantSchema)
 	}
-	if restored.Records != wantRows {
-		t.Fatalf("restore reports %d records, want %d", restored.Records, wantRows)
+	if restored.Records != wantRecords {
+		t.Fatalf("restore reports %d records, want %d", restored.Records, wantRecords)
 	}
 
 	targetStore := openLedger(t, targetLoc, Config{})

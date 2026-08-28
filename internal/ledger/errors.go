@@ -71,3 +71,10 @@ func (e *Error) WithDetails(d map[string]any) *Error {
 	e.Details = d
 	return e
 }
+
+// NotFound is the one error shape common enough to deserve a constructor: every
+// read that resolves a user-supplied id produces it, and the JSON error code is
+// a single value in the CLI contract's exit-code table.
+func NotFound(what, id string) *Error {
+	return Fail(ErrNotFound, "not_found", "no %s with id %s", what, id)
+}

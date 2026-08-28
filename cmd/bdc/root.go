@@ -167,6 +167,7 @@ func (a *app) prepare(cmd *cobra.Command, _ []string) error {
 		MaxOpenWait: durationAnnotation(cmd, waitAnnotation),
 		MaxOpenHold: durationAnnotation(cmd, holdAnnotation),
 		Command:     a.command,
+		ActorKind:   a.actorKind,
 	})
 	if err != nil {
 		if mode == ledgerOptional {

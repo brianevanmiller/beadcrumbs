@@ -61,8 +61,13 @@ type Config struct {
 	// across agent turns" rule is otherwise unenforceable. Defaults to 30s.
 	MaxOpenHold time.Duration
 
-	// Command names the invocation in a violation report.
+	// Command names the invocation in a violation report and in the Dolt commit
+	// message every write transaction ends with.
 	Command string
+
+	// ActorKind is "human" or "agent". It appears in the commit message and
+	// nowhere else: the commit carries who acted, never what they wrote.
+	ActorKind string
 
 	// OnViolation receives invariant violations. Nil logs to stderr.
 	OnViolation func(Violation)
@@ -162,8 +167,7 @@ func (s *Store) Commit(ctx context.Context, message string) error {
 	return nil
 }
 
-// openEngine is the single place a Dolt engine is constructed. multi is enabled
-// only for migrations, which apply one script as one statement batch.
+// openEngine is the single place a Dolt engine is constructed.
 func openEngine(ctx context.Context, dir, database string, multi bool, wait time.Duration) (*sql.DB, *embeddeddolt.Connector, error) {
 	bo := backoff.NewExponentialBackOff()
 	bo.MaxElapsedTime = wait
@@ -207,8 +211,7 @@ func openEngine(ctx context.Context, dir, database string, multi bool, wait time
 }
 
 // createDatabase creates the Dolt database and applies the embedded schema. It
-// runs on its own engine because migrations need multi-statement mode and
-// because the database does not exist yet.
+// runs on its own engine because the database does not exist yet.
 func createDatabase(ctx context.Context, loc Location) error {
 	release := acquireProcessLock(loc.Dir, "init")
 	defer release()
@@ -294,38 +297,11 @@ func migrations() ([]migration, error) {
 	return out, nil
 }
 
-// applySchema applies every embedded migration above the ledger's current
-// version, in order, each as one statement batch. db must already be connected
-// with MultiStatements enabled and the target database selected.
+// applySchema brings a freshly created database up to the current version. The
+// work lives in applyPending so `bdc init` and `bdc migrate` cannot drift apart.
 func applySchema(ctx context.Context, db *sql.DB) (int, error) {
-	ms, err := migrations()
-	if err != nil {
-		return 0, ledger.FailWith(ledger.ErrIntegrity, "integrity_schema_embed", err,
-			"embedded schema is unusable")
-	}
-	current, err := schemaVersion(ctx, db)
-	if err != nil {
-		return 0, err
-	}
-	for _, m := range ms {
-		if m.version <= current {
-			continue
-		}
-		if _, err := db.ExecContext(ctx, m.body); err != nil {
-			return current, ledger.FailWith(ledger.ErrIntegrity, "integrity_migration_failed", err,
-				"migration %s failed", m.name)
-		}
-		applied, err := schemaVersion(ctx, db)
-		if err != nil {
-			return current, err
-		}
-		if applied != m.version {
-			return current, ledger.Fail(ledger.ErrIntegrity, "integrity_migration_unrecorded",
-				"migration %s ran but schema_meta reports version %d", m.name, applied)
-		}
-		current = applied
-	}
-	return current, nil
+	res, err := applyPending(ctx, db)
+	return res.To, err
 }
 
 func schemaVersion(ctx context.Context, db *sql.DB) (int, error) {

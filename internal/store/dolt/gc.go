@@ -3,14 +3,12 @@ package dolt
 import (
 	"context"
 	"time"
+
+	"github.com/brianevanmiller/beadcrumbs/internal/ledger"
 )
 
 // GCResult is what `bdc doctor` and `bdc gc` report.
-type GCResult struct {
-	BeforeBytes int64 `json:"before_bytes"`
-	AfterBytes  int64 `json:"after_bytes"`
-	DurationMS  int64 `json:"duration_ms"`
-}
+type GCResult = ledger.GCResult
 
 // GCThresholdBytes is the journal size past which `bdc doctor` warns and
 // capture/harvest trigger GC opportunistically. Per-transaction commits reach

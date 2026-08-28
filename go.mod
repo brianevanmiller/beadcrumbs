@@ -6,6 +6,7 @@ require (
 	github.com/cenkalti/backoff/v4 v4.2.1
 	github.com/dolthub/dolt/go v0.40.5-0.20260507221239-14b38e279fc6
 	github.com/dolthub/driver v1.88.1
+	github.com/google/uuid v1.6.0
 	github.com/spf13/cobra v1.8.0
 )
 
@@ -90,7 +91,6 @@ require (
 	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.6 // indirect
 	github.com/googleapis/gax-go/v2 v2.14.2 // indirect
 	github.com/hashicorp/golang-lru v1.0.2 // indirect

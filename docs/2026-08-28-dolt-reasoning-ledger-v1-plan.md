@@ -129,6 +129,7 @@ type Tx interface {
     UpsertProposal(Proposal) (ProposalID, bool, error)       // bool = created
     AppendPromotion(Promotion) error
     InsertReceipt(Receipt) error
+    SetConfig(key, value string) error
 }
 
 type Snapshot interface {
@@ -142,7 +143,9 @@ type Snapshot interface {
     Attempts([]ProposalID) ([]PromotionRow, []ReceiptRow, error)
     Events(EventQuery) ([]EventRow, error)                   // validations + authorities + reviews, time-ordered
     OrphanTargets() ([]OrphanRow, error)                     // every polymorphic-FK scan bdc doctor needs
+    HeadRevisionDrift() ([]HeadDriftRow, error)              // invariant 7; nothing else verifies the head
     Counts(CountQuery) (Counts, error)
+    Config() (map[string]string, error)                      // repo_config, which §1.6 reads before the Ledger exists
 }
 
 type Maintenance interface {
@@ -154,6 +157,9 @@ type Maintenance interface {
 }
 // Restore is deliberately absent: it replaces the directory the Store lives in,
 // so it cannot be a method on an open Store. It is a package function (§1.3).
+// MigrationResult, BackupResult, GCResult, StoreReport, and Check are declared
+// in internal/ledger and aliased in internal/store/dolt: the port owns its own
+// result types, and *dolt.Store cannot satisfy this interface otherwise.
 
 // Redaction runs inside the ledger, on every write path that accepts free text.
 type Redactor interface {
