@@ -445,9 +445,7 @@ func TestReceiptLocatorMayDifferFromTheProposal(t *testing.T) {
 }
 
 // grant makes one human authority grant and fails the test if the ledger
-// refuses it. The grants below are all the ones a human can express through
-// `bdc authority`, which is the point: each of them means something different
-// to the promotion gate.
+// refuses it.
 func grant(t *testing.T, f *fixture, c ledger.GrantAuthority) {
 	t.Helper()
 	human := ledgerWithConfig(t, f, humanActor(), func(*ledger.RepoConfig) {})
@@ -459,11 +457,10 @@ func grant(t *testing.T, f *fixture, c ledger.GrantAuthority) {
 	}
 }
 
-// TestRevisionGrantDoesNotAuthorizePolicyPromotion is the repro for the
-// authority bypass: a human grant made on the Insight revision for an unrelated
-// reason must not let an agent promote a policy-class proposal it authored.
-// Invariant §2.5.4 says `policy` always requires a human, and a grant that
-// never saw this proposal's content is not that human decision.
+// A human grant on the Insight revision, made for an unrelated reason, does not
+// let an agent promote a policy-class proposal it authored: §2.5.4 says `policy`
+// always requires a human, and a grant that never saw this proposal's content is
+// not that decision.
 func TestRevisionGrantDoesNotAuthorizePolicyPromotion(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)
@@ -500,10 +497,8 @@ func TestRevisionGrantDoesNotAuthorizePolicyPromotion(t *testing.T) {
 	}
 }
 
-// TestNarrowedGrantCoversOnlyWhatItNames is the repro for the second half of
-// the bypass: `bdc authority --scope` and `--destination` were recorded and
-// then ignored, so a grant a human deliberately narrowed unlocked every
-// destination. A narrowing the ledger cannot check never widens.
+// A grant narrowed with `--scope` or `--destination` covers only what it names,
+// and a narrowing the ledger cannot interpret never widens.
 func TestNarrowedGrantCoversOnlyWhatItNames(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)
@@ -522,7 +517,7 @@ func TestNarrowedGrantCoversOnlyWhatItNames(t *testing.T) {
 	}
 
 	// A grant scoped to something the ledger cannot interpret, pointed at a
-	// different destination, is exactly the grant that used to unlock this one.
+	// different destination, does not reach this one.
 	grant(t, f, ledger.GrantAuthority{
 		Target: revisionRef, Level: ledger.AuthorityDefault,
 		Scope: "wiki-only", DestinationKind: "wiki", DestinationLocator: "https://example.test/other",

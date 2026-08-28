@@ -36,9 +36,7 @@ type Maintenance interface {
 // row and are otherwise unimplementable: a review reads the Crumb to fill
 // from_state, a revision reads MAX(revision) for its number and parent, an
 // attempt reads MAX(attempt), and prune reads insight_crumbs *before* deleting
-// so it can report blockage per id. A foreign-key violation aborts the whole
-// transaction and loses that per-id answer, so fk_ic_crumb is the backstop, not
-// the check.
+// so it can report blockage per id.
 type Tx interface {
 	Snapshot
 

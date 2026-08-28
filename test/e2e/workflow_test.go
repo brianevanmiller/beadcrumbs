@@ -351,12 +351,9 @@ func TestCoreWorkflowWithoutBeads(t *testing.T) {
 	}
 }
 
-// TestCoreWorkflowWithBeads is the other half of TestCoreWorkflowWithoutBeads,
-// and the only test in the suite that proves the adapter is wired to anything:
+// TestCoreWorkflowWithBeads is the other half of TestCoreWorkflowWithoutBeads:
 // with a real `bd` and a real workspace, doctor has to report the tracker as
-// present and a Beads reference has to come back enriched from it. Without this
-// the absent-Beads gate passes vacuously, because the present-Beads path never
-// runs.
+// present and a Beads reference has to come back enriched from it.
 func TestCoreWorkflowWithBeads(t *testing.T) {
 	if _, err := exec.LookPath("bd"); err != nil {
 		t.Skip("bd is not on PATH, so the detected-tracker path cannot be exercised")
@@ -427,10 +424,8 @@ func bd(t *testing.T, dir string, args ...string) (string, error) {
 }
 
 // TestAgentPromotionRequiresHumanAuthority is the authority axis end to end,
-// with the provenance that makes it fire. Every other e2e run acts as a human,
-// for whom the gate is a no-op — so without this test the refusal, the recorded
-// proposal, the human grant, and the retry are proven nowhere above the domain
-// package.
+// with the agent provenance that makes it fire: every other e2e run acts as a
+// human, for whom the gate is a no-op.
 func TestAgentPromotionRequiresHumanAuthority(t *testing.T) {
 	human := newSession(t, nil)
 	human.bdc("init")

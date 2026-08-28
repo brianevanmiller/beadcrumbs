@@ -14,9 +14,8 @@ type MigrationResult = ledger.MigrationResult
 
 // Migrate is `bdc migrate`: it applies every embedded migration above the
 // ledger's current version. v1 ships exactly one, so on a healthy ledger this
-// reports From == To and applies nothing; it exists so a version mismatch is a
-// repairable state rather than an error the user can only work around by
-// re-initialising, which is why `bdc doctor` names it as the remediation.
+// reports From == To and applies nothing. It is what makes a version mismatch a
+// repairable state, which is why `bdc doctor` names it as the remediation.
 func (s *Store) Migrate(ctx context.Context) (MigrationResult, error) {
 	res, err := applyPending(ctx, s.db)
 	if err != nil {

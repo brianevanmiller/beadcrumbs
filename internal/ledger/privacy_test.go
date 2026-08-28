@@ -273,9 +273,8 @@ func TestPromptInjectionFixturesRoundTripAsData(t *testing.T) {
 }
 
 // assertAbsentEverywhere scans every table and every dolt_history_* table for
-// the secret. A head-only scan passes while the secret sits in committed
-// history, which is precisely the failure mode this ledger has and SQLite did
-// not.
+// the secret: a head-only scan passes while the secret sits in committed
+// history.
 func assertAbsentEverywhere(t *testing.T, f *fixture, secret string) {
 	t.Helper()
 	ctx := context.Background()

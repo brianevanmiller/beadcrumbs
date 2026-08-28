@@ -798,11 +798,8 @@ func (n *Narrative) fit(budget int) ([]Notice, error) {
 		return nil, err
 	}
 	dropped := map[string]int{}
-	// Each drop subtracts the element's own encoding and the comma that
-	// separated it, which is exact for a JSON array; the document is re-encoded
-	// only when that running total says it fits, which both confirms the
-	// arithmetic and keeps this from re-marshalling the whole narrative once
-	// per dropped element.
+	// The running total is exact for a JSON array, so the document is re-encoded
+	// only when it says the narrative fits, rather than once per dropped element.
 	for size > limit {
 		name, freed, err := n.dropOne()
 		if err != nil {

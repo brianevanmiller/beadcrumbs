@@ -32,7 +32,7 @@ func newFixture(t *testing.T) *fixture {
 
 // newFixtureWith injects a Redactor, which is how the redaction-abort paths are
 // reached: the real rule set has no input that both parses and cannot be
-// replaced, and inventing one would test the rules rather than the sequence.
+// replaced.
 func newFixtureWith(t *testing.T, redactor ledger.Redactor, actor ledger.Provenance) *fixture {
 	t.Helper()
 	ctx := context.Background()

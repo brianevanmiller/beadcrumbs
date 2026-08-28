@@ -144,11 +144,9 @@ func TestErrorDetailsSurviveIntoTheEnvelope(t *testing.T) {
 	}
 }
 
-// TestUsageErrorsCarryNeitherTheValueNorTheMessageTwice covers the two ways a
-// Cobra failure reached the envelope wrong: the cause was attached to a message
-// that already was the cause, and a rejected flag value — which can be a token
-// a caller mistyped into the wrong flag — was echoed into JSON that gets logged
-// and pasted.
+// A Cobra failure reaches error.message exactly once and never carries the
+// rejected value: a value mistyped into the wrong flag can be a token, and
+// --json output is routinely logged and pasted.
 func TestUsageErrorsCarryNeitherTheValueNorTheMessageTwice(t *testing.T) {
 	const secret = "sk-ant-notarealkey"
 

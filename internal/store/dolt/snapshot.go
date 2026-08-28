@@ -537,10 +537,7 @@ func (s *snapshot) HeadRevisionDrift() ([]ledger.HeadDriftRow, error) {
 	})
 }
 
-// tally is one `GROUP BY` row. The count is scanned as an integer rather than
-// parsed out of a string: a COUNT(*) that did not read as a number would
-// otherwise become a silent zero, which is indistinguishable from an empty
-// ledger.
+// tally is one `GROUP BY` row.
 type tally struct {
 	name string
 	n    int

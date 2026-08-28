@@ -33,8 +33,7 @@ const (
 
 // writeEnv turns the test binary into one short-lived writer: open, one bounded
 // transaction, close. Concurrency is between processes because that is the only
-// place it exists — the engine's lock is per directory, and a second Open in one
-// process panics by design.
+// place it exists — see holdEnv.
 const (
 	writeEnv    = "BDC_TEST_WRITE"
 	writeTagEnv = "BDC_TEST_WRITE_TAG"

@@ -60,7 +60,6 @@ go build -tags icu_static -trimpath -ldflags "-s -w" -o "$out/bdc" ./cmd/bdc
 
 # A binary that links a Homebrew or distro ICU path is not portable, and that
 # failure is invisible until someone runs it on a machine without that prefix.
-# So the check is on the artifact, not in a comment.
 echo "checking dynamic linkage"
 if [ "$goos" = darwin ]; then
   if otool -L "$out/bdc" | tail -n +2 | grep -vqE '^[[:space:]]+/(usr/lib|System/Library)/'; then

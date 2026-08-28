@@ -459,10 +459,9 @@ func (l *Ledger) RecordPromotion(ctx context.Context, c RecordPromotion) (Receip
 		if err != nil {
 			return err
 		}
-		// The same gate propose applies. Without it, an agent could take the
-		// exit-3 path, ignore it, and record the write anyway — which is
-		// exactly the bypass the authority axis exists to prevent. This one
-		// rolls back: an unauthorised attempt is not a fact worth keeping.
+		// The same gate propose applies, so an agent cannot ignore the exit-3
+		// path and record the write anyway. This one rolls back: an unauthorised
+		// attempt is not a fact worth keeping.
 		required := AuthorityRequiredFor(proposal.Class, proposal.Capabilities, proposal.RequestedAuthority)
 		unmet, err := l.authorityUnmet(tx, required, gateFor(proposal))
 		if err != nil {
@@ -743,5 +742,3 @@ func (l *Ledger) Promotions(ctx context.Context, q PromotionQuery) ([]PromotionV
 var promotionStatuses = []PromotionStatus{
 	PromotionProposed, PromotionApplied, PromotionRejected, PromotionFailed, PromotionSuperseded,
 }
-
-

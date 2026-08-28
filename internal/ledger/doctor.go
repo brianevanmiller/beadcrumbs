@@ -8,10 +8,6 @@ import (
 // Report is `bdc doctor`: the storage diagnosis plus the checks only the domain
 // can make — the three polymorphic target columns that carry no foreign key,
 // and the materialised head revision that nothing else verifies.
-//
-// StoreReport is embedded rather than copied field by field. A parallel struct
-// would be a second place for a field to go missing, and Add is then one
-// method with one answer to "what makes a report not OK".
 type Report struct {
 	StoreReport
 	Counts Counts `json:"counts"`

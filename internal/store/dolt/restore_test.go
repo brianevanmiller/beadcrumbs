@@ -14,7 +14,7 @@ import (
 )
 
 // backupOf builds a ledger with the given rows and returns a backup URL for it.
-func backupOf(t *testing.T, rows int) (dest string, commits int) {
+func backupOf(t *testing.T, rows int) string {
 	t.Helper()
 	repo := fixtureRepo(t)
 	loc := initLedger(t, repo, false)
@@ -24,13 +24,12 @@ func backupOf(t *testing.T, rows int) (dest string, commits int) {
 	}
 	defer store.Close()
 	seedRows(t, store, rows)
-	commits = countRows(t, store.DB(), "SELECT COUNT(*) FROM dolt_log")
 
-	dest = filepath.Join(t.TempDir(), "backup")
+	dest := filepath.Join(t.TempDir(), "backup")
 	if _, err := store.Backup(context.Background(), dest); err != nil {
 		t.Fatalf("backup: %v", err)
 	}
-	return dest, commits
+	return dest
 }
 
 // TestRestoreSwapIsAtomic: the first rename is the commit point, so a restore
@@ -38,7 +37,7 @@ func backupOf(t *testing.T, rows int) (dest string, commits int) {
 // Nothing in between is a legal outcome.
 func TestRestoreSwapIsAtomic(t *testing.T) {
 	ctx := context.Background()
-	dest, _ := backupOf(t, 4)
+	dest := backupOf(t, 4)
 
 	// A live ledger with different content, so a partial swap would be visible.
 	target := fixtureRepo(t)
@@ -94,7 +93,7 @@ func TestRestoreSwapIsAtomic(t *testing.T) {
 // it leaves behind is reported rather than silently ignored.
 func TestKilledRestoreLeavesOriginalIntact(t *testing.T) {
 	ctx := context.Background()
-	dest, _ := backupOf(t, 3)
+	dest := backupOf(t, 3)
 
 	target := fixtureRepo(t)
 	targetLoc := initLedger(t, target, false)
@@ -163,8 +162,7 @@ func TestKilledRestoreLeavesOriginalIntact(t *testing.T) {
 }
 
 // leftoversOf reads the interrupted-restore copies on disk. An unreadable
-// parent is a test failure rather than an empty answer, which is the same
-// distinction the check itself now makes.
+// parent is a test failure rather than an empty answer.
 func leftoversOf(t *testing.T, loc Location) []string {
 	t.Helper()
 	out, err := restoreLeftovers(loc)
@@ -199,7 +197,7 @@ func assertLeftoversReported(t *testing.T, report StoreReport, leftovers []strin
 // pointing at inodes nothing will ever read again.
 func TestRestoreRefusesWhileAnotherProcessHoldsTheLedger(t *testing.T) {
 	ctx := context.Background()
-	dest, _ := backupOf(t, 4)
+	dest := backupOf(t, 4)
 
 	target := fixtureRepo(t)
 	targetLoc := initLedger(t, target, false)

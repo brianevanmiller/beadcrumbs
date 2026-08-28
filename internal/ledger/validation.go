@@ -201,5 +201,3 @@ func validateValidationTarget(ref RecordRef) error {
 	_, err := ParseID(targetPrefixes[ref.Kind], ref.ID)
 	return err
 }
-
-

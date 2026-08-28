@@ -32,11 +32,8 @@ const (
 	// caller gets a typed error instead of a constraint violation.
 	maxCrumbChars = 4096
 
-	// The transcript-shape signals for automatic capture. Redaction removes
-	// secrets and does nothing about the product boundary that says transcripts
-	// are not stored, so automatic input is refused on shape before it is
-	// redacted. Manual content is human-authored and bounded by the size cap
-	// alone.
+	// The transcript-shape signals rejectTranscriptShape applies to automatic
+	// capture. Manual content is human-authored and bounded by the size cap alone.
 	maxAutoCaptureLines  = 12
 	minTranscriptSpeaker = 3
 )
@@ -125,8 +122,6 @@ func (s RefSpec) Validate() error {
 	}
 	return nil
 }
-
-
 
 // CaptureCrumb redacts, then writes. The order is the point: the redactor runs
 // before the transaction opens, so a finding it cannot resolve aborts with

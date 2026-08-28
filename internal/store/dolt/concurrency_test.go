@@ -8,9 +8,9 @@ import (
 	"time"
 )
 
-// concurrentWriters is the plan's figure: enough processes that the lock is
-// contended for most of the run, few enough that the whole test stays inside a
-// normal `go test` budget.
+// concurrentWriters is the release gate's figure (plan §6, "8 processes, zero
+// loss, bounded wait"): enough that the lock is contended for most of the run,
+// few enough that the test stays inside a normal `go test` budget.
 const concurrentWriters = 8
 
 // TestConcurrentShortLivedWriters is the release gate for "concurrent readers

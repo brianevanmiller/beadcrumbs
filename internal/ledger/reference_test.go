@@ -385,9 +385,8 @@ func (e *fakeEnricher) Enrich(_ context.Context, _, _ string) (string, []byte, t
 	return e.label, e.meta, e.at, nil
 }
 
-// seedRevision writes one Insight revision. Harvest synthesis lands in a later
-// slice, and what is under test here is attachment, not how the revision was
-// written.
+// seedRevision writes one Insight revision straight to storage: what is under
+// test here is attachment, not how the revision was written.
 func seedRevision(f *fixture) (ledger.InsightID, ledger.RevisionID) {
 	f.t.Helper()
 	insight, revision := ledger.NewInsightID(), ledger.NewRevisionID()

@@ -44,10 +44,9 @@ func newRedactor(t *testing.T, patterns ...string) *redact.Redactor {
 }
 
 // The secret shapes this build claims to detect. Each case states the secret
-// separately from the text around it and the text is assembled from the two, so
-// the assertion can be "the secret is gone" — the only property that matters,
-// unlike "the output equals a golden string", which would pass while leaving
-// the secret in a different position.
+// separately from the text around it, so the assertion is "the secret is gone"
+// rather than an equality against a golden string, which would pass with the
+// secret still present somewhere else in the output.
 func TestRedactsKnownSecretShapes(t *testing.T) {
 	cases := []struct {
 		name   string

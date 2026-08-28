@@ -17,9 +17,8 @@ import (
 // sequence the installed text documents.
 //
 // The installer needs npx and the npm registry, so this test skips with a named
-// reason when it cannot run. TestFullWorkflowInFixtureRepo covers the same
-// sequence with no installer and no network, which is why that gate exists
-// separately rather than being folded into this one.
+// reason when it cannot run; TestFullWorkflowInFixtureRepo covers the same
+// sequence with no installer and no network.
 
 // installerVersion is pinned rather than floating on latest: an unpinned
 // installer makes this a live dependency test that can fail on somebody else's

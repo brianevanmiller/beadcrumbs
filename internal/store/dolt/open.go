@@ -34,10 +34,8 @@ const (
 )
 
 // schemaFS holds the numbered migrations. Each script is named NNN_<name>.sql
-// and is responsible for recording its version in schema_meta as its last
-// statement — 001 inserts the singleton row, every later script replaces it —
-// which is what makes SchemaVersion the migration state and keeps the runner
-// from having to know the table's shape.
+// and records its own version in schema_meta as its last statement, which is
+// what makes SchemaVersion the migration state. See applyPending.
 //
 //go:embed all:schema
 var schemaFS embed.FS
@@ -178,10 +176,10 @@ func openEngine(ctx context.Context, dir, database string, wait time.Duration) (
 	bo.MaxInterval = time.Second
 
 	con, err := embeddeddolt.NewConnector(embeddeddolt.Config{
-		Directory:       dir,
-		CommitName:      commitName,
-		CommitEmail:     commitEmail,
-		Database:        database,
+		Directory:   dir,
+		CommitName:  commitName,
+		CommitEmail: commitEmail,
+		Database:    database,
 		// Non-nil BackOff is what makes journal lock contention return
 		// nbs.ErrDatabaseLocked instead of blocking for the holder's lifetime.
 		BackOff: bo,

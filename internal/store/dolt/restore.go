@@ -237,9 +237,8 @@ func assertUnheld(ctx context.Context, dir string) error {
 }
 
 // syncTree makes a directory's contents durable: every regular file inside it,
-// then the directory itself. Syncing only the directory — which is what this
-// used to do — flushes its name entries and none of the chunk files Dolt just
-// unpacked into it.
+// then the directory itself. Syncing only the directory flushes its name entries
+// and none of the chunk files Dolt just unpacked into it.
 func syncTree(dir string) error {
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {

@@ -144,8 +144,6 @@ step "the installed binary works"
 ' "$version"
 pass "bdc version --json reports $version"
 
-# version alone exits before the engine opens, so a broken ICU link would still
-# pass above. These do not.
 fixture="$work/fixture"
 mkdir -p "$fixture"
 git -C "$fixture" init -q

@@ -59,10 +59,8 @@ func ParseRepoConfig(kv map[string]string) (RepoConfig, error) {
 }
 
 // parseFlag reads one boolean policy key. An absent key is as much an integrity
-// error as an unparseable one: the seeds write every key, so a missing
-// `authority.agent_may_set_default` means this is not a ledger this build
-// initialised — and answering false for it would be a policy decision made by a
-// bug rather than by the repository.
+// error as an unparseable one: the seeds write every key, so a missing one means
+// this is not a ledger this build initialised.
 func parseFlag(kv map[string]string, key string) (bool, error) {
 	raw, ok := kv[key]
 	if !ok {

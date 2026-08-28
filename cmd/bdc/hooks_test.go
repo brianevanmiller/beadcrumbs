@@ -32,7 +32,11 @@ func TestMain(m *testing.M) {
 
 func runHolder(dir string) int {
 	store, err := dolt.Open(context.Background(), dolt.Location{Dir: dir, Stealth: true}, dolt.Config{
-		MaxOpenWait: 5 * time.Second,
+		// The holder races the parent's just-closed engine for the same
+		// directory lock, so its budget matches the parent's readiness timeout
+		// below. A short one turns a loaded machine into a failure whose subject
+		// is the holder's patience rather than the hook's behaviour.
+		MaxOpenWait: 30 * time.Second,
 		MaxOpenHold: time.Hour, // holding it is the whole job
 		Command:     "test-holder",
 	})
@@ -283,31 +287,12 @@ func TestUninstallLeavesAForeignHookAlone(t *testing.T) {
 	}
 }
 
-// The `{hook, action, result}` and `{hooks[], chained[]}` shapes are published
-// in the CLI contract. `hooks` is not in the golden table — that table is owned
-// elsewhere — so the shape is asserted here rather than nowhere.
-func TestHooksEnvelopeMatchesTheContract(t *testing.T) {
+// A trigger name `hooks run` does not recognise is a configuration mistake in
+// whoever called it, so it fails as a usage error rather than declining
+// silently. The hooks envelope shapes themselves are pinned by the golden table.
+func TestUnknownHookTriggerIsAUsageError(t *testing.T) {
 	h := newHookFixture(t)
 	h.run(t, "init")
-
-	for _, tc := range []struct {
-		args []string
-		want []string
-	}{
-		{[]string{"hooks", "install"}, []string{"hooks", "chained", "auto_harvest"}},
-		{[]string{"hooks", "uninstall"}, []string{"hooks", "chained", "auto_harvest"}},
-		{[]string{"hooks", "run", "pre-push"}, []string{"hook", "action", "result"}},
-	} {
-		data := h.data(t, h.run(t, tc.args...))
-		if len(data) != len(tc.want) {
-			t.Errorf("%v returned %d keys, want %d: %v", tc.args, len(data), len(tc.want), data)
-		}
-		for _, key := range tc.want {
-			if _, ok := data[key]; !ok {
-				t.Errorf("%v is missing data.%s", tc.args, key)
-			}
-		}
-	}
 
 	unknown := h.run(t, "hooks", "run", "not-a-trigger")
 	if unknown.exit != exitUsage {
