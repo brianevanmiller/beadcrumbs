@@ -203,11 +203,11 @@ const (
 
 // run executes one `bd` subcommand and returns its stdout.
 //
-// stderr is captured into its own buffer and dropped. That is deliberate rather
-// than lazy: `bd` prints advisory prose there even under `--quiet`, failure
-// messages there are plain text on most commands, and issue text can appear in
-// both — so it may never be parsed and may never be quoted into an error that
-// the ledger's privacy scan would then have to defend.
+// stderr is captured into its own buffer and dropped: `bd` prints advisory prose
+// there even under `--quiet`, failure messages there are plain text on most
+// commands, and issue text can appear in both — so it may never be parsed and
+// may never be quoted into an error the ledger's privacy scan would then have to
+// defend.
 func (a *Adapter) run(ctx context.Context, sc scope, stdin []byte, args ...string) ([]byte, error) {
 	full := make([]string, 0, len(args)+5)
 	switch sc {

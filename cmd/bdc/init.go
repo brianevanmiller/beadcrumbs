@@ -18,7 +18,7 @@ type initData struct {
 }
 
 func (a *app) newInitCommand() *cobra.Command {
-	var visible, stealth, force bool
+	var visible, force bool
 
 	cmd := &cobra.Command{
 		Use:   "init",
@@ -32,12 +32,15 @@ func (a *app) newInitCommand() *cobra.Command {
 		Args:        cobra.NoArgs,
 		Annotations: map[string]string{ledgerAnnotation: string(ledgerAbsent)},
 	}
-	cmd.Flags().BoolVar(&stealth, "stealth", false, "place the ledger inside .git (default)")
+	// --stealth is the default and needs no variable: it exists so the default
+	// can be stated explicitly and so --visible has something to be mutually
+	// exclusive with.
+	cmd.Flags().Bool("stealth", false, "place the ledger inside .git (default)")
 	cmd.Flags().BoolVar(&visible, "visible", false, "place the ledger at <main-worktree>/.beadcrumbs")
 	cmd.Flags().BoolVar(&force, "force", false, "replace a target directory that holds no Dolt database")
 	cmd.MarkFlagsMutuallyExclusive("stealth", "visible")
 
-	cmd.RunE = a.handle(func(cmd *cobra.Command, _ []string) (result, error) {
+	cmd.RunE = a.handle(func(cmd *cobra.Command, _ []string) (res result, err error) {
 		ctx := cmd.Context()
 		loc := a.loc.Resolve(visible)
 
@@ -50,7 +53,14 @@ func (a *app) newInitCommand() *cobra.Command {
 		if err != nil {
 			return result{}, err
 		}
-		defer store.Close()
+		// init opens its own engine, so it owns the close. A close that fails
+		// after a successful init means the last commit may not have landed,
+		// which the caller has to hear about.
+		defer func() {
+			if closeErr := store.Close(); closeErr != nil && err == nil {
+				res, err = result{}, closeErr
+			}
+		}()
 		schema, err := store.SchemaVersion(ctx)
 		if err != nil {
 			return result{}, err

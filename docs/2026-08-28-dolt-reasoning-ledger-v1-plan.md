@@ -995,22 +995,23 @@ fails mid-transaction rolls back and reports one error.
 | `bdc crumb review <id>...` | `--state accepted\|rejected` `--rationale` (required) | `{crumbs[], events[]}` |
 | `bdc crumb prune` | `--id` (repeatable) `--before` `--state candidate` `--yes` (required) | `{pruned, pruned_ids[], blocked[]}` |
 | `bdc harvest` | `--crumb` (repeatable) `--since` `--title` `--content\|--content-file` `--class` `--confidence` `--auto` `--dry-run` | `{harvest, insight, revision, crumbs_captured[], redaction:{version, findings}}` |
-| `bdc insight list` | `--class` `--since` `--verdict` `--authority` `--limit` | `{insights[], total}` |
+| `bdc insight list` | `--class` `--since` `--verdict` `--authority` `--limit` `--offset` | `{insights[], total}` |
 | `bdc insight show <id>` | `--revision` `--lineage` | `{insight, revision, revisions[], crumbs[], references[], validations[], authorities[], proposals[]}` |
 | `bdc insight revise <id>` | `--content\|--content-file` `--rationale` (required) `--title` `--class` `--confidence` `--crumb` | `{insight, revision}` |
 | `bdc validate <target-id>` | `--verdict` `--rationale` (required) `--evidence kind:locator` `--superseded-by` | `{validation, effective_verdict}` |
 | `bdc authority <target-id>` | `--level` `--scope` `--destination kind:locator` `--rationale` (required) | `{authority, effective_level}` |
 | `bdc reference add <target-id>` | `--kind` `--locator` `--workspace` `--relation` `--label` | `{reference, link}` |
-| `bdc reference list` | `--target` `--kind` `--relation` `--refresh` | `{references[]}` each with `fetched_at` |
+| `bdc reference list` | `--target` `--kind` `--relation` `--refresh` `--limit` | `{references[]}` each with `fetched_at` |
 | `bdc promote propose` | `--insight` `--revision` `--class` `--destination kind:locator` `--workspace` `--capability` (repeatable) `--evidence kind:locator[@relation]` (repeatable) `--content\|--content-file` `--authority` `--supersedes` `--confidence` | `{proposal, created, content_hash, authority_required}` |
 | `bdc promote record <proposal-id>` | `--locator` (required) `--anchor` `--external-hash` `--verified` | `{promotion, receipt, durable}` |
 | `bdc promote reject <proposal-id>` | `--rationale` (required) | `{promotion}` |
 | `bdc promote fail <proposal-id>` | `--detail` (required) | `{promotion}` |
-| `bdc promote list` | `--insight` `--status` `--destination-kind` | `{proposals[]}` each with `attempts[]`, `receipt` |
+| `bdc promote list` | `--insight` `--status` `--destination-kind` `--limit` | `{proposals[]}` each with `attempts[]`, `receipt` |
 | `bdc context` | `--since` `--insight` `--limit` `--budget` | `{summary, insights[], open_questions[], recent_crumbs[], promotions[]}` |
 | `bdc handoff` | `--since` `--budget` | `{summary, state, unreviewed_crumbs, open_proposals[], workspace}` |
 | `bdc prime` | `--budget` | `{summary, working_defaults[], mandatory[], cautions[]}` |
 | `bdc doctor` | `--verbose` | `{checks[], schema_version, journal_bytes, ledger_path, beads, ok}` |
+| `bdc migrate` | — | `{from, to, applied[]}` |
 | `bdc backup <dest-url>` | — | `{destination, bytes, schema_version}` |
 | `bdc restore <src-url>` | `--force` (required if a ledger exists) | `{restored, schema_version, records}` |
 | `bdc gc` | — | `{before_bytes, after_bytes, duration_ms}` |
@@ -1020,6 +1021,21 @@ fails mid-transaction rolls back and reports one error.
 
 `--budget` bounds `context`/`handoff`/`prime` output in approximate tokens; the default is
 declared in the skill so agents can rely on it.
+
+`--limit`/`--offset` are pagination on the three listings that can grow without bound; they were
+implemented beyond this table and are recorded here rather than removed, because a listing a
+caller cannot page is a listing that eventually stops being usable.
+
+`bdc migrate` is what makes a schema-version mismatch a repairable state rather than one the
+user can only escape by re-initialising, and it is the command `bdc doctor` names for that
+check. It was added after review found `Store.Migrate` had no caller and doctor's remediation
+pointed at `bdc init`, which returns early on an existing ledger without applying anything.
+
+`bdc doctor` runs the domain's own invariant checks — `polymorphic_targets` and `head_revision`
+from §2.5.1 and §2.5.7 — on top of the storage report whenever the ledger opens, and reports the
+Beads detection result under `beads`. It is `ledgerOptional`, so it always exits 0 with
+`error:null`: a missing ledger is the failing `ledger_present` check inside `data`, never an
+exit code. The skill branches on `data` accordingly.
 
 `bdc promote record`, `reject`, and `fail` are the three terminal outcomes of one attempt, and
 all three are needed: `record` links a receipt, `reject` says a human decided not to write, and
@@ -1131,9 +1147,12 @@ Codex's hook surface is shape-compatible (same stdin JSON: `session_id`, `transc
 surface; for them the skill body is the whole integration.
 
 **Hooks are lock-aware or they are worse than nothing.** A `pre-push`, `post-merge`, or
-`PreCompact` hook can fire while another `bdc` process owns the engine. Every hook invocation
-therefore sets a longer `MaxOpenWait` (60 s, not the 15 s default) and, on `ErrBusy`, **exits 0**
-after writing one line to stderr naming the skipped action. A hook must never fail a `git push`,
+`PreCompact` hook can fire while another `bdc` process owns the engine. A hook invocation that
+may harvest therefore sets a longer `MaxOpenWait` (60 s, not the 15 s default) and, on `ErrBusy`,
+**exits 0** after writing one line to stderr naming the skipped action. A trigger that only
+reports — `stop`, which fires at every agent turn end and writes nothing under any configuration
+— declines after 2 s instead: the 60 s exists so a harvest is not lost, and there is no harvest
+to lose. A hook must never fail a `git push`,
 and a hook that silently swallows the miss is how a harvest gets lost — the line on stderr is the
 difference. The chained shims preserve the pre-existing hook's exit status; `bdc`'s own status is
 never allowed to override it.
@@ -1259,18 +1278,25 @@ without CGO and ICU4C — so the tag would only hide the tests that matter.
 | Missing Beads and destinations degrade without corrupting core | `TestEnrichFailureIsWarningNotError` (adapter tier), `TestCoreWorkflowWithoutBeads` (CLI tier — lives with the e2e workflow because it needs the whole CLI, which does not exist at S9) | `internal/beads/degrade_test.go`, `test/e2e/workflow_test.go` |
 | `bd --json` changes fail with a bounded adapter error | `TestPlainTextFailureIsNeverParsed`, `TestVersionBelowFloorDisablesAdapter`, `TestUnknownFieldsAreTolerated` | `internal/beads/contract_test.go` |
 | End-to-end workflow against a real ledger | `TestFullWorkflowInFixtureRepo` (capture→review→harvest→insight→propose→record→context→handoff, documented `bdc` commands only, no installer and no network) | `test/e2e/workflow_test.go` |
-| Skill installs in a clean fixture and completes the workflow | `TestSkillInstallAndFullWorkflow` (`npx skills add <local path>`, then the same sequence; skipped with a named reason when `npx` is unavailable, which is why the gate above exists separately) | `test/e2e/skill_test.go` |
+| Skill installs in a clean fixture and completes the workflow | `TestSkillInstallAndFullWorkflow` (`npx skills add <local path>`, then the same sequence; skipped with a named reason when `npx` is unavailable, which is why the gate above exists separately, and `BDC_REQUIRE_INSTALLER=1` turns the skip into a failure so a release run can pin it) | `test/e2e/skill_test.go` |
 | *(added)* exit codes are stable | `TestExitCodeForEachErrorClass` | `cmd/bdc/errors_test.go` |
 | *(added)* the authority-blocked envelope carries the recorded proposal | `TestGoldenEnvelope/promote.propose.authority_required` (exit 3, `data:null`, `error.details.proposal_id` present) | `cmd/bdc/golden_test.go` |
 | *(added)* Beads absence, staleness, and workspace absence are distinguishable | `TestDetectionLadderSeparatesNotInstalledFromNoWorkspace`, `TestVersionDetectionRunsWithoutDashC` | `internal/beads/detect_test.go` |
 | *(added)* optional Beads fields never gate the adapter | `TestMissingPrefixDoesNotDisableAdapter`, `TestWorktreeFlagIsNotWorkspaceIdentity` | `internal/beads/detect_test.go` |
 | *(added)* a hook that loses the lock degrades, it does not fail the git operation | `TestHookExitsZeroWhenLedgerBusy` | `cmd/bdc/hooks_test.go` |
+| *(added, review)* a report-only trigger does not spend the harvest budget | `TestReportOnlyTriggerDeclinesWithoutWaitingOutTheHarvestBudget` (`stop` declines fast, `pre-push` still waits) | `cmd/bdc/hooks_test.go` |
+| *(added, review)* Beads present is exercised, not only Beads absent | `TestCoreWorkflowWithBeads` (real `bd` workspace: `doctor.beads.present`, a live-enriched Reference, `handoff.workspace.enrichment`) | `test/e2e/workflow_test.go` |
+| *(added, review)* the authority gate fires end to end for an agent actor | `TestAgentPromotionRequiresHumanAuthority` (exit 3 → human `bdc authority` → exit 0 against the same proposal) | `test/e2e/workflow_test.go` |
+| *(added, review)* the shipped harness shim records usable agent provenance | `TestHarnessShimRecordsUsableAgentProvenance` (runs `hooks/bdc-hook.sh` the way a harness does) | `test/e2e/workflow_test.go` |
+| *(added, review)* the skill's no-ledger detection matches doctor's contract | `TestDoctorReportsAMissingLedgerInsideTheEnvelope` (exit 0, `error:null`, failing `ledger_present`, and SKILL.md names that check) | `test/e2e/workflow_test.go` |
+| *(added, review)* usage errors carry neither the rejected value nor the message twice | `TestUsageErrorsCarryNeitherTheValueNorTheMessageTwice` | `cmd/bdc/errors_test.go` |
 
 ### Release
 
 | Design bullet | Gate |
 |---|---|
-| Unit, integration, race, e2e pass on supported Go versions | CI matrix: go 1.26.2 and latest, `go test ./...` then `go test -race ./...`; no build tag, per this section's preamble |
+| Unit, integration, race, e2e pass on supported Go versions | CI matrix: go 1.26.2 and latest, `go test -race ./...` only — the race run is a superset of the plain one, and running both doubled a four-cell matrix to prove nothing more; no build tag, per this section's preamble |
+| The optional Beads path is exercised, not only skipped | CI installs the pinned `bd` release before the test job. The step is `continue-on-error`, so a third-party download cannot fail the build; `TestCoreWorkflowWithBeads` then skips with a named reason |
 | Release binaries carry no non-system dylibs | CI asserts `otool -L` (macOS) / `ldd` (Linux) on the `-tags icu_static` artifact — the dynamic build links an absolute Homebrew `icu4c@78` path and is not portable |
 | macOS and Linux package smoke tests use isolated prefixes | `test/packaging/smoke.sh` — runs the real `postinstall.js` against the published asset into `$(mktemp -d)`, verifies the checksum, asserts `otool -L`/`ldd` shows no non-system dylib, then runs `bdc version --json` **and** `bdc init` + `bdc capture` + `bdc doctor`. `version` alone exits before the engine opens, so it passes on a binary whose ICU linkage is broken |
 | Windows supported only if proven | not proven → README states "not supported", CI has no Windows job |

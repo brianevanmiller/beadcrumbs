@@ -58,7 +58,7 @@ bdc promote propose --insight ins_… --class decision \
   --destination beads:bdc-7ah --workspace "$(pwd)" \
   --capability stable-anchor --capability append-only --content-file - --json
 
-bd comment add bdc-7ah --json <<'EOF'
+bd comment bdc-7ah --stdin --json <<'EOF'
 …the rendered proposal content…
 EOF
 

@@ -6,14 +6,26 @@ JSON goes to stdout, prose goes to stderr, and warnings survive a failure.
 ```json
 {
   "bdc": "1",
-  "command": "capture",
+  "command": "reference.list",
   "ok": true,
   "data": {},
-  "warnings": [{"code": "beads_unavailable", "message": "bd not found on PATH"}],
+  "warnings": [{"code": "beads_unavailable",
+                "message": "beads references resolve to their locator; bd is unavailable here: not_installed"}],
   "error": null,
   "meta": {"bdc_version": "1.0.0", "ledger_schema": 1, "generated_at": "2026-08-28T14:00:00.000000Z"}
 }
 ```
+
+## 0. Provenance
+
+```
+export BDC_ACTOR_KIND=agent BDC_ACTOR_MODEL="<your model id>" BDC_SESSION="<this session id>"
+```
+
+Every record carries `{actor_id, actor_kind, actor_model, session_id}`. An agent
+actor needs both a model and a session or the write is refused; with neither set
+the run is recorded as a human, which satisfies every authority gate. `--actor`,
+`--actor-kind`, `--model`, and `--session` override the environment per command.
 
 ## 1. Check the ledger
 
@@ -22,6 +34,13 @@ bdc version --json      # {version, schema_version, dolt_driver, go, platform}
 bdc doctor --json       # {checks[], schema_version, journal_bytes, ledger_path, beads, ok}
 bdc init --json         # only after asking. {path, stealth, schema_version, created}
 ```
+
+`doctor` never exits nonzero for an unhealthy ledger and never populates
+`error`: it always returns `ok:true` with the diagnosis in `data`. Read
+`data.ok` and `data.checks[]` — `ledger_present` failing is the no-ledger
+state, `ledger_lock` failing is another process holding the engine, and
+`schema_version` failing is repaired by `bdc migrate --json`, never by
+`bdc init`.
 
 `bdc init` is stealth by default: the ledger lives at `<git-common-dir>/beadcrumbs`
 and never appears in `git status`. `--visible` puts it at `<repo>/.beadcrumbs`.
@@ -55,9 +74,10 @@ bdc capture "The engine holds an exclusive directory lock for the life of a comm
 `subject`, `spawned-work`. `--from-file <path>` and `-` for stdin read the text
 instead of taking it as an argument.
 
-Two identical captures in one session resolve to one Crumb. Confidence is
-written once and never rewritten — a later judgement is a validation, not an
-edit.
+Two identical captures in one session resolve to one Crumb — keyed on the
+session id, so with no `--session` or `BDC_SESSION` there is no dedup and a
+repeated capture is a second Crumb. Confidence is written once and never
+rewritten: a later judgement is a validation, not an edit.
 
 If redaction rewrote the text you get a `redacted` warning naming the rule, the
 offset, and the length, never the secret. If it could not resolve a finding, the
@@ -196,3 +216,13 @@ A reference is an opaque `kind:locator` plus a relation. Cached tracker metadata
 is never authoritative: every read states its freshness (`live`, `cached`,
 `never`). If `bd` is missing the reference still resolves to its locator and the
 enrichment is reported as `never`, which is a state and not an error.
+
+`--refresh` warns rather than fails when it cannot observe: `beads_unavailable`
+once for the kind when `bd` is missing, too old, or has no workspace here (the
+reason is in the message), `no_enricher` once for a kind no adapter serves, and
+`enrich_failed` per reference the adapter answered for and could not read.
+
+`bdc doctor --json` reports what detection found under `beads`:
+`{present, reason, version, prefix, project_id, repo_root}`, where `reason` is
+`ok`, `not_installed`, `version_unreadable`, `below_floor`, or `no_workspace`.
+The global `--no-enrich` skips detection entirely and reports `beads: null`.

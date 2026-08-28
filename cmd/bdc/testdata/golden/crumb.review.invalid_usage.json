@@ -6,7 +6,7 @@
   "warnings": [],
   "error": {
     "code": "invalid_usage",
-    "message": "required flag(s) \"state\" not set: required flag(s) \"state\" not set",
+    "message": "required flag(s) \"state\" not set",
     "details": null
   },
   "meta": {

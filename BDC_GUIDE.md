@@ -15,10 +15,11 @@ one error.
 ```json
 {
   "bdc": "1",
-  "command": "capture",
+  "command": "reference.list",
   "ok": true,
   "data": {},
-  "warnings": [{"code": "beads_unavailable", "message": "bd not found on PATH"}],
+  "warnings": [{"code": "beads_unavailable",
+                "message": "beads references resolve to their locator; bd is unavailable here: not_installed"}],
   "error": null,
   "meta": {"bdc_version": "1.0.0", "ledger_schema": 1, "generated_at": "2026-08-28T14:00:00.000000Z"}
 }
@@ -70,7 +71,22 @@ Creates the ledger at `<git-common-dir>/beadcrumbs`, which every linked worktree
 `--verbose`
 
 → `{checks[], schema_version, journal_bytes, ledger_path, beads, ok}` — each check is
-`{name, status, detail}`. Exit 5 with `no_ledger` means this repository has none.
+`{name, status, detail}`, and `beads` is what the optional tracker detection found
+(`null` under `--no-enrich`).
+
+doctor reports health inside the envelope and always exits 0 with `error: null` — a ledger it
+cannot open is what it exists for. Branch on `data`, never on the exit code: `ledger_present`
+failing is "no ledger here", `ledger_lock` failing is another process holding the engine, and
+`schema_version` failing is a mismatch `bdc migrate` repairs.
+
+### `bdc migrate`
+
+Applies the schema migrations this build ships and the ledger has not. Idempotent: a current
+ledger reports `from == to` and applies nothing. This is the repair for a `schema_version`
+mismatch — `bdc init` is not, because it returns early on an existing ledger. A ledger newer
+than this build cannot be repaired downward; upgrade bdc.
+
+→ `{from, to, applied[]}`
 
 ### `bdc version`
 

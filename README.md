@@ -136,6 +136,15 @@ Install the skill into any repository:
 npx -y skills add brianevanmiller/beadcrumbs --yes
 ```
 
+An agent should say who it is before its first write:
+
+```bash
+export BDC_ACTOR_KIND=agent BDC_ACTOR_MODEL="<model id>" BDC_SESSION="<session id>"
+```
+
+All three or none — an agent actor needs both a model and a session. With none of them a run is
+recorded as a human's, and `human` is the value every authority gate is satisfied by.
+
 It installs to `.agents/skills/beadcrumbs` and symlinks each detected agent directory at it. Pin
 the tag (`brianevanmiller/beadcrumbs/tree/v1.0.0/skills/beadcrumbs`) if you need a reproducible
 install; the installer tracks a content hash in `skills-lock.json`, not a version.
@@ -150,10 +159,11 @@ hooks. Automatic harvesting is off by default and opted into per repository with
 ```json
 {
   "bdc": "1",
-  "command": "capture",
+  "command": "reference.list",
   "ok": true,
   "data": {},
-  "warnings": [{"code": "beads_unavailable", "message": "bd not found on PATH"}],
+  "warnings": [{"code": "beads_unavailable",
+                "message": "beads references resolve to their locator; bd is unavailable here: not_installed"}],
   "error": null,
   "meta": {"bdc_version": "1.0.0", "ledger_schema": 1, "generated_at": "2026-08-28T14:00:00.000000Z"}
 }

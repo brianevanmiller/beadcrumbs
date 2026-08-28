@@ -122,11 +122,7 @@ func (a *app) newPromoteProposeCommand() *cobra.Command {
 	_ = cmd.MarkFlagRequired("class")
 	_ = cmd.MarkFlagRequired("destination")
 
-	cmd.RunE = a.handle(func(cmd *cobra.Command, _ []string) (result, error) {
-		led, err := a.ledger(cmd.Context())
-		if err != nil {
-			return result{}, err
-		}
+	cmd.RunE = a.handleLedger(func(cmd *cobra.Command, _ []string, led *ledger.Ledger) (result, error) {
 		id, err := ledger.ParseID(ledger.PrefixInsight, insight)
 		if err != nil {
 			return result{}, err
@@ -215,11 +211,7 @@ func (a *app) newPromoteRecordCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&verified, "verified", false, "the recorder observed the written record rather than asserting it")
 	_ = cmd.MarkFlagRequired("locator")
 
-	cmd.RunE = a.handle(func(cmd *cobra.Command, args []string) (result, error) {
-		led, err := a.ledger(cmd.Context())
-		if err != nil {
-			return result{}, err
-		}
+	cmd.RunE = a.handleLedger(func(cmd *cobra.Command, args []string, led *ledger.Ledger) (result, error) {
 		id, err := ledger.ParseID(ledger.PrefixProposal, args[0])
 		if err != nil {
 			return result{}, err
@@ -262,11 +254,7 @@ func (a *app) newPromoteRejectCommand() *cobra.Command {
 	cmd.Flags().StringVar(&rationale, "rationale", "", "why this was not written (required)")
 	_ = cmd.MarkFlagRequired("rationale")
 
-	cmd.RunE = a.handle(func(cmd *cobra.Command, args []string) (result, error) {
-		led, err := a.ledger(cmd.Context())
-		if err != nil {
-			return result{}, err
-		}
+	cmd.RunE = a.handleLedger(func(cmd *cobra.Command, args []string, led *ledger.Ledger) (result, error) {
 		id, err := ledger.ParseID(ledger.PrefixProposal, args[0])
 		if err != nil {
 			return result{}, err
@@ -297,11 +285,7 @@ func (a *app) newPromoteFailCommand() *cobra.Command {
 	cmd.Flags().StringVar(&detail, "detail", "", "what went wrong (required)")
 	_ = cmd.MarkFlagRequired("detail")
 
-	cmd.RunE = a.handle(func(cmd *cobra.Command, args []string) (result, error) {
-		led, err := a.ledger(cmd.Context())
-		if err != nil {
-			return result{}, err
-		}
+	cmd.RunE = a.handleLedger(func(cmd *cobra.Command, args []string, led *ledger.Ledger) (result, error) {
 		id, err := ledger.ParseID(ledger.PrefixProposal, args[0])
 		if err != nil {
 			return result{}, err
@@ -337,11 +321,7 @@ func (a *app) newPromoteListCommand() *cobra.Command {
 	cmd.Flags().StringArrayVar(&destKind, "destination-kind", nil, "only this adapter namespace (repeatable)")
 	cmd.Flags().IntVar(&limit, "limit", 0, "return at most this many proposals")
 
-	cmd.RunE = a.handle(func(cmd *cobra.Command, _ []string) (result, error) {
-		led, err := a.ledger(cmd.Context())
-		if err != nil {
-			return result{}, err
-		}
+	cmd.RunE = a.handleLedger(func(cmd *cobra.Command, _ []string, led *ledger.Ledger) (result, error) {
 		q := ledger.PromotionQuery{DestKinds: destKind, Limit: limit}
 		if insight != "" {
 			id, err := ledger.ParseID(ledger.PrefixInsight, insight)

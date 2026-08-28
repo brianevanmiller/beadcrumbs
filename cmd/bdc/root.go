@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/brianevanmiller/beadcrumbs/internal/beads"
 	"github.com/brianevanmiller/beadcrumbs/internal/ledger"
 	"github.com/brianevanmiller/beadcrumbs/internal/redact"
 	"github.com/brianevanmiller/beadcrumbs/internal/store/dolt"
@@ -48,6 +49,7 @@ type app struct {
 	store   *dolt.Store
 	openErr error
 	led     *ledger.Ledger
+	tracker tracker
 
 	// Recorded by the command body so main can emit exactly one envelope.
 	command string
@@ -99,8 +101,10 @@ func (a *app) newRootCommand() *cobra.Command {
 	f.BoolVar(&a.jsonOut, "json", false, "emit the JSON envelope on stdout")
 	f.BoolVar(&a.quiet, "quiet", false, "suppress warnings on stderr")
 	f.StringVarP(&a.directory, "directory", "C", "", "run as if bdc were started in this directory")
-	f.StringVar(&a.actor, "actor", defaultActor(), "who is acting (recorded as provenance)")
-	f.StringVar(&a.actorKind, "actor-kind", envOr("BDC_ACTOR_KIND", "human"), "human or agent")
+	f.StringVar(&a.actor, "actor", os.Getenv("BDC_ACTOR"),
+		"who is acting (recorded as provenance; default $BDC_ACTOR, then $USER for a human and the model for an agent)")
+	f.StringVar(&a.actorKind, "actor-kind", os.Getenv("BDC_ACTOR_KIND"),
+		"human or agent (default $BDC_ACTOR_KIND, then agent when both --model and --session are set)")
 	f.StringVar(&a.model, "model", os.Getenv("BDC_ACTOR_MODEL"), "acting agent's model identifier")
 	f.StringVar(&a.session, "session", os.Getenv("BDC_SESSION"), "session identifier for grouping provenance")
 	f.BoolVar(&a.noEnrich, "no-enrich", false, "skip optional tracker enrichment")
@@ -111,6 +115,7 @@ func (a *app) newRootCommand() *cobra.Command {
 		a.newVersionCommand(),
 		a.newInitCommand(),
 		a.newDoctorCommand(),
+		a.newMigrateCommand(),
 		a.newBackupCommand(),
 		a.newRestoreCommand(),
 		a.newGCCommand(),
@@ -132,16 +137,18 @@ func (a *app) newRootCommand() *cobra.Command {
 
 // prepare resolves the ledger for the command about to run. It is the only
 // caller of dolt.Discover and dolt.Open.
-func (a *app) prepare(cmd *cobra.Command, _ []string) error {
+func (a *app) prepare(cmd *cobra.Command, args []string) error {
 	a.command = commandName(cmd)
 	a.out.jsonMode = a.jsonOut
 	a.out.quiet = a.quiet
 	a.out.schema = func() int { return dolt.CurrentSchemaVersion() }
 
+	a.actorKind = resolveActorKind(a.actorKind, a.model, a.session)
 	if a.actorKind != "human" && a.actorKind != "agent" {
 		return ledger.Fail(ledger.ErrInvalidInput, "invalid_actor_kind",
 			"--actor-kind must be human or agent, got %q", a.actorKind)
 	}
+	a.actor = resolveActor(a.actor, a.actorKind)
 
 	cwd := a.directory
 	if cwd == "" {
@@ -155,12 +162,16 @@ func (a *app) prepare(cmd *cobra.Command, _ []string) error {
 	a.cwd = cwd
 
 	mode := ledgerModeOf(cmd)
+	if mode == ledgerDetached {
+		// `bdc version` and `bdc --help` need nothing from Git, and Discover
+		// costs four `git` subprocesses. The Stop hook runs one of these at
+		// every agent turn end.
+		return nil
+	}
 	loc, discoverErr := dolt.Discover(cmd.Context(), cwd)
 	a.loc = loc
 	switch {
 	case discoverErr == nil:
-	case mode == ledgerDetached:
-		return nil
 	case mode == ledgerRequired:
 		return discoverErr
 	case errors.Is(discoverErr, ledger.ErrNoLedger):
@@ -174,12 +185,16 @@ func (a *app) prepare(cmd *cobra.Command, _ []string) error {
 		return discoverErr
 	}
 
-	if mode == ledgerDetached || mode == ledgerAbsent {
+	if mode == ledgerAbsent {
 		return nil
 	}
 
+	wait := durationAnnotation(cmd, waitAnnotation)
+	if narrowed, ok := hookWait(cmd, args); ok {
+		wait = narrowed
+	}
 	store, err := dolt.Open(cmd.Context(), loc, dolt.Config{
-		MaxOpenWait: durationAnnotation(cmd, waitAnnotation),
+		MaxOpenWait: wait,
 		MaxOpenHold: durationAnnotation(cmd, holdAnnotation),
 		Command:     a.command,
 		ActorKind:   a.actorKind,
@@ -236,8 +251,52 @@ func (a *app) ledger(ctx context.Context) (*ledger.Ledger, error) {
 	if err := actor.Validate(); err != nil {
 		return nil, err
 	}
-	a.led = ledger.New(a.store, ledger.Options{Actor: actor, Redactor: redactor, Config: cfg})
+	a.led = ledger.New(a.store, ledger.Options{
+		Actor:    actor,
+		Redactor: redactor,
+		Config:   cfg,
+		Enricher: beads.Enricher(a.beadsAdapter(ctx)),
+	})
 	return a.led, nil
+}
+
+// tracker memoises the optional Beads detection. Detection costs two `bd`
+// subprocesses, several commands need the answer, and it never fails: a missing,
+// too-old, or workspace-less `bd` is an Availability the caller reports and
+// carries on past.
+type tracker struct {
+	done    bool
+	adapter *beads.Adapter
+	av      beads.Availability
+}
+
+// beadsAdapter is the enricher for this invocation, or nil. --no-enrich skips
+// detection entirely, which is what makes that flag mean something rather than
+// only suppressing a warning.
+func (a *app) beadsAdapter(ctx context.Context) *beads.Adapter {
+	if a.noEnrich {
+		return nil
+	}
+	if !a.tracker.done {
+		root := a.loc.RepoRoot
+		if root == "" {
+			root = a.cwd
+		}
+		a.tracker.done = true
+		a.tracker.adapter, a.tracker.av = beads.Detect(ctx, root)
+	}
+	return a.tracker.adapter
+}
+
+// beadsAvailability is what `bdc doctor` reports. nil means the question was not
+// asked, which is the honest answer under --no-enrich.
+func (a *app) beadsAvailability(ctx context.Context) *beads.Availability {
+	if a.noEnrich {
+		return nil
+	}
+	a.beadsAdapter(ctx)
+	av := a.tracker.av
+	return &av
 }
 
 // warnRedaction reports that stored text was rewritten. A caller has to be able
@@ -260,6 +319,20 @@ func (a *app) handle(fn func(*cobra.Command, []string) (result, error)) func(*co
 		a.result = res
 		return err
 	}
+}
+
+// handleLedger is handle for a command that needs the domain module. Opening it
+// is the same four lines in every such body and the one thing they all do first,
+// so the seam between "this command needs a ledger" and "here is what it does
+// with one" belongs in the signature.
+func (a *app) handleLedger(fn func(*cobra.Command, []string, *ledger.Ledger) (result, error)) func(*cobra.Command, []string) error {
+	return a.handle(func(cmd *cobra.Command, args []string) (result, error) {
+		led, err := a.ledger(cmd.Context())
+		if err != nil {
+			return result{}, err
+		}
+		return fn(cmd, args, led)
+	})
 }
 
 // commandName is the dotted envelope command: `bdc crumb list` -> "crumb.list".
@@ -296,19 +369,38 @@ func durationAnnotation(cmd *cobra.Command, key string) time.Duration {
 	return d
 }
 
-func defaultActor() string {
-	if actor := os.Getenv("BDC_ACTOR"); actor != "" {
-		return actor
+// resolveActorKind decides who is acting when the caller did not say. `human` is
+// the value every authority gate is satisfied by, so a plain default of `human`
+// would make the privileged answer the one you get by forgetting a flag — and
+// the whole authority axis inert on any path that forgets it.
+//
+// A run that carries both a model identifier and a session id came from an agent
+// harness and is recorded as one. Both are required because that is what agent
+// provenance means: promoting a half-identified run to `agent` would only trade
+// a false `human` record for a rejected write.
+func resolveActorKind(declared, model, session string) string {
+	if declared != "" {
+		return declared
+	}
+	if model != "" && session != "" {
+		return string(ledger.ActorAgent)
+	}
+	return string(ledger.ActorHuman)
+}
+
+// resolveActor names the actor. $USER is the right answer for a human at a
+// terminal and the wrong one for an agent: attributing an agent's decisions to
+// whoever owns the login is a false provenance record, which is worse than a
+// generic one.
+func resolveActor(declared, kind string) string {
+	if declared != "" {
+		return declared
+	}
+	if kind == string(ledger.ActorAgent) {
+		return "agent"
 	}
 	if user := os.Getenv("USER"); user != "" {
 		return user
 	}
 	return "unknown"
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }

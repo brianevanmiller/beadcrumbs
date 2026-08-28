@@ -1,11 +1,11 @@
 {
   "bdc": "1",
-  "command": "restore",
+  "command": "migrate",
   "ok": true,
   "data": {
-    "restored": "<tmp>/repo/.git/beadcrumbs",
-    "schema_version": 1,
-    "records": 36
+    "from": 1,
+    "to": 1,
+    "applied": []
   },
   "warnings": [],
   "error": null,

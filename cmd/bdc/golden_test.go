@@ -299,6 +299,31 @@ func contractSteps() []step {
 			facts:    []string{"ledger_path", "schema_version"},
 		},
 		{
+			// Idempotent on a ledger this build initialised: from == to and
+			// nothing applied. It is the repair path for the other case.
+			name: "migrate", args: []string{"migrate"},
+			dataKeys: []string{"from", "to", "applied"},
+			facts:    []string{"from", "to"},
+		},
+		{
+			// Hooks are optional and never part of the workflow, but their
+			// envelopes are published output like any other.
+			name: "hooks.install", args: []string{"hooks", "install"},
+			dataKeys: []string{"hooks", "chained", "auto_harvest"},
+			facts:    []string{"hooks.0.hook", "hooks.0.path", "hooks.0.action"},
+		},
+		{
+			// harvest.auto is off, so the trigger reports and writes nothing.
+			name: "hooks.run", args: []string{"hooks", "run", "pre-push"},
+			dataKeys: []string{"hook", "action", "result"},
+			facts:    []string{"hook", "action", "result"},
+		},
+		{
+			name: "hooks.uninstall", args: []string{"hooks", "uninstall"},
+			dataKeys: []string{"hooks", "chained", "auto_harvest"},
+			facts:    []string{"hooks.0.hook", "hooks.0.action"},
+		},
+		{
 			name: "gc", args: []string{"gc"},
 			dataKeys: []string{"before_bytes", "after_bytes", "duration_ms"},
 			facts:    []string{"before_bytes", "after_bytes"},
@@ -417,7 +442,10 @@ func declaredFields() map[string]bool {
 		// version, init, doctor, maintenance
 		"version", "schema_version", "dolt_driver", "go", "platform",
 		"path", "stealth", "created", "checks", "journal_bytes", "ledger_path", "beads",
+		"hooks", "chained", "auto_harvest", "hook", "action", "result",
+		"present", "reason", "prefix", "project_id", "repo_root",
 		"name", "status", "detail", "before_bytes", "after_bytes", "duration_ms",
+		"from", "to", "applied",
 		"destination", "bytes", "restored", "records",
 		// crumbs
 		"crumb", "crumbs", "total", "id", "content", "content_hash", "review_state",
@@ -526,11 +554,16 @@ func newFixture(t *testing.T) *fixture {
 		}
 	}
 	// The ledger reports a symlink-resolved path on macOS, where the temp
-	// directory is /var -> /private/var; both spellings have to canonicalise.
+	// directory is /var -> /private/var; both spellings have to canonicalise to
+	// the same placeholder, and the resolved one has to be replaced first. The
+	// other order rewrites the /var suffix inside /private/var and leaves
+	// "/private<tmp>" — a macOS spelling baked into a golden that Linux, where
+	// the two are the same path, can never produce.
 	roots := []string{root}
 	if resolved, err := filepath.EvalSymlinks(root); err == nil && resolved != root {
 		roots = append(roots, resolved)
 	}
+	sort.Slice(roots, func(i, j int) bool { return len(roots[i]) > len(roots[j]) })
 	return &fixture{
 		dir:     repo,
 		backup:  filepath.Join(root, "backup"),
@@ -550,8 +583,11 @@ func (f *fixture) run(t *testing.T, s step, jsonMode bool) invocation {
 	t.Helper()
 	// Every provenance and location input is explicit: an inherited BDC_ACTOR
 	// or a different working directory would make the golden envelopes depend
-	// on whose machine ran them.
-	args := []string{"-C", f.dir, "--actor", "tester", "--actor-kind", "human"}
+	// on whose machine ran them. --no-enrich is the same rule applied to the
+	// optional tracker: with `bd` installed, doctor's `beads` and handoff's
+	// `workspace.enrichment` describe the machine rather than the contract.
+	// TestCoreWorkflowWithBeads is where the detected path is asserted.
+	args := []string{"-C", f.dir, "--actor", "tester", "--actor-kind", "human", "--no-enrich"}
 	if jsonMode {
 		args = append(args, "--json")
 	}

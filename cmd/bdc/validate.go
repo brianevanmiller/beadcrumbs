@@ -48,11 +48,7 @@ func (a *app) newValidateCommand() *cobra.Command {
 		"the Insight revision or proposal that supersedes this record")
 	_ = cmd.MarkFlagRequired("rationale")
 
-	cmd.RunE = a.handle(func(cmd *cobra.Command, args []string) (result, error) {
-		led, err := a.ledger(cmd.Context())
-		if err != nil {
-			return result{}, err
-		}
+	cmd.RunE = a.handleLedger(func(cmd *cobra.Command, args []string, led *ledger.Ledger) (result, error) {
 		target, err := ledger.TargetRef(args[0])
 		if err != nil {
 			return result{}, err

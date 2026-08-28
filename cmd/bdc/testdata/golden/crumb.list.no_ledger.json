@@ -6,7 +6,7 @@
   "warnings": [],
   "error": {
     "code": "no_ledger_uninitialized",
-    "message": "no ledger in /private<tmp>/repo; run `bdc init`",
+    "message": "no ledger in <tmp>/repo; run `bdc init`",
     "details": null
   },
   "meta": {

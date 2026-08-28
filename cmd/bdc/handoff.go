@@ -33,11 +33,7 @@ func (a *app) newHandoffCommand() *cobra.Command {
 	cmd.Flags().StringVar(&since, "since", "", "count unreviewed Crumbs and open proposals from this time")
 	budgetFlag(cmd, &budget)
 
-	cmd.RunE = a.handle(func(cmd *cobra.Command, _ []string) (result, error) {
-		led, err := a.ledger(cmd.Context())
-		if err != nil {
-			return result{}, err
-		}
+	cmd.RunE = a.handleLedger(func(cmd *cobra.Command, _ []string, led *ledger.Ledger) (result, error) {
 		at, err := parseTimeFlag("--since", since)
 		if err != nil {
 			return result{}, err

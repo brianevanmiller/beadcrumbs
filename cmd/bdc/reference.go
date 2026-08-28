@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"text/tabwriter"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/brianevanmiller/beadcrumbs/internal/beads"
 	"github.com/brianevanmiller/beadcrumbs/internal/ledger"
 )
 
@@ -62,11 +64,7 @@ func (a *app) newReferenceAddCommand() *cobra.Command {
 	_ = cmd.MarkFlagRequired("kind")
 	_ = cmd.MarkFlagRequired("locator")
 
-	cmd.RunE = a.handle(func(cmd *cobra.Command, args []string) (result, error) {
-		led, err := a.ledger(cmd.Context())
-		if err != nil {
-			return result{}, err
-		}
+	cmd.RunE = a.handleLedger(func(cmd *cobra.Command, args []string, led *ledger.Ledger) (result, error) {
 		target, err := ledger.TargetRef(args[0])
 		if err != nil {
 			return result{}, err
@@ -121,11 +119,7 @@ func (a *app) newReferenceListCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&refresh, "refresh", false, "re-observe the cache through an installed enricher")
 	cmd.Flags().IntVar(&limit, "limit", 0, "return at most this many references")
 
-	cmd.RunE = a.handle(func(cmd *cobra.Command, _ []string) (result, error) {
-		led, err := a.ledger(cmd.Context())
-		if err != nil {
-			return result{}, err
-		}
+	cmd.RunE = a.handleLedger(func(cmd *cobra.Command, _ []string, led *ledger.Ledger) (result, error) {
 		q := ledger.ReferenceQuery{Kinds: kinds, Limit: limit}
 		if target != "" {
 			ref, err := ledger.TargetRef(target)
@@ -147,7 +141,7 @@ func (a *app) newReferenceListCommand() *cobra.Command {
 			return result{}, err
 		}
 		if refresh {
-			a.warnFreshness(views)
+			a.warnFreshness(cmd.Context(), views)
 		}
 
 		data := referenceListData{References: views}
@@ -156,22 +150,43 @@ func (a *app) newReferenceListCommand() *cobra.Command {
 	return cmd
 }
 
-// warnFreshness reports what a refresh could not do. An absent enricher is the
-// v1 default and not a failure, so it is one warning per adapter kind rather
-// than one per reference; an enricher that failed is reported per reference,
-// because that is where the answer differs.
-func (a *app) warnFreshness(views []ledger.ReferenceView) {
+// warnFreshness reports what a refresh could not do. An absent enricher is not
+// a failure, so it is one warning per adapter kind rather than one per
+// reference; an enricher that failed is reported per reference, because that is
+// where the answer differs.
+//
+// Beads gets its own code because its absence has a diagnosable reason — no
+// `bd`, a version below the floor, or no workspace here — and "install one" is
+// a different instruction from "this kind has no adapter at all".
+func (a *app) warnFreshness(ctx context.Context, views []ledger.ReferenceView) {
 	reported := map[string]bool{}
 	for _, v := range views {
 		switch {
 		case v.Freshness.Error != "":
 			a.out.warn("enrich_failed", fmt.Sprintf("%s:%s: %s", v.Kind, v.Locator, v.Freshness.Error))
-		case v.Freshness.Enricher == "" && !reported[v.Kind]:
+		case v.Freshness.Enricher != "" || reported[v.Kind]:
+		case v.Kind == beadsKind:
+			reported[v.Kind] = true
+			a.out.warn("beads_unavailable", beadsUnavailable(a.beadsAvailability(ctx)))
+		default:
 			reported[v.Kind] = true
 			a.out.warn("no_enricher", fmt.Sprintf(
 				"no enricher is installed for %q; its references resolve to their locator", v.Kind))
 		}
 	}
+}
+
+// beadsKind is the Reference kind the Beads adapter serves. cmd/bdc needs the
+// literal to decide which warning to emit; nothing else here knows what a Beads
+// locator looks like.
+const beadsKind = "beads"
+
+func beadsUnavailable(av *beads.Availability) string {
+	reason := "enrichment was disabled with --no-enrich"
+	if av != nil {
+		reason = "bd is unavailable here: " + av.Reason
+	}
+	return "beads references resolve to their locator; " + reason
 }
 
 func renderReferences(w io.Writer, views []ledger.ReferenceView) {

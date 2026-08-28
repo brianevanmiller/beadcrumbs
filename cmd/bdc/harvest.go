@@ -73,11 +73,7 @@ func (a *app) newHarvestCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&auto, "auto", false, "record this as an automatic harvest rather than a manual one")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "report what would be synthesised and write nothing but the aborted Harvest")
 
-	cmd.RunE = a.handle(func(cmd *cobra.Command, _ []string) (result, error) {
-		led, err := a.ledger(cmd.Context())
-		if err != nil {
-			return result{}, err
-		}
+	cmd.RunE = a.handleLedger(func(cmd *cobra.Command, _ []string, led *ledger.Ledger) (result, error) {
 		body, err := readTextInput("--content", content, contentFile, cmd.InOrStdin())
 		if err != nil {
 			return result{}, err
