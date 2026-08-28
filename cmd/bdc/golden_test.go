@@ -294,7 +294,7 @@ func contractSteps() []step {
 		},
 		{
 			name: "doctor", args: []string{"doctor", "--verbose"},
-			dataKeys: []string{"checks", "schema_version", "journal_bytes", "ledger_path", "beads", "ok"},
+			dataKeys: []string{"checks", "schema_version", "journal_bytes", "ledger_path", "beads", "counts", "ok"},
 			readOnly: true,
 			facts:    []string{"ledger_path", "schema_version"},
 		},
@@ -445,6 +445,7 @@ func declaredFields() map[string]bool {
 		"hooks", "chained", "auto_harvest", "hook", "action", "result",
 		"present", "reason", "prefix", "project_id", "repo_root",
 		"name", "status", "detail", "before_bytes", "after_bytes", "duration_ms",
+		"counts", "crumbs_by_state", "promotions_by_status",
 		"from", "to", "applied",
 		"destination", "bytes", "restored", "records",
 		// crumbs

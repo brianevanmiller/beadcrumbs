@@ -48,7 +48,8 @@ One versioned JSON envelope on every command, prose on stderr, and stable exit c
   `context`, `handoff`, `prime`, `backup`, `restore`, `gc`, `hooks install|uninstall|run`.
   `migrate`. `init`, `doctor`, and `version` were rewritten, not edited.
 - `bdc doctor` runs the domain's own invariant checks (`polymorphic_targets`, `head_revision`)
-  alongside the storage ones, and reports the optional tracker under `beads`. It is the one
+  alongside the storage ones, and reports the optional tracker under `beads` and the per-table
+  record counts under `counts`. It is the one
   command that stays useful on a ledger that will not open, so it always exits 0 with the
   diagnosis in `data` — read `data.ok` and `data.checks[]`, not the exit code.
 - `bdc migrate` applies the schema migrations a build ships and a ledger has not. It is the

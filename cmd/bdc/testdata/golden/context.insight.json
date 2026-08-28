@@ -22,10 +22,7 @@
     "open_questions": [
       {
         "kind": "unreviewed_crumbs",
-        "subject": {
-          "kind": "",
-          "id": ""
-        },
+        "subject": null,
         "question": "2 Crumb(s) are waiting on review",
         "detail": "run `bdc crumb list --state candidate`, then `bdc crumb review \u003cid\u003e... --state accepted|rejected --rationale ...`"
       },

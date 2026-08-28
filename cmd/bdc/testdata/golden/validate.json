@@ -11,10 +11,7 @@
       },
       "verdict": "supported",
       "rationale": "reproduced against dolt 2.3.1",
-      "superseded_by": {
-        "kind": "",
-        "id": ""
-      },
+      "superseded_by": null,
       "occurred_at": "<time>",
       "actor_id": "tester",
       "actor_kind": "human"

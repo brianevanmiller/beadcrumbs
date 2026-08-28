@@ -957,7 +957,7 @@ Every command accepts `--json`. Persistent flags: `--json`, `--actor`, `--actor-
 ```json
 {
   "bdc": "1",
-  "command": "crumb.list",
+  "command": "reference.list",
   "ok": true,
   "data": {},
   "warnings": [{"code": "beads_unavailable", "message": "bd not found on PATH"}],
@@ -1010,7 +1010,7 @@ fails mid-transaction rolls back and reports one error.
 | `bdc context` | `--since` `--insight` `--limit` `--budget` | `{summary, insights[], open_questions[], recent_crumbs[], promotions[]}` |
 | `bdc handoff` | `--since` `--budget` | `{summary, state, unreviewed_crumbs, open_proposals[], workspace}` |
 | `bdc prime` | `--budget` | `{summary, working_defaults[], mandatory[], cautions[]}` |
-| `bdc doctor` | `--verbose` | `{checks[], schema_version, journal_bytes, ledger_path, beads, ok}` |
+| `bdc doctor` | `--verbose` | `{checks[], schema_version, journal_bytes, ledger_path, beads, counts, ok}` |
 | `bdc migrate` | — | `{from, to, applied[]}` |
 | `bdc backup <dest-url>` | — | `{destination, bytes, schema_version}` |
 | `bdc restore <src-url>` | `--force` (required if a ledger exists) | `{restored, schema_version, records}` |
@@ -1033,7 +1033,8 @@ pointed at `bdc init`, which returns early on an existing ledger without applyin
 
 `bdc doctor` runs the domain's own invariant checks — `polymorphic_targets` and `head_revision`
 from §2.5.1 and §2.5.7 — on top of the storage report whenever the ledger opens, and reports the
-Beads detection result under `beads`. It is `ledgerOptional`, so it always exits 0 with
+Beads detection result under `beads` and the per-table record counts under `counts` (null when
+the ledger will not open, where a zero for every table would read as an empty ledger). It is `ledgerOptional`, so it always exits 0 with
 `error:null`: a missing ledger is the failing `ledger_present` check inside `data`, never an
 exit code. The skill branches on `data` accordingly.
 

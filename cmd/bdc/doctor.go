@@ -17,7 +17,11 @@ type doctorData struct {
 	JournalBytes  int64               `json:"journal_bytes"`
 	LedgerPath    string              `json:"ledger_path"`
 	Beads         *beads.Availability `json:"beads"`
-	OK            bool                `json:"ok"`
+	// Counts is null when the ledger would not open: there is nothing to count,
+	// and a zero for every table would read as an empty ledger rather than an
+	// unreadable one.
+	Counts *ledger.Counts `json:"counts"`
+	OK     bool           `json:"ok"`
 }
 
 func (a *app) newDoctorCommand() *cobra.Command {
@@ -51,6 +55,9 @@ func (a *app) newDoctorCommand() *cobra.Command {
 					continue
 				}
 				fmt.Fprintf(w, "  [%-4s] %-20s %s\n", c.Status, c.Name, c.Detail)
+			}
+			if d.Counts != nil {
+				fmt.Fprintf(w, "  %s\n", describeCounts(*d.Counts))
 			}
 			fmt.Fprintf(w, "  %s\n", describeBeads(d.Beads))
 			state := "ok"
@@ -89,7 +96,17 @@ func (a *app) diagnose(cmd *cobra.Command) (doctorData, error) {
 	}
 	d.Checks, d.SchemaVersion = report.Checks, report.SchemaVersion
 	d.JournalBytes, d.LedgerPath, d.OK = report.JournalBytes, report.LedgerPath, report.OK
+	d.Counts = &report.Counts
 	return d, nil
+}
+
+func describeCounts(c ledger.Counts) string {
+	crumbs := 0
+	for _, n := range c.CrumbsByState {
+		crumbs += n
+	}
+	return fmt.Sprintf("holding: %d crumb(s), %d insight(s), %d revision(s), %d harvest(s), %d reference(s), %d proposal(s)",
+		crumbs, c.Insights, c.Revisions, c.Harvests, c.References, c.Proposals)
 }
 
 func describeBeads(av *beads.Availability) string {

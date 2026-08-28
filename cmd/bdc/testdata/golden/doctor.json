@@ -39,6 +39,22 @@
     "journal_bytes": <size>,
     "ledger_path": "<tmp>/repo/.git/beadcrumbs",
     "beads": null,
+    "counts": {
+      "crumbs_by_state": {
+        "accepted": 2,
+        "candidate": 1
+      },
+      "insights": 1,
+      "revisions": 2,
+      "harvests": 1,
+      "references": 3,
+      "proposals": 3,
+      "promotions_by_status": {
+        "applied": 1,
+        "failed": 1,
+        "rejected": 1
+      }
+    },
     "ok": true
   },
   "warnings": [],
