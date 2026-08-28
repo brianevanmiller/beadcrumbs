@@ -1,0 +1,28 @@
+{
+  "bdc": "1",
+  "command": "hooks.install",
+  "ok": true,
+  "data": {
+    "hooks": [
+      {
+        "hook": "pre-push",
+        "path": "<tmp>/repo/.git/hooks/pre-push",
+        "action": "installed"
+      },
+      {
+        "hook": "post-merge",
+        "path": "<tmp>/repo/.git/hooks/post-merge",
+        "action": "installed"
+      }
+    ],
+    "chained": [],
+    "auto_harvest": false
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

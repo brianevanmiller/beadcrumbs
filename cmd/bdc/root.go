@@ -115,6 +115,7 @@ func (a *app) newRootCommand() *cobra.Command {
 		a.newVersionCommand(),
 		a.newInitCommand(),
 		a.newDoctorCommand(),
+		a.newMigrateCommand(),
 		a.newBackupCommand(),
 		a.newRestoreCommand(),
 		a.newGCCommand(),
@@ -136,7 +137,7 @@ func (a *app) newRootCommand() *cobra.Command {
 
 // prepare resolves the ledger for the command about to run. It is the only
 // caller of dolt.Discover and dolt.Open.
-func (a *app) prepare(cmd *cobra.Command, _ []string) error {
+func (a *app) prepare(cmd *cobra.Command, args []string) error {
 	a.command = commandName(cmd)
 	a.out.jsonMode = a.jsonOut
 	a.out.quiet = a.quiet
@@ -188,8 +189,12 @@ func (a *app) prepare(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
+	wait := durationAnnotation(cmd, waitAnnotation)
+	if narrowed, ok := hookWait(cmd, args); ok {
+		wait = narrowed
+	}
 	store, err := dolt.Open(cmd.Context(), loc, dolt.Config{
-		MaxOpenWait: durationAnnotation(cmd, waitAnnotation),
+		MaxOpenWait: wait,
 		MaxOpenHold: durationAnnotation(cmd, holdAnnotation),
 		Command:     a.command,
 		ActorKind:   a.actorKind,

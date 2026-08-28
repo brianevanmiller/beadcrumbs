@@ -143,3 +143,40 @@ func TestErrorDetailsSurviveIntoTheEnvelope(t *testing.T) {
 		t.Fatalf("details were lost: %v", details)
 	}
 }
+
+// TestUsageErrorsCarryNeitherTheValueNorTheMessageTwice covers the two ways a
+// Cobra failure reached the envelope wrong: the cause was attached to a message
+// that already was the cause, and a rejected flag value — which can be a token
+// a caller mistyped into the wrong flag — was echoed into JSON that gets logged
+// and pasted.
+func TestUsageErrorsCarryNeitherTheValueNorTheMessageTwice(t *testing.T) {
+	const secret = "sk-ant-notarealkey"
+
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "a rejected value is reported as its flag",
+			in:   `invalid argument "` + secret + `" for "--limit" flag: strconv.ParseInt: parsing "` + secret + `": invalid syntax`,
+			want: `invalid argument for "--limit" flag`,
+		},
+		{
+			name: "anything else is passed through once",
+			in:   `required flag(s) "class" not set`,
+			want: `required flag(s) "class" not set`,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, message, _ := errorBody(usageError(errors.New(c.in)))
+			if message != c.want {
+				t.Errorf("error.message is %q, want %q", message, c.want)
+			}
+			if strings.Contains(message, secret) {
+				t.Errorf("the rejected value reached error.message: %q", message)
+			}
+		})
+	}
+}

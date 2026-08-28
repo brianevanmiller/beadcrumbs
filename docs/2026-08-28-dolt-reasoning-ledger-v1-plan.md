@@ -1011,6 +1011,7 @@ fails mid-transaction rolls back and reports one error.
 | `bdc handoff` | `--since` `--budget` | `{summary, state, unreviewed_crumbs, open_proposals[], workspace}` |
 | `bdc prime` | `--budget` | `{summary, working_defaults[], mandatory[], cautions[]}` |
 | `bdc doctor` | `--verbose` | `{checks[], schema_version, journal_bytes, ledger_path, beads, ok}` |
+| `bdc migrate` | — | `{from, to, applied[]}` |
 | `bdc backup <dest-url>` | — | `{destination, bytes, schema_version}` |
 | `bdc restore <src-url>` | `--force` (required if a ledger exists) | `{restored, schema_version, records}` |
 | `bdc gc` | — | `{before_bytes, after_bytes, duration_ms}` |
@@ -1020,6 +1021,17 @@ fails mid-transaction rolls back and reports one error.
 
 `--budget` bounds `context`/`handoff`/`prime` output in approximate tokens; the default is
 declared in the skill so agents can rely on it.
+
+`bdc migrate` is what makes a schema-version mismatch a repairable state rather than one the
+user can only escape by re-initialising, and it is the command `bdc doctor` names for that
+check. It was added after review found `Store.Migrate` had no caller and doctor's remediation
+pointed at `bdc init`, which returns early on an existing ledger without applying anything.
+
+`bdc doctor` runs the domain's own invariant checks — `polymorphic_targets` and `head_revision`
+from §2.5.1 and §2.5.7 — on top of the storage report whenever the ledger opens, and reports the
+Beads detection result under `beads`. It is `ledgerOptional`, so it always exits 0 with
+`error:null`: a missing ledger is the failing `ledger_present` check inside `data`, never an
+exit code. The skill branches on `data` accordingly.
 
 `bdc promote record`, `reject`, and `fail` are the three terminal outcomes of one attempt, and
 all three are needed: `record` links a receipt, `reject` says a human decided not to write, and
@@ -1131,9 +1143,12 @@ Codex's hook surface is shape-compatible (same stdin JSON: `session_id`, `transc
 surface; for them the skill body is the whole integration.
 
 **Hooks are lock-aware or they are worse than nothing.** A `pre-push`, `post-merge`, or
-`PreCompact` hook can fire while another `bdc` process owns the engine. Every hook invocation
-therefore sets a longer `MaxOpenWait` (60 s, not the 15 s default) and, on `ErrBusy`, **exits 0**
-after writing one line to stderr naming the skipped action. A hook must never fail a `git push`,
+`PreCompact` hook can fire while another `bdc` process owns the engine. A hook invocation that
+may harvest therefore sets a longer `MaxOpenWait` (60 s, not the 15 s default) and, on `ErrBusy`,
+**exits 0** after writing one line to stderr naming the skipped action. A trigger that only
+reports — `stop`, which fires at every agent turn end and writes nothing under any configuration
+— declines after 2 s instead: the 60 s exists so a harvest is not lost, and there is no harvest
+to lose. A hook must never fail a `git push`,
 and a hook that silently swallows the miss is how a harvest gets lost — the line on stderr is the
 difference. The chained shims preserve the pre-existing hook's exit status; `bdc`'s own status is
 never allowed to override it.

@@ -38,7 +38,9 @@ bdc init --json         # only after asking. {path, stealth, schema_version, cre
 `doctor` never exits nonzero for an unhealthy ledger and never populates
 `error`: it always returns `ok:true` with the diagnosis in `data`. Read
 `data.ok` and `data.checks[]` — `ledger_present` failing is the no-ledger
-state, `ledger_lock` failing is another process holding the engine.
+state, `ledger_lock` failing is another process holding the engine, and
+`schema_version` failing is repaired by `bdc migrate --json`, never by
+`bdc init`.
 
 `bdc init` is stealth by default: the ledger lives at `<git-common-dir>/beadcrumbs`
 and never appears in `git status`. `--visible` puts it at `<repo>/.beadcrumbs`.

@@ -299,6 +299,31 @@ func contractSteps() []step {
 			facts:    []string{"ledger_path", "schema_version"},
 		},
 		{
+			// Idempotent on a ledger this build initialised: from == to and
+			// nothing applied. It is the repair path for the other case.
+			name: "migrate", args: []string{"migrate"},
+			dataKeys: []string{"from", "to", "applied"},
+			facts:    []string{"from", "to"},
+		},
+		{
+			// Hooks are optional and never part of the workflow, but their
+			// envelopes are published output like any other.
+			name: "hooks.install", args: []string{"hooks", "install"},
+			dataKeys: []string{"hooks", "chained", "auto_harvest"},
+			facts:    []string{"hooks.0.hook", "hooks.0.path", "hooks.0.action"},
+		},
+		{
+			// harvest.auto is off, so the trigger reports and writes nothing.
+			name: "hooks.run", args: []string{"hooks", "run", "pre-push"},
+			dataKeys: []string{"hook", "action", "result"},
+			facts:    []string{"hook", "action", "result"},
+		},
+		{
+			name: "hooks.uninstall", args: []string{"hooks", "uninstall"},
+			dataKeys: []string{"hooks", "chained", "auto_harvest"},
+			facts:    []string{"hooks.0.hook", "hooks.0.action"},
+		},
+		{
 			name: "gc", args: []string{"gc"},
 			dataKeys: []string{"before_bytes", "after_bytes", "duration_ms"},
 			facts:    []string{"before_bytes", "after_bytes"},
@@ -417,6 +442,7 @@ func declaredFields() map[string]bool {
 		// version, init, doctor, maintenance
 		"version", "schema_version", "dolt_driver", "go", "platform",
 		"path", "stealth", "created", "checks", "journal_bytes", "ledger_path", "beads",
+		"hooks", "chained", "auto_harvest", "hook", "action", "result",
 		"present", "reason", "prefix", "project_id", "repo_root",
 		"name", "status", "detail", "before_bytes", "after_bytes", "duration_ms",
 		"from", "to", "applied",

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -56,11 +57,30 @@ const (
 	priorSuffix = ".beadcrumbs-prior"
 )
 
-// hookMaxOpenWait is the lock budget a hook allows. It is four times the
-// ordinary 15s because a hook fires exactly when another `bdc` is most likely
-// to hold the engine — a harvest triggered by the same push. A var so a test
+// hookMaxOpenWait is the lock budget a hook that may harvest allows. It is four
+// times the ordinary 15s because such a hook fires exactly when another `bdc` is
+// most likely to hold the engine — a harvest triggered by the same push — and
+// losing the harvest is the cost of giving up early (plan §4.2). A var so a test
 // can shorten it; production never changes it.
 var hookMaxOpenWait = 60 * time.Second
+
+// hookReportWait is the budget for a trigger that only reports. `stop` fires at
+// every agent turn end and writes nothing, so there is nothing for the wait to
+// save: it would buy a minute of dead time to print a reminder.
+var hookReportWait = 2 * time.Second
+
+// hookWait narrows `hooks run`'s lock budget from the trigger it was given,
+// which the static annotation cannot express because it is read before the
+// argument is known.
+func hookWait(cmd *cobra.Command, args []string) (time.Duration, bool) {
+	if commandName(cmd) != "hooks.run" || len(args) != 1 {
+		return 0, false
+	}
+	if mayHarvest, known := hookTriggers[args[0]]; known && !mayHarvest {
+		return hookReportWait, true
+	}
+	return 0, false
+}
 
 // hookShim is the installed script. It runs the pre-existing hook first, so
 // that hook gets the stdin git supplies, and exits with *its* status: bdc's own
@@ -328,18 +348,52 @@ func (a *app) hooksDir(ctx context.Context) (string, error) {
 		return "", ledger.Fail(ledger.ErrNoLedger, "no_ledger",
 			"hooks are installed into a Git repository, and this is not one")
 	}
-	out, err := exec.CommandContext(ctx, "git", "-C", a.loc.RepoRoot,
-		"config", "--get", "core.hooksPath").Output()
+	git := exec.CommandContext(ctx, "git", "-C", a.loc.RepoRoot,
+		"config", "--get", "core.hooksPath")
+	git.Env = hermeticGitEnv()
+	out, err := git.Output()
 	configured := strings.TrimSpace(string(out))
-	if err != nil || configured == "" {
-		// `git config --get` exits 1 for an unset key, which is not a failure.
+	var exitErr *exec.ExitError
+	switch {
+	case err == nil && configured != "":
+	case errors.As(err, &exitErr) && exitErr.ExitCode() == 1, err == nil:
+		// Exit 1 is `git config --get`'s answer for an unset key, which is not
+		// a failure. Anything else is: guessing the default path would put the
+		// shim where git does not look and report success for doing it.
 		return filepath.Join(a.loc.GitCommon, "hooks"), nil
+	default:
+		return "", ledger.FailWith(ledger.ErrIntegrity, "storage_hooks_path", err,
+			"cannot read core.hooksPath for %s", a.loc.RepoRoot)
 	}
 	if filepath.IsAbs(configured) {
 		return configured, nil
 	}
 	// git resolves a relative core.hooksPath against the top of the worktree.
 	return filepath.Join(a.loc.RepoRoot, configured), nil
+}
+
+// hermeticGitEnv removes the Git environment variables a running hook exports.
+// `-C` does not override an inherited GIT_DIR, so `bdc hooks install` from
+// inside a hook or a submodule would read core.hooksPath out of a different
+// repository. internal/store/dolt strips the same variables from every `git` it
+// runs; this is a second copy because that helper is not exported, and the two
+// lists have to stay the same.
+func hermeticGitEnv() []string {
+	stripped := []string{
+		"GIT_DIR=", "GIT_WORK_TREE=", "GIT_COMMON_DIR=", "GIT_INDEX_FILE=", "GIT_OBJECT_DIRECTORY=",
+	}
+	src := os.Environ()
+	out := make([]string, 0, len(src))
+next:
+	for _, kv := range src {
+		for _, name := range stripped {
+			if strings.HasPrefix(kv, name) {
+				continue next
+			}
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 // hookRunData is the `{hook, action, result}` from the CLI contract. Action is

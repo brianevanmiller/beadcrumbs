@@ -81,6 +81,46 @@ func TestHookExitsZeroWhenLedgerBusy(t *testing.T) {
 	}
 }
 
+// TestReportOnlyTriggerDeclinesWithoutWaitingOutTheHarvestBudget is the other
+// half of the busy-ledger rule. The minute a hook waits for the lock is there so
+// a harvest is not lost (plan §4.2); `stop` writes nothing under any
+// configuration, so waiting it out buys a minute of dead time at every agent
+// turn end and loses nothing by declining at once.
+func TestReportOnlyTriggerDeclinesWithoutWaitingOutTheHarvestBudget(t *testing.T) {
+	restoreMax, restoreReport := hookMaxOpenWait, hookReportWait
+	hookMaxOpenWait, hookReportWait = 4*time.Second, 100*time.Millisecond
+	t.Cleanup(func() { hookMaxOpenWait, hookReportWait = restoreMax, restoreReport })
+
+	h := newHookFixture(t)
+	h.run(t, "init")
+	h.run(t, "capture", "A Crumb a harvesting trigger would wait for.", "--confidence", "0.5")
+	h.holdLedger(t)
+
+	start := time.Now()
+	stop := h.run(t, "hooks", "run", "stop")
+	reporting := time.Since(start)
+	if stop.exit != exitOK {
+		t.Fatalf("the stop trigger exited %d against a busy ledger\n%s", stop.exit, stop.stderr)
+	}
+	if reporting > time.Second {
+		t.Errorf("a report-only trigger waited %s against a %s report budget", reporting, hookReportWait)
+	}
+
+	// The narrowing is per trigger: one that may harvest still spends the full
+	// budget, because giving up early is what loses the harvest.
+	start = time.Now()
+	if push := h.run(t, "hooks", "run", "pre-push"); push.exit != exitOK {
+		t.Fatalf("the pre-push trigger exited %d against a busy ledger\n%s", push.exit, push.stderr)
+	}
+	// Backoff stops once the next interval would exceed the budget, so the
+	// assertion is that the two triggers wait on different scales, not that
+	// either lands on an exact duration.
+	if harvesting := time.Since(start); harvesting <= time.Second {
+		t.Errorf("a harvesting trigger gave up after %s, on the report-only scale rather than its %s budget",
+			harvesting, hookMaxOpenWait)
+	}
+}
+
 // The other two runtime conditions a hook meets. Neither is an error the git
 // operation should ever see.
 func TestHookExitsZeroWithNoLedgerAndWithNothingOutstanding(t *testing.T) {

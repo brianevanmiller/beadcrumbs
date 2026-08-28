@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"fmt"
+	"regexp"
 
 	"github.com/brianevanmiller/beadcrumbs/internal/ledger"
 )
@@ -76,6 +78,27 @@ func asLedgerError(err error) error {
 
 // usageError wraps a flag or argument failure from Cobra so it carries the same
 // code and exit status as a validation failure raised inside a command body.
+//
+// The cause is deliberately not attached. ledger.Error renders "<message>:
+// <cause>", and here the message *is* the cause, so keeping it printed every
+// usage error twice: `required flag(s) "class" not set: required flag(s)
+// "class" not set`.
 func usageError(err error) error {
-	return ledger.FailWith(ledger.ErrInvalidInput, "invalid_usage", err, "%s", err.Error())
+	return ledger.Fail(ledger.ErrInvalidInput, "invalid_usage", "%s", withoutFlagValue(err.Error()))
+}
+
+// invalidArgument matches Cobra's `invalid argument "<value>" for "<flag>"
+// flag: <parse error>`, whose trailing parse error repeats the value.
+var invalidArgument = regexp.MustCompile(`^invalid argument ".*" for "([^"]*)" flag: `)
+
+// withoutFlagValue names the flag a value was rejected for without echoing the
+// value. Everything Beadcrumbs persists goes through the redactor and every
+// rejection names its rule rather than its match; the usage surface has to hold
+// the same line, because a mistyped flag's value can be a token and --json
+// output is routinely logged and pasted.
+func withoutFlagValue(message string) string {
+	if m := invalidArgument.FindStringSubmatch(message); m != nil {
+		return fmt.Sprintf("invalid argument for %q flag", m[1])
+	}
+	return message
 }

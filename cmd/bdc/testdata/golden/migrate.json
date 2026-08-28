@@ -1,0 +1,17 @@
+{
+  "bdc": "1",
+  "command": "migrate",
+  "ok": true,
+  "data": {
+    "from": 1,
+    "to": 1,
+    "applied": []
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}
