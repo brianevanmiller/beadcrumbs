@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/brianevanmiller/beadcrumbs/internal/beads"
 	"github.com/brianevanmiller/beadcrumbs/internal/ledger"
 	"github.com/brianevanmiller/beadcrumbs/internal/redact"
 	"github.com/brianevanmiller/beadcrumbs/internal/store/dolt"
@@ -48,6 +49,7 @@ type app struct {
 	store   *dolt.Store
 	openErr error
 	led     *ledger.Ledger
+	tracker tracker
 
 	// Recorded by the command body so main can emit exactly one envelope.
 	command string
@@ -155,12 +157,16 @@ func (a *app) prepare(cmd *cobra.Command, _ []string) error {
 	a.cwd = cwd
 
 	mode := ledgerModeOf(cmd)
+	if mode == ledgerDetached {
+		// `bdc version` and `bdc --help` need nothing from Git, and Discover
+		// costs four `git` subprocesses. The Stop hook runs one of these at
+		// every agent turn end.
+		return nil
+	}
 	loc, discoverErr := dolt.Discover(cmd.Context(), cwd)
 	a.loc = loc
 	switch {
 	case discoverErr == nil:
-	case mode == ledgerDetached:
-		return nil
 	case mode == ledgerRequired:
 		return discoverErr
 	case errors.Is(discoverErr, ledger.ErrNoLedger):
@@ -174,7 +180,7 @@ func (a *app) prepare(cmd *cobra.Command, _ []string) error {
 		return discoverErr
 	}
 
-	if mode == ledgerDetached || mode == ledgerAbsent {
+	if mode == ledgerAbsent {
 		return nil
 	}
 
@@ -236,8 +242,52 @@ func (a *app) ledger(ctx context.Context) (*ledger.Ledger, error) {
 	if err := actor.Validate(); err != nil {
 		return nil, err
 	}
-	a.led = ledger.New(a.store, ledger.Options{Actor: actor, Redactor: redactor, Config: cfg})
+	a.led = ledger.New(a.store, ledger.Options{
+		Actor:    actor,
+		Redactor: redactor,
+		Config:   cfg,
+		Enricher: beads.Enricher(a.beadsAdapter(ctx)),
+	})
 	return a.led, nil
+}
+
+// tracker memoises the optional Beads detection. Detection costs two `bd`
+// subprocesses, several commands need the answer, and it never fails: a missing,
+// too-old, or workspace-less `bd` is an Availability the caller reports and
+// carries on past.
+type tracker struct {
+	done    bool
+	adapter *beads.Adapter
+	av      beads.Availability
+}
+
+// beadsAdapter is the enricher for this invocation, or nil. --no-enrich skips
+// detection entirely, which is what makes that flag mean something rather than
+// only suppressing a warning.
+func (a *app) beadsAdapter(ctx context.Context) *beads.Adapter {
+	if a.noEnrich {
+		return nil
+	}
+	if !a.tracker.done {
+		root := a.loc.RepoRoot
+		if root == "" {
+			root = a.cwd
+		}
+		a.tracker.done = true
+		a.tracker.adapter, a.tracker.av = beads.Detect(ctx, root)
+	}
+	return a.tracker.adapter
+}
+
+// beadsAvailability is what `bdc doctor` reports. nil means the question was not
+// asked, which is the honest answer under --no-enrich.
+func (a *app) beadsAvailability(ctx context.Context) *beads.Availability {
+	if a.noEnrich {
+		return nil
+	}
+	a.beadsAdapter(ctx)
+	av := a.tracker.av
+	return &av
 }
 
 // warnRedaction reports that stored text was rewritten. A caller has to be able

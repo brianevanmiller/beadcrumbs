@@ -10,6 +10,7 @@ package e2e
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,8 +32,9 @@ type envelope struct {
 		Message string `json:"message"`
 	} `json:"warnings"`
 	Error *struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
+		Code    string         `json:"code"`
+		Message string         `json:"message"`
+		Details map[string]any `json:"details"`
 	} `json:"error"`
 }
 
@@ -43,6 +45,12 @@ type session struct {
 	dir    string
 	env    []string
 	vars   map[string]string
+
+	// base is the provenance and enrichment prefix every invocation carries.
+	// It is a field rather than a constant because two things vary and both
+	// change what the ledger records: who is acting, and whether the optional
+	// tracker is consulted.
+	base []string
 }
 
 func newSession(t *testing.T, env []string) *session {
@@ -62,7 +70,21 @@ func newSession(t *testing.T, env []string) *session {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
-	return &session{t: t, binary: bdcBinary(t), dir: repo, env: env, vars: map[string]string{}}
+	return &session{
+		t: t, binary: bdcBinary(t), dir: repo, env: env, vars: map[string]string{},
+		// --no-enrich by default: with `bd` installed the enrichment fields
+		// describe the machine rather than the product. TestCoreWorkflowWithBeads
+		// is the one test that asks for the detected path.
+		base: []string{"--actor", "e2e", "--actor-kind", "human", "--no-enrich"},
+	}
+}
+
+// asAgent records every later invocation as an agent, which is the provenance
+// the authority axis is built to gate and the one the installed skill sets.
+func (s *session) asAgent() *session {
+	s.base = []string{"--actor", "e2e-agent", "--actor-kind", "agent",
+		"--model", "test-model", "--session", "test-session", "--no-enrich"}
+	return s
 }
 
 // bdc runs one documented invocation and returns its decoded envelope. Anything
@@ -70,8 +92,18 @@ func newSession(t *testing.T, env []string) *session {
 // follow, and a failure in it is a broken product, not a case to branch on.
 func (s *session) bdc(args ...string) envelope {
 	s.t.Helper()
-	full := append([]string{"-C", s.dir, "--json", "--actor", "e2e", "--actor-kind", "human"},
-		s.resolve(args)...)
+	env, exit := s.try(args...)
+	if exit != 0 || !env.OK {
+		s.t.Fatalf("`bdc %s` failed with exit %d: %+v", strings.Join(args, " "), exit, env.Error)
+	}
+	return env
+}
+
+// try runs one invocation and returns its envelope and exit code without
+// judging either, which is what a test of a refusal needs.
+func (s *session) try(args ...string) (envelope, int) {
+	s.t.Helper()
+	full := append(append([]string{"-C", s.dir, "--json"}, s.base...), s.resolve(args)...)
 	cmd := exec.Command(s.binary, full...)
 	if s.env != nil {
 		cmd.Env = s.env
@@ -86,13 +118,18 @@ func (s *session) bdc(args ...string) envelope {
 		s.t.Fatalf("`bdc %s` did not emit one envelope on stdout: %v\nstdout: %s\nstderr: %s",
 			strings.Join(full, " "), decodeErr, stdout.String(), stderr.String())
 	}
-	if err != nil || !env.OK {
-		s.t.Fatalf("`bdc %s` failed: %v\n%s", strings.Join(full, " "), err, stdout.String())
-	}
 	if env.BDC != "1" {
 		s.t.Fatalf("envelope version is %q, want \"1\"", env.BDC)
 	}
-	return env
+	var exitErr *exec.ExitError
+	switch {
+	case err == nil:
+	case errors.As(err, &exitErr):
+		return env, exitErr.ExitCode()
+	default:
+		s.t.Fatalf("running `bdc %s`: %v", strings.Join(full, " "), err)
+	}
+	return env, 0
 }
 
 func (s *session) resolve(args []string) []string {
@@ -311,5 +348,133 @@ func TestCoreWorkflowWithoutBeads(t *testing.T) {
 
 	if ok := s.field(s.bdc("doctor"), "ok"); ok != "true" {
 		t.Error("doctor reports the ledger as unhealthy with no bd on PATH")
+	}
+}
+
+// TestCoreWorkflowWithBeads is the other half of TestCoreWorkflowWithoutBeads,
+// and the only test in the suite that proves the adapter is wired to anything:
+// with a real `bd` and a real workspace, doctor has to report the tracker as
+// present and a Beads reference has to come back enriched from it. Without this
+// the absent-Beads gate passes vacuously, because the present-Beads path never
+// runs.
+func TestCoreWorkflowWithBeads(t *testing.T) {
+	if _, err := exec.LookPath("bd"); err != nil {
+		t.Skip("bd is not on PATH, so the detected-tracker path cannot be exercised")
+	}
+	s := newSession(t, nil)
+	s.base = []string{"--actor", "e2e", "--actor-kind", "human"}
+
+	// `bd init` is what makes the fixture a Beads workspace; detection's third
+	// rung asks `bd where`, which fails without one.
+	if out, err := bd(t, s.dir, "init"); err != nil {
+		t.Skipf("`bd init` did not run in the fixture: %v\n%s", err, out)
+	}
+	created, err := bd(t, s.dir, "create", "A ticket the ledger will reference", "--json")
+	if err != nil {
+		t.Skipf("`bd create` did not run in the fixture: %v\n%s", err, created)
+	}
+	var issue struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(created), &issue); err != nil || issue.ID == "" {
+		t.Skipf("`bd create --json` did not report an id: %v\n%s", err, created)
+	}
+
+	s.bdc("init")
+	doctor := s.bdc("doctor")
+	if got := s.field(doctor, "beads.present"); got != "true" {
+		t.Fatalf("doctor reports beads.present=%s with bd %s installed and a workspace present",
+			got, s.field(doctor, "beads.version"))
+	}
+	if got := s.field(doctor, "beads.reason"); got != "ok" {
+		t.Errorf("doctor reports beads.reason=%q, want ok", got)
+	}
+
+	crumb := s.bdc("capture", "The tracker reference has to resolve to a real ticket.",
+		"--confidence", "0.6", "--ref", "beads:"+issue.ID+"@subject")
+	s.bind("crumb", crumb, "crumb.id")
+
+	refs := s.bdc("reference", "list", "--target", "{crumb}", "--refresh")
+	if got := s.field(refs, "references.0.freshness.state"); got != "live" {
+		t.Errorf("a refreshed Beads reference reports freshness %q, want live", got)
+	}
+	if got := s.field(refs, "references.0.freshness.enricher"); got != "beads" {
+		t.Errorf("a refreshed Beads reference names enricher %q, want beads", got)
+	}
+	if got := s.field(refs, "references.0.display"); got == issue.ID {
+		t.Error("the reference still displays its locator, so nothing was enriched")
+	}
+	for _, w := range refs.Warnings {
+		t.Errorf("reference list --refresh warned %s: %s", w.Code, w.Message)
+	}
+
+	if got := s.field(s.bdc("handoff"), "workspace.enrichment"); got != "beads" {
+		t.Errorf("handoff reports enrichment %q with the adapter wired, want beads", got)
+	}
+}
+
+// bd runs one `bd` command in the fixture. Beads owns its own storage, so this
+// is the only place the suite talks to it directly, and only to build the
+// workspace the adapter is supposed to find.
+func bd(t *testing.T, dir string, args ...string) (string, error) {
+	t.Helper()
+	// `bd init` rejects -C on a directory that is not yet a Beads project, so
+	// the working directory is the only way to say where the workspace goes.
+	cmd := exec.Command("bd", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// TestAgentPromotionRequiresHumanAuthority is the authority axis end to end,
+// with the provenance that makes it fire. Every other e2e run acts as a human,
+// for whom the gate is a no-op — so without this test the refusal, the recorded
+// proposal, the human grant, and the retry are proven nowhere above the domain
+// package.
+func TestAgentPromotionRequiresHumanAuthority(t *testing.T) {
+	human := newSession(t, nil)
+	human.bdc("init")
+
+	crumb := human.bdc("capture", "Policy records are the one class an agent may not settle alone.",
+		"--confidence", "0.7")
+	human.bind("crumb", crumb, "crumb.id")
+	human.bdc("crumb", "review", "{crumb}", "--state", "accepted", "--rationale", "it is the invariant")
+	harvest := human.bdc("harvest", "--crumb", "{crumb}", "--class", "policy",
+		"--title", "Policy is a human decision",
+		"--content", "An agent may propose a policy record; only a human may authorise one.")
+	human.bind("insight", harvest, "insight.id")
+
+	// Same repository, same ledger, agent provenance.
+	agent := newSession(t, nil).asAgent()
+	agent.dir = human.dir
+	agent.vars = human.vars
+
+	propose := []string{"promote", "propose", "--insight", "{insight}", "--class", "policy",
+		"--destination", "docs:docs/policy/ledger.md",
+		"--content", "Only a human may authorise a policy record."}
+
+	refused, exit := agent.try(propose...)
+	if exit != 3 {
+		t.Fatalf("an agent proposing a policy record exited %d, want 3", exit)
+	}
+	if refused.Error == nil || refused.Error.Code != "authority_required" {
+		t.Fatalf("the refusal is %+v, want error.code authority_required", refused.Error)
+	}
+	proposalID, _ := refused.Error.Details["proposal_id"].(string)
+	if proposalID == "" {
+		t.Fatal("the refusal does not carry the proposal id a human has to grant authority against")
+	}
+
+	// The human grant is the documented unblock, and it is made against the
+	// proposal the refusal named.
+	human.bdc("authority", proposalID, "--level", "mandatory",
+		"--rationale", "reviewed the proposed policy record and approved it")
+
+	granted, exit := agent.try(propose...)
+	if exit != 0 || !granted.OK {
+		t.Fatalf("after the human grant the same proposal exited %d: %+v", exit, granted.Error)
+	}
+	if got := agent.field(granted, "proposal.id"); got != proposalID {
+		t.Errorf("the retry created proposal %s rather than reusing %s", got, proposalID)
 	}
 }

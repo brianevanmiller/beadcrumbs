@@ -6,10 +6,11 @@ JSON goes to stdout, prose goes to stderr, and warnings survive a failure.
 ```json
 {
   "bdc": "1",
-  "command": "capture",
+  "command": "reference.list",
   "ok": true,
   "data": {},
-  "warnings": [{"code": "beads_unavailable", "message": "bd not found on PATH"}],
+  "warnings": [{"code": "beads_unavailable",
+                "message": "beads references resolve to their locator; bd is unavailable here: not_installed"}],
   "error": null,
   "meta": {"bdc_version": "1.0.0", "ledger_schema": 1, "generated_at": "2026-08-28T14:00:00.000000Z"}
 }
@@ -196,3 +197,13 @@ A reference is an opaque `kind:locator` plus a relation. Cached tracker metadata
 is never authoritative: every read states its freshness (`live`, `cached`,
 `never`). If `bd` is missing the reference still resolves to its locator and the
 enrichment is reported as `never`, which is a state and not an error.
+
+`--refresh` warns rather than fails when it cannot observe: `beads_unavailable`
+once for the kind when `bd` is missing, too old, or has no workspace here (the
+reason is in the message), `no_enricher` once for a kind no adapter serves, and
+`enrich_failed` per reference the adapter answered for and could not read.
+
+`bdc doctor --json` reports what detection found under `beads`:
+`{present, reason, version, prefix, project_id, repo_root}`, where `reason` is
+`ok`, `not_installed`, `version_unreadable`, `below_floor`, or `no_workspace`.
+The global `--no-enrich` skips detection entirely and reports `beads: null`.

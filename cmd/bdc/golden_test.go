@@ -417,7 +417,9 @@ func declaredFields() map[string]bool {
 		// version, init, doctor, maintenance
 		"version", "schema_version", "dolt_driver", "go", "platform",
 		"path", "stealth", "created", "checks", "journal_bytes", "ledger_path", "beads",
+		"present", "reason", "prefix", "project_id", "repo_root",
 		"name", "status", "detail", "before_bytes", "after_bytes", "duration_ms",
+		"from", "to", "applied",
 		"destination", "bytes", "restored", "records",
 		// crumbs
 		"crumb", "crumbs", "total", "id", "content", "content_hash", "review_state",
@@ -555,8 +557,11 @@ func (f *fixture) run(t *testing.T, s step, jsonMode bool) invocation {
 	t.Helper()
 	// Every provenance and location input is explicit: an inherited BDC_ACTOR
 	// or a different working directory would make the golden envelopes depend
-	// on whose machine ran them.
-	args := []string{"-C", f.dir, "--actor", "tester", "--actor-kind", "human"}
+	// on whose machine ran them. --no-enrich is the same rule applied to the
+	// optional tracker: with `bd` installed, doctor's `beads` and handoff's
+	// `workspace.enrichment` describe the machine rather than the contract.
+	// TestCoreWorkflowWithBeads is where the detected path is asserted.
+	args := []string{"-C", f.dir, "--actor", "tester", "--actor-kind", "human", "--no-enrich"}
 	if jsonMode {
 		args = append(args, "--json")
 	}

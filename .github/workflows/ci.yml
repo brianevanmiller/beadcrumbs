@@ -52,6 +52,32 @@ jobs:
           go-version: ${{ matrix.go }}
           cache: true
 
+      # The Beads integration is optional, and an optional integration CI never
+      # runs is one nobody has run: TestCoreWorkflowWithBeads skips without a
+      # `bd` on PATH. The version is pinned to the one internal/beads was
+      # measured against. A third-party download must not fail this build, so
+      # the step is allowed to fail and the test reports the skip and its reason.
+      - name: Install bd
+        continue-on-error: true
+        env:
+          BD_VERSION: '1.2.2'
+        run: |
+          set -euo pipefail
+          case "$(uname -s)" in
+            Darwin) os=darwin ;;
+            Linux)  os=linux ;;
+          esac
+          case "$(uname -m)" in
+            x86_64|amd64)  arch=amd64 ;;
+            aarch64|arm64) arch=arm64 ;;
+          esac
+          archive="beads_${BD_VERSION}_${os}_${arch}.tar.gz"
+          curl -fsSL "https://github.com/gastownhall/beads/releases/download/v${BD_VERSION}/${archive}" \
+            -o "$RUNNER_TEMP/$archive"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" ./bd
+          sudo install -m 0755 "$RUNNER_TEMP/bd" /usr/local/bin/bd
+          bd version
+
       - run: go build ./...
         env:
           CGO_ENABLED: 1
@@ -62,11 +88,9 @@ jobs:
 
       # There is no integration build tag. Embedded Dolt needs no infrastructure,
       # and the module does not compile without CGO and ICU4C, so a tag could only
-      # hide the tests that matter.
-      - run: go test ./...
-        env:
-          CGO_ENABLED: 1
-
+      # hide the tests that matter. Only the race build runs: it is a superset of
+      # the plain one, and running both doubles a 4-cell matrix to prove nothing
+      # the second run does not already prove.
       - run: go test -race -timeout 30m ./...
         env:
           CGO_ENABLED: 1
