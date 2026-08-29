@@ -137,9 +137,11 @@ script:
 
 ### OpenCode and Amp
 
-Neither exposes a command-hook surface. For those harnesses the skill body is
-the whole integration, which is why the skill states the command sequence
-literally.
+OpenCode exposes no command-hook surface, so the skill body is the whole
+integration — which is why the skill states the command sequence literally.
+Amp has a plugin event API (`session.start`, `agent.start`, `agent.end`; no
+`session.end`) that can invoke `bdc hooks run`; a shipped Amp plugin is not
+part of v1. See `docs/2026-08-29-cloud-harness-research.md`.
 
 ## What a trigger actually does
 
