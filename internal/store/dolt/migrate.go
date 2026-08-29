@@ -86,6 +86,7 @@ func applySchema2(ctx context.Context, db *sql.DB, script string) error {
 	if err != nil {
 		return err
 	}
+	rewrote := false
 	for _, stmt := range stmts {
 		switch {
 		case isAddHarnessColumn(stmt):
@@ -108,10 +109,13 @@ func applySchema2(ctx context.Context, db *sql.DB, script string) error {
 			}
 		case isAddForeignKey(stmt):
 			// The rewrite has to run with the FKs down, after the DROP and
-			// before the ADD. Doing it here — the first ADD CONSTRAINT — is
-			// the seam the SQL comment names.
-			if err := rewriteReferenceIDs(ctx, db); err != nil {
-				return err
+			// before the ADD. Once, not per ADD CONSTRAINT: a second call
+			// would restage ids that already match.
+			if !rewrote {
+				if err := rewriteReferenceIDs(ctx, db); err != nil {
+					return err
+				}
+				rewrote = true
 			}
 			name := foreignKeyName(stmt)
 			exists, err := constraintExists(ctx, db, name)
