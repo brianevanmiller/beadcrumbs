@@ -62,6 +62,16 @@ func TestReferenceIdentityIsKindLocatorWorkspace(t *testing.T) {
 	if upper.Reference.ID == lower.Reference.ID {
 		t.Fatal("case-variant locators resolved to one Reference; identity is byte-exact")
 	}
+
+	// U+001F is the identity separator. A locator that contains it would let two
+	// distinct tuples hash to one id; that is a validation error, not a rewrite.
+	_, err = f.L.AttachReference(ctx, ledger.AttachReference{
+		Target: crumbTarget(first.ID),
+		Ref: ledger.RefSpec{Kind: "docs", Locator: "a\x1fb", Relation: ledger.RelationSource},
+	})
+	if !errors.Is(err, ledger.ErrInvalidInput) {
+		t.Fatalf("a locator containing U+001F returned %v, want invalid_reference", err)
+	}
 }
 
 // ref_links covers four record kinds and every relation. None of them is a

@@ -13,9 +13,9 @@ import (
 type MigrationResult = ledger.MigrationResult
 
 // Migrate is `bdc migrate`: it applies every embedded migration above the
-// ledger's current version. v1 ships exactly one, so on a healthy ledger this
-// reports From == To and applies nothing. It is what makes a version mismatch a
-// repairable state, which is why `bdc doctor` names it as the remediation.
+// ledger's current version. On a healthy ledger this reports From == To and
+// applies nothing. It is what makes a version mismatch a repairable state,
+// which is why `bdc doctor` names it as the remediation.
 func (s *Store) Migrate(ctx context.Context) (MigrationResult, error) {
 	res, err := applyPending(ctx, s.db)
 	if err != nil {
@@ -51,7 +51,7 @@ func applyPending(ctx context.Context, db *sql.DB) (MigrationResult, error) {
 		if m.version <= res.To {
 			continue
 		}
-		if err := execScript(ctx, db, m.body); err != nil {
+		if err := applyMigration(ctx, db, m); err != nil {
 			return res, ledger.FailWith(ledger.ErrIntegrity, "integrity_migration_failed", err,
 				"migration %s failed", m.name)
 		}
@@ -67,6 +67,183 @@ func applyPending(ctx context.Context, db *sql.DB) (MigrationResult, error) {
 		res.Applied = append(res.Applied, m.name)
 	}
 	return res, nil
+}
+
+func applyMigration(ctx context.Context, db *sql.DB, m migration) error {
+	if m.version == 2 {
+		return applySchema2(ctx, db, m.body)
+	}
+	return execScript(ctx, db, m.body)
+}
+
+// applySchema2 is 002: ALTERs that may already have landed, a Go rewrite of
+// refs.id from the natural key, then the FKs and schema_meta REPLACE. Dolt DDL
+// typically auto-commits, so the rewrite is a function of identity and every
+// ALTER is skipped when its effect is already visible — a failed run leaves
+// version 1 and bdc migrate is re-runnable.
+func applySchema2(ctx context.Context, db *sql.DB, script string) error {
+	stmts, err := splitStatements(script)
+	if err != nil {
+		return err
+	}
+	for _, stmt := range stmts {
+		switch {
+		case isAddHarnessColumn(stmt):
+			table := addColumnTable(stmt)
+			exists, err := columnExists(ctx, db, table, "harness")
+			if err != nil {
+				return err
+			}
+			if exists {
+				continue
+			}
+		case isDropForeignKey(stmt):
+			name := foreignKeyName(stmt)
+			exists, err := constraintExists(ctx, db, name)
+			if err != nil {
+				return err
+			}
+			if !exists {
+				continue
+			}
+		case isAddForeignKey(stmt):
+			// The rewrite has to run with the FKs down, after the DROP and
+			// before the ADD. Doing it here — the first ADD CONSTRAINT — is
+			// the seam the SQL comment names.
+			if err := rewriteReferenceIDs(ctx, db); err != nil {
+				return err
+			}
+			name := foreignKeyName(stmt)
+			exists, err := constraintExists(ctx, db, name)
+			if err != nil {
+				return err
+			}
+			if exists {
+				continue
+			}
+		}
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("%s: %w", firstLine(stmt), err)
+		}
+	}
+	return nil
+}
+
+// rewriteReferenceIDs is Go because Go is the source of truth for ReferenceIDFor.
+// A SQL SHA2 that disagreed would mint ids the writer never produces. The map
+// is computed from the current (kind, locator, workspace); applying it twice is
+// a no-op once every id already matches.
+func rewriteReferenceIDs(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx, `SELECT id, kind, locator, workspace FROM refs`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type mapping struct{ old, neu string }
+	var maps []mapping
+	for rows.Next() {
+		var old, kind, locator, workspace string
+		if err := rows.Scan(&old, &kind, &locator, &workspace); err != nil {
+			return err
+		}
+		neu := string(ledger.ReferenceIDFor(kind, locator, workspace))
+		if old != neu {
+			maps = append(maps, mapping{old: old, neu: neu})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(maps) == 0 {
+		return nil
+	}
+
+	// Stage through a throwaway prefix so two rows cannot collide mid-update
+	// when one row's new id is another's old id. CHAR(40) still holds:
+	// "tmp_" + 36-character UUID.
+	for _, m := range maps {
+		stage := "tmp_" + m.neu[len(ledger.PrefixReference):]
+		if _, err := db.ExecContext(ctx, `UPDATE refs SET id = ? WHERE id = ?`, stage, m.old); err != nil {
+			return fmt.Errorf("staging refs.id %s: %w", m.old, err)
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE ref_links SET reference_id = ? WHERE reference_id = ?`, stage, m.old); err != nil {
+			return fmt.Errorf("staging ref_links.reference_id %s: %w", m.old, err)
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE receipts SET reference_id = ? WHERE reference_id = ?`, stage, m.old); err != nil {
+			return fmt.Errorf("staging receipts.reference_id %s: %w", m.old, err)
+		}
+	}
+	for _, m := range maps {
+		stage := "tmp_" + m.neu[len(ledger.PrefixReference):]
+		if _, err := db.ExecContext(ctx, `UPDATE refs SET id = ? WHERE id = ?`, m.neu, stage); err != nil {
+			return fmt.Errorf("rewriting refs.id %s: %w", m.old, err)
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE ref_links SET reference_id = ? WHERE reference_id = ?`, m.neu, stage); err != nil {
+			return fmt.Errorf("rewriting ref_links.reference_id %s: %w", m.old, err)
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE receipts SET reference_id = ? WHERE reference_id = ?`, m.neu, stage); err != nil {
+			return fmt.Errorf("rewriting receipts.reference_id %s: %w", m.old, err)
+		}
+	}
+	return nil
+}
+
+func isAddHarnessColumn(stmt string) bool {
+	s := strings.ToLower(compactSQL(stmt))
+	return strings.HasPrefix(s, "alter table ") && strings.Contains(s, " add column harness ")
+}
+
+func isDropForeignKey(stmt string) bool {
+	s := strings.ToLower(compactSQL(stmt))
+	return strings.HasPrefix(s, "alter table ") && strings.Contains(s, " drop foreign key ")
+}
+
+func isAddForeignKey(stmt string) bool {
+	s := strings.ToLower(compactSQL(stmt))
+	return strings.HasPrefix(s, "alter table ") && strings.Contains(s, " add constraint ") && strings.Contains(s, " foreign key ")
+}
+
+func addColumnTable(stmt string) string {
+	fields := strings.Fields(compactSQL(stmt))
+	if len(fields) >= 3 {
+		return fields[2]
+	}
+	return ""
+}
+
+func foreignKeyName(stmt string) string {
+	fields := strings.Fields(compactSQL(stmt))
+	for i, f := range fields {
+		if strings.EqualFold(f, "constraint") && i+1 < len(fields) {
+			return fields[i+1]
+		}
+		if strings.EqualFold(f, "key") && i > 0 && strings.EqualFold(fields[i-1], "foreign") && i+1 < len(fields) {
+			return fields[i+1]
+		}
+	}
+	return ""
+}
+
+func compactSQL(stmt string) string {
+	return strings.Join(strings.Fields(stmt), " ")
+}
+
+func columnExists(ctx context.Context, db *sql.DB, table, column string) (bool, error) {
+	var n int
+	err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = ? AND table_name = ? AND column_name = ?`,
+		DatabaseName, table, column).Scan(&n)
+	return n > 0, err
+}
+
+func constraintExists(ctx context.Context, db *sql.DB, name string) (bool, error) {
+	var n int
+	err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM information_schema.table_constraints
+		 WHERE table_schema = ? AND constraint_name = ? AND constraint_type = 'FOREIGN KEY'`,
+		DatabaseName, name).Scan(&n)
+	return n > 0, err
 }
 
 // execScript applies one migration script statement by statement. Statement-wise

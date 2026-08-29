@@ -66,10 +66,12 @@ type Tx interface {
 	InsertRevision(InsightRevision, []CrumbID) error
 	SetInsightHead(InsightID, int) error
 
-	// UpsertReference resolves (kind, locator, workspace) to one Reference,
-	// returning the existing id when it is already known and refreshing the
-	// observed cache only when the caller supplied one.
-	UpsertReference(Reference) (ReferenceID, error)
+	// UpsertReference resolves (kind, locator, workspace) to one Reference.
+	// created is false for an identity that was already known — the same
+	// answer UpsertProposal gives — because a deterministic id equals the
+	// existing one on a hit, so comparing ids cannot tell the two apart.
+	// The observed cache is refreshed only when the caller supplied one.
+	UpsertReference(Reference) (ReferenceID, bool, error)
 	LinkReference(RecordRef, ReferenceID, Relation) error
 
 	AppendValidation(Validation) error

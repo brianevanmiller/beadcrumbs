@@ -116,6 +116,11 @@ func (s RefSpec) Validate() error {
 		return Fail(ErrInvalidInput, "invalid_reference", "reference locator is longer than 1024 characters")
 	case len(s.Workspace) > 255:
 		return Fail(ErrInvalidInput, "invalid_reference", "reference workspace is longer than 255 characters")
+	case strings.ContainsRune(s.Kind, rune(identitySeparator)),
+		strings.ContainsRune(s.Locator, rune(identitySeparator)),
+		strings.ContainsRune(s.Workspace, rune(identitySeparator)):
+		return Fail(ErrInvalidInput, "invalid_reference",
+			"reference kind, locator, and workspace must not contain U+001F")
 	case !slices.Contains(relations, s.Relation):
 		return Fail(ErrInvalidInput, "invalid_relation",
 			"%q is not a reference relation; expected one of %s", s.Relation, joinNames(relations))
@@ -250,8 +255,9 @@ func insertCrumb(tx Tx, crumb Crumb, refs []RefSpec) error {
 	}
 	record := RecordRef{Kind: KindCrumb, ID: string(crumb.ID)}
 	for _, ref := range refs {
-		id, err := tx.UpsertReference(Reference{
-			ID: NewReferenceID(), Kind: ref.Kind, Locator: ref.Locator,
+		id, _, err := tx.UpsertReference(Reference{
+			ID: ReferenceIDFor(ref.Kind, ref.Locator, ref.Workspace),
+			Kind: ref.Kind, Locator: ref.Locator,
 			Workspace: ref.Workspace, CreatedAt: crumb.CapturedAt,
 		})
 		if err != nil {

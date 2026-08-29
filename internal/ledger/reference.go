@@ -123,15 +123,15 @@ func (l *Ledger) AttachReference(ctx context.Context, c AttachReference) (Attach
 		if err := assertTargetExists(tx, c.Target); err != nil {
 			return err
 		}
-		minted := NewReferenceID()
-		id, err := tx.UpsertReference(Reference{
-			ID: minted, Kind: c.Ref.Kind, Locator: c.Ref.Locator,
+		id, created, err := tx.UpsertReference(Reference{
+			ID: ReferenceIDFor(c.Ref.Kind, c.Ref.Locator, c.Ref.Workspace),
+			Kind: c.Ref.Kind, Locator: c.Ref.Locator,
 			Workspace: c.Ref.Workspace, Label: label, CreatedAt: at,
 		})
 		if err != nil {
 			return err
 		}
-		out.Created = id == minted
+		out.Created = created
 		if err := tx.LinkReference(c.Target, id, c.Ref.Relation); err != nil {
 			return err
 		}
@@ -385,7 +385,7 @@ func (l *Ledger) refresh(ctx context.Context, refs []Reference) map[ReferenceID]
 	}
 	if err := l.store.Write(ctx, func(tx Tx) error {
 		for _, u := range updates {
-			if _, err := tx.UpsertReference(u); err != nil {
+			if _, _, err := tx.UpsertReference(u); err != nil {
 				return err
 			}
 		}

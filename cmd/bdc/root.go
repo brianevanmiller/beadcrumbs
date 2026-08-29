@@ -18,7 +18,7 @@ import (
 )
 
 // version is the bdc release version reported in every envelope's meta.
-const version = "1.0.0"
+const version = "1.0.1"
 
 // ledgerMode declares what a command needs before its body runs. Cobra has no
 // typed per-command metadata, so it travels as an annotation; an unrecognised
@@ -63,6 +63,7 @@ type app struct {
 	actorKind string
 	model     string
 	session   string
+	harness   string
 	noEnrich  bool
 }
 
@@ -160,6 +161,10 @@ func (a *app) prepare(cmd *cobra.Command, args []string) error {
 		cwd = wd
 	}
 	a.cwd = cwd
+	a.harness = detectHarness(os.Getenv("BDC_HARNESS"), os.Getenv, cwd)
+	if err := ledger.ValidateHarness(ledger.Harness(a.harness)); err != nil {
+		return err
+	}
 
 	mode := ledgerModeOf(cmd)
 	if mode == ledgerDetached {
@@ -170,6 +175,9 @@ func (a *app) prepare(cmd *cobra.Command, args []string) error {
 	}
 	loc, discoverErr := dolt.Discover(cmd.Context(), cwd)
 	a.loc = loc
+	if a.harness == "" {
+		a.harness = detectHarness("", os.Getenv, loc.GitCommon+"\n"+loc.Dir+"\n"+cwd)
+	}
 	switch {
 	case discoverErr == nil:
 	case mode == ledgerRequired:
@@ -213,6 +221,10 @@ func (a *app) prepare(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	a.out.schema = func() int { return schema }
+	if schema < dolt.CurrentSchemaVersion() && mode == ledgerRequired && a.command != "migrate" {
+		return ledger.Fail(ledger.ErrIntegrity, "integrity_schema_version",
+			"ledger is at schema version %d, this build expects %d; run `bdc migrate`", schema, dolt.CurrentSchemaVersion())
+	}
 	return nil
 }
 
@@ -247,6 +259,7 @@ func (a *app) ledger(ctx context.Context) (*ledger.Ledger, error) {
 		ActorKind:  ledger.ActorKind(a.actorKind),
 		ActorModel: a.model,
 		SessionID:  a.session,
+		Harness:    ledger.Harness(a.harness),
 	}
 	if err := actor.Validate(); err != nil {
 		return nil, err
@@ -403,4 +416,29 @@ func resolveActor(declared, kind string) string {
 		return user
 	}
 	return "unknown"
+}
+
+// detectHarness is the one place a platform is named. $BDC_HARNESS wins when
+// set; otherwise the first matching environment marker. Detection never fills
+// session_id and never promotes actor_kind — those still require a model and a
+// session, for the reason resolveActorKind already documents.
+func detectHarness(declared string, getenv func(string) string, pathHint string) string {
+	if declared != "" {
+		return declared
+	}
+	switch {
+	case getenv("AMP_ORB") != "" || getenv("AMP_THREAD_ID") != "":
+		return string(ledger.HarnessAmp)
+	case getenv("CONDUCTOR_SESSION_ID") != "" || getenv("CONDUCTOR_IS_LOCAL") != "":
+		return string(ledger.HarnessConductor)
+	case strings.Contains(pathHint, ".delta/clones/") || strings.Contains(pathHint, ".delta/worktrees/"):
+		return string(ledger.HarnessDelta)
+	case getenv("CLAUDE_CODE") != "" || getenv("CLAUDECODE") != "":
+		return string(ledger.HarnessClaudeCode)
+	case getenv("CODEX_HOME") != "" || getenv("CODEX_THREAD_ID") != "":
+		return string(ledger.HarnessCodex)
+	case getenv("OPENCODE") != "" || getenv("OPENCODE_DIR") != "":
+		return string(ledger.HarnessOpenCode)
+	}
+	return ""
 }

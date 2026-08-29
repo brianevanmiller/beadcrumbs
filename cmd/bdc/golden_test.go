@@ -438,7 +438,7 @@ func declaredFields() map[string]bool {
 		"bdc", "command", "ok", "data", "warnings", "error", "meta",
 		"code", "message", "details", "bdc_version", "ledger_schema", "generated_at",
 		// provenance, shared by every record and event
-		"actor_id", "actor_kind", "actor_model", "session_id",
+		"actor_id", "actor_kind", "actor_model", "session_id", "harness",
 		// version, init, doctor, maintenance
 		"version", "schema_version", "dolt_driver", "go", "platform",
 		"path", "stealth", "created", "checks", "journal_bytes", "ledger_path", "beads",

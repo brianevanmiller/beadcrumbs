@@ -78,8 +78,8 @@ func (t *tx) InsertCrumb(c ledger.Crumb) error {
 	return t.exec(`INSERT INTO crumbs
 		(id, content, content_hash, review_state, confidence, captured_at,
 		 harvest_id, policy_version, redaction_version,
-		 actor_id, actor_kind, actor_model, session_id)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 actor_id, actor_kind, actor_model, session_id, harness)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		append([]any{
 			string(c.ID), c.Content, c.ContentHash, string(c.ReviewState), c.Confidence, utc(c.CapturedAt),
 			nullStr(string(c.HarvestID)), nullStr(c.PolicyVersion), c.RedactionVersion,
@@ -95,8 +95,8 @@ func (t *tx) AppendCrumbReview(e ledger.CrumbReviewEvent) error {
 	}
 	if err := t.exec(`INSERT INTO crumb_review_events
 		(id, crumb_id, from_state, to_state, rationale, occurred_at,
-		 actor_id, actor_kind, actor_model, session_id)
-		VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		 actor_id, actor_kind, actor_model, session_id, harness)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
 		append([]any{
 			string(e.ID), string(e.CrumbID), string(e.FromState), string(e.ToState),
 			e.Rationale, utc(e.OccurredAt),
@@ -143,8 +143,8 @@ func (t *tx) InsertHarvest(h ledger.Harvest, links []ledger.HarvestCrumb) error 
 	if err := t.exec(`INSERT INTO harvests
 		(id, mode, outcome, failure_code, crumbs_considered, crumbs_selected,
 		 policy_version, redaction_version, started_at, finished_at,
-		 actor_id, actor_kind, actor_model, session_id)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 actor_id, actor_kind, actor_model, session_id, harness)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		append([]any{
 			string(h.ID), string(h.Mode), string(h.Outcome), nullStr(h.FailureCode),
 			h.CrumbsConsidered, h.CrumbsSelected, h.PolicyVersion, h.RedactionVersion,
@@ -182,8 +182,8 @@ func (t *tx) InsertRevision(r ledger.InsightRevision, crumbs []ledger.CrumbID) e
 	}
 	if r.Revision == 1 {
 		if err := t.exec(`INSERT INTO insights
-			(id, head_revision, created_at, actor_id, actor_kind, actor_model, session_id)
-			VALUES (?,?,?,?,?,?,?)`,
+			(id, head_revision, created_at, actor_id, actor_kind, actor_model, session_id, harness)
+			VALUES (?,?,?,?,?,?,?,?)`,
 			append([]any{string(r.InsightID), 1, utc(r.CreatedAt)}, provArgs(r.Provenance)...)...); err != nil {
 			return err
 		}
@@ -191,8 +191,8 @@ func (t *tx) InsertRevision(r ledger.InsightRevision, crumbs []ledger.CrumbID) e
 	if err := t.exec(`INSERT INTO insight_revisions
 		(id, insight_id, revision, title, content, content_hash, class, confidence,
 		 rationale, harvest_id, parent_revision_id, created_at,
-		 actor_id, actor_kind, actor_model, session_id)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 actor_id, actor_kind, actor_model, session_id, harness)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		append([]any{
 			string(r.ID), string(r.InsightID), r.Revision, r.Title, r.Content, r.ContentHash,
 			r.Class, r.Confidence, nullStr(r.Rationale), nullStr(string(r.HarvestID)),
@@ -223,27 +223,28 @@ func (t *tx) SetInsightHead(id ledger.InsightID, revision int) error {
 // UpsertReference resolves (kind, locator, workspace) to one Reference. The
 // observed cache — label, meta, fetched_at — is refreshed only when the caller
 // supplied one, so a lookup with no enrichment never blanks what enrichment
-// previously learned.
-func (t *tx) UpsertReference(r ledger.Reference) (ledger.ReferenceID, error) {
+// previously learned. created is the write result, not an id comparison: a
+// deterministic id equals the existing one on a hit.
+func (t *tx) UpsertReference(r ledger.Reference) (ledger.ReferenceID, bool, error) {
 	var existing string
 	err := t.row(`SELECT id FROM refs WHERE kind = ? AND locator = ? AND workspace = ?`,
 		r.Kind, r.Locator, r.Workspace).Scan(&existing)
 	switch {
 	case err == nil:
 		if r.Label == "" && r.Meta == nil && r.FetchedAt.IsZero() {
-			return ledger.ReferenceID(existing), nil
+			return ledger.ReferenceID(existing), false, nil
 		}
-		return ledger.ReferenceID(existing), t.exec(
+		return ledger.ReferenceID(existing), false, t.exec(
 			`UPDATE refs SET label = COALESCE(?, label), meta = COALESCE(?, meta),
 			 fetched_at = COALESCE(?, fetched_at) WHERE id = ?`,
 			nullStr(r.Label), nullBytes(r.Meta), nullTime(r.FetchedAt), existing)
 	case !errors.Is(err, sql.ErrNoRows):
-		return "", storageErr(err, "cannot resolve reference %s:%s", r.Kind, r.Locator)
+		return "", false, storageErr(err, "cannot resolve reference %s:%s", r.Kind, r.Locator)
 	}
 	if err := assertID(ledger.PrefixReference, string(r.ID)); err != nil {
-		return "", err
+		return "", false, err
 	}
-	return r.ID, t.exec(`INSERT INTO refs
+	return r.ID, true, t.exec(`INSERT INTO refs
 		(id, kind, locator, workspace, label, meta, fetched_at, created_at)
 		VALUES (?,?,?,?,?,?,?,?)`,
 		string(r.ID), r.Kind, r.Locator, r.Workspace,
@@ -277,8 +278,8 @@ func (t *tx) AppendValidation(v ledger.Validation) error {
 	return t.exec(`INSERT INTO validations
 		(id, target_kind, target_id, verdict, rationale,
 		 superseded_by_kind, superseded_by_id, occurred_at,
-		 actor_id, actor_kind, actor_model, session_id)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 actor_id, actor_kind, actor_model, session_id, harness)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		append([]any{
 			string(v.ID), string(v.Target.Kind), v.Target.ID, string(v.Verdict), v.Rationale,
 			nullStr(string(v.SupersededBy.Kind)), nullStr(v.SupersededBy.ID), utc(v.OccurredAt),
@@ -291,8 +292,8 @@ func (t *tx) AppendAuthority(a ledger.Authority) error {
 	}
 	return t.exec(`INSERT INTO authorities
 		(id, target_kind, target_id, level, scope, destination_kind, destination_locator,
-		 rationale, occurred_at, actor_id, actor_kind, actor_model, session_id)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 rationale, occurred_at, actor_id, actor_kind, actor_model, session_id, harness)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		append([]any{
 			string(a.ID), string(a.Target.Kind), a.Target.ID, string(a.Level), a.Scope,
 			nullStr(a.DestinationKind), nullStr(a.DestinationLocator), a.Rationale, utc(a.OccurredAt),
@@ -318,8 +319,8 @@ func (t *tx) UpsertProposal(p ledger.Proposal) (ledger.ProposalID, bool, error) 
 		(id, insight_id, revision_id, class, dest_kind, dest_locator, dest_workspace,
 		 dest_capabilities, content, content_hash, confidence, requested_authority,
 		 supersedes_proposal_id, policy_version, redaction_version, created_at,
-		 actor_id, actor_kind, actor_model, session_id)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 actor_id, actor_kind, actor_model, session_id, harness)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		append([]any{
 			string(p.ID), string(p.InsightID), string(p.RevisionID), p.Class,
 			p.DestKind, p.DestLocator, p.DestWorkspace, ledger.EncodeCapabilities(p.Capabilities),
@@ -337,8 +338,8 @@ func (t *tx) AppendPromotion(p ledger.Promotion) error {
 	}
 	return t.exec(`INSERT INTO promotions
 		(id, proposal_id, attempt, status, detail, occurred_at,
-		 actor_id, actor_kind, actor_model, session_id)
-		VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		 actor_id, actor_kind, actor_model, session_id, harness)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
 		append([]any{
 			string(p.ID), string(p.ProposalID), p.Attempt, string(p.Status),
 			nullStr(p.Detail), utc(p.OccurredAt),
@@ -355,8 +356,8 @@ func (t *tx) InsertReceipt(r ledger.Receipt) error {
 	}
 	return t.exec(`INSERT INTO receipts
 		(id, promotion_id, kind, locator, anchor, external_hash, verified, reference_id,
-		 recorded_at, actor_id, actor_kind, actor_model, session_id)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 recorded_at, actor_id, actor_kind, actor_model, session_id, harness)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		append([]any{
 			string(r.ID), string(r.PromotionID), r.Kind, r.Locator,
 			nullStr(r.Anchor), nullStr(r.ExternalHash), verified, nullStr(string(r.ReferenceID)),

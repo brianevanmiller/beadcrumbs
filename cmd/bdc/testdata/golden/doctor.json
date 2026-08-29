@@ -12,7 +12,7 @@
       {
         "name": "schema_version",
         "status": "ok",
-        "detail": "schema version 1"
+        "detail": "schema version 2"
       },
       {
         "name": "journal_size",
@@ -35,7 +35,7 @@
         "detail": "every Insight's head matches its latest revision"
       }
     ],
-    "schema_version": 1,
+    "schema_version": 2,
     "journal_bytes": <size>,
     "ledger_path": "<tmp>/repo/.git/beadcrumbs",
     "beads": null,
@@ -60,8 +60,8 @@
   "warnings": [],
   "error": null,
   "meta": {
-    "bdc_version": "1.0.0",
-    "ledger_schema": 1,
+    "bdc_version": "1.0.1",
+    "ledger_schema": 2,
     "generated_at": "<time>"
   }
 }

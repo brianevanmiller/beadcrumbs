@@ -480,9 +480,12 @@ interpreted string. The physical table is therefore named **`refs`**; the domain
 
 ### 2.2 Conventions
 
-- **IDs**: kind-prefixed UUIDv7 text in `CHAR(40)` — `crb_`, `cre_`, `hrv_`, `ins_`, `rev_`,
-  `ref_`, `val_`, `aut_`, `pp_`, `prm_`, `rcp_`. Monotonic, sortable, and self-describing in CLI
-  arguments and in `dolt sql` output.
+- **IDs**: kind-prefixed UUID text in `CHAR(40)` — `crb_`, `cre_`, `hrv_`, `ins_`, `rev_`,
+  `ref_`, `val_`, `aut_`, `pp_`, `prm_`, `rcp_`. Event and record ids are UUIDv7 (monotonic,
+  sortable). **Reference ids (v1.0.1)** are `ref_` plus SHA-256 of
+  `kind || 0x1F || locator || 0x1F || workspace` (empty workspace is `''`, never NULL), formatted
+  as a UUID so they still fit CHAR(40) and `ParseID`. Two clones that name the same identity mint
+  the same primary key; that is what makes a Dolt merge of `refs` an idempotent no-op.
 - **Collation**: every table declares `DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin`.
   Dolt 2.3.1's default database collation is already `utf8mb4_0900_bin`, but the DDL must not
   depend on a server default it does not set: under a case-insensitive collation
@@ -499,6 +502,7 @@ interpreted string. The physical table is therefore named **`refs`**; the domain
   actor_kind  ENUM('human','agent') NOT NULL,
   actor_model VARCHAR(128) NULL,
   session_id  VARCHAR(128) NULL,
+  harness     VARCHAR(64)  NULL,   -- v1.0.1; text, not ENUM; empty/NULL when undetected
   CONSTRAINT ck_<t>_prov CHECK (CHAR_LENGTH(actor_id) > 0 AND (actor_kind = 'human'
       OR (CHAR_LENGTH(COALESCE(actor_model,'')) > 0 AND CHAR_LENGTH(COALESCE(session_id,'')) > 0)))
   ```
@@ -962,7 +966,7 @@ Every command accepts `--json`. Persistent flags: `--json`, `--actor`, `--actor-
   "data": {},
   "warnings": [{"code": "beads_unavailable", "message": "bd not found on PATH"}],
   "error": null,
-  "meta": {"bdc_version": "1.0.0", "ledger_schema": 1, "generated_at": "2026-08-28T14:00:00.000000Z"}
+  "meta": {"bdc_version": "1.0.1", "ledger_schema": 2, "generated_at": "2026-08-28T14:00:00.000000Z"}
 }
 ```
 
@@ -1251,6 +1255,10 @@ without CGO and ICU4C — so the tag would only hide the tests that matter.
 | *(added)* lock discipline is a live assertion | `TestSecondOpenInProcessPanics`, `TestHeldEngineWatchdogFires` | `internal/store/dolt/lock_test.go` |
 | *(added)* GC reclaims journal growth | `TestGCReclaimsJournal` | `internal/store/dolt/gc_test.go` |
 | *(added)* a migration can record its version | `TestSchemaVersionIsRecordedByReplacingTheSingleton` (schema_meta is a singleton, so a later script replaces the row rather than inserting one) | `internal/store/dolt/schema_test.go` |
+| *(v1.0.1)* Reference ids are a hash of the natural key | `TestReferenceIDForIsDeterministicAndFitsParsers`, `TestReferenceIdentityIsKindLocatorWorkspace` | `internal/ledger/ids_test.go`, `internal/ledger/reference_test.go` |
+| *(v1.0.1)* a v1 ledger is repaired by `bdc migrate` | `TestDoctorOnV1LedgerNamesMigrate`, `TestMigrateV1RewritesReferenceIDsAndLeavesDoctorClean` | `internal/store/dolt/migrate_test.go` |
+| *(v1.0.1)* two clones naming one Reference pull without a constraint violation | `TestTwoClonesSameReferencePullWithoutConstraintViolation` | `internal/store/dolt/merge_test.go` |
+| *(v1.0.1)* harness provenance is detected, not guessed | `TestDetectHarness` | `cmd/bdc/harness_test.go` |
 
 ### Privacy and security
 

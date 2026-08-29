@@ -78,6 +78,11 @@ func (d Destination) validate() error {
 		return Fail(ErrInvalidInput, "invalid_destination", "destination locator is longer than 1024 characters")
 	case len(d.Workspace) > 255:
 		return Fail(ErrInvalidInput, "invalid_destination", "destination workspace is longer than 255 characters")
+	case strings.ContainsRune(d.Kind, rune(identitySeparator)),
+		strings.ContainsRune(d.Locator, rune(identitySeparator)),
+		strings.ContainsRune(d.Workspace, rune(identitySeparator)):
+		return Fail(ErrInvalidInput, "invalid_destination",
+			"destination kind, locator, and workspace must not contain U+001F")
 	}
 	return ValidateCapabilities(d.Capabilities)
 }
@@ -211,8 +216,9 @@ func (l *Ledger) ProposePromotion(ctx context.Context, c ProposePromotion) (Prop
 		record := RecordRef{Kind: KindProposal, ID: string(id)}
 		if created {
 			for _, ref := range c.Evidence {
-				refID, err := tx.UpsertReference(Reference{
-					ID: NewReferenceID(), Kind: ref.Kind, Locator: ref.Locator,
+				refID, _, err := tx.UpsertReference(Reference{
+					ID: ReferenceIDFor(ref.Kind, ref.Locator, ref.Workspace),
+					Kind: ref.Kind, Locator: ref.Locator,
 					Workspace: ref.Workspace, CreatedAt: proposal.CreatedAt,
 				})
 				if err != nil {
@@ -492,8 +498,9 @@ func (l *Ledger) RecordPromotion(ctx context.Context, c RecordPromotion) (Receip
 		// The written record becomes a Reference like any other, so the graph
 		// can reach the artifact without anything learning the destination's
 		// locator format.
-		refID, err := tx.UpsertReference(Reference{
-			ID: NewReferenceID(), Kind: proposal.DestKind, Locator: c.Locator,
+		refID, _, err := tx.UpsertReference(Reference{
+			ID: ReferenceIDFor(proposal.DestKind, c.Locator, proposal.DestWorkspace),
+			Kind: proposal.DestKind, Locator: c.Locator,
 			Workspace: proposal.DestWorkspace, CreatedAt: at,
 		})
 		if err != nil {

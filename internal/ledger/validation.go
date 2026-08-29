@@ -136,8 +136,9 @@ func (l *Ledger) RecordValidation(ctx context.Context, c RecordValidation) (Vali
 		}
 		record := RecordRef{Kind: KindValidation, ID: string(validation.ID)}
 		for _, ref := range c.Evidence {
-			id, err := tx.UpsertReference(Reference{
-				ID: NewReferenceID(), Kind: ref.Kind, Locator: ref.Locator,
+			id, _, err := tx.UpsertReference(Reference{
+				ID: ReferenceIDFor(ref.Kind, ref.Locator, ref.Workspace),
+				Kind: ref.Kind, Locator: ref.Locator,
 				Workspace: ref.Workspace, CreatedAt: validation.OccurredAt,
 			})
 			if err != nil {

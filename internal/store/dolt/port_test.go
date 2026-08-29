@@ -27,7 +27,7 @@ func TestStorePortRoundTrip(t *testing.T) {
 	harvestID := ledger.NewHarvestID()
 	insightID, revision1 := ledger.NewInsightID(), ledger.NewRevisionID()
 	proposalID := ledger.NewProposalID()
-	referenceID := ledger.NewReferenceID()
+	referenceID := ledger.ReferenceIDFor("beads", "bdc-7ah", "")
 
 	if err := store.Write(ctx, func(tx ledger.Tx) error {
 		for i, id := range []ledger.CrumbID{crumbA, crumbB} {
@@ -123,7 +123,7 @@ func TestStorePortRoundTrip(t *testing.T) {
 	}
 
 	if err := store.Write(ctx, func(tx ledger.Tx) error {
-		got, err := tx.UpsertReference(ledger.Reference{
+		got, created, err := tx.UpsertReference(ledger.Reference{
 			ID: referenceID, Kind: "beads", Locator: "bdc-7ah", CreatedAt: at,
 		})
 		if err != nil {
@@ -131,14 +131,16 @@ func TestStorePortRoundTrip(t *testing.T) {
 		}
 		// The same identity a second time is the same Reference, not a
 		// duplicate-key error: that is what makes attaching one idempotent.
-		again, err := tx.UpsertReference(ledger.Reference{
-			ID: ledger.NewReferenceID(), Kind: "beads", Locator: "bdc-7ah",
+		// created is the write result, not an id comparison — the deterministic
+		// id equals the existing one on a hit.
+		again, createdAgain, err := tx.UpsertReference(ledger.Reference{
+			ID: ledger.ReferenceIDFor("beads", "bdc-7ah", ""), Kind: "beads", Locator: "bdc-7ah",
 			Label: "the epic", FetchedAt: at, CreatedAt: at,
 		})
 		if err != nil {
 			return err
 		}
-		if got != referenceID || again != referenceID {
+		if got != referenceID || again != referenceID || !created || createdAgain {
 			return errors.New("upsert minted a second Reference for one identity")
 		}
 		if err := tx.LinkReference(ledger.RecordRef{Kind: ledger.KindRevision, ID: string(revision2)},
@@ -430,19 +432,20 @@ func TestWriteRollsBackOnError(t *testing.T) {
 	}
 }
 
-// TestMigrateIsIdempotent: v1 ships one migration, so a healthy ledger reports
-// no work. The value of the check is that a drifted ledger would report some.
-func TestMigrateIsIdempotent(t *testing.T) {
-	ctx := context.Background()
-	store := schemaFixture(t)
+	// TestMigrateIsIdempotent: a healthy ledger reports no work. The value of the
+	// check is that a drifted ledger would report some.
+	func TestMigrateIsIdempotent(t *testing.T) {
+		ctx := context.Background()
+		store := schemaFixture(t)
 
-	res, err := store.Migrate(ctx)
-	if err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	if res.From != 1 || res.To != 1 || len(res.Applied) != 0 {
-		t.Fatalf("a current ledger migrated something: %+v", res)
-	}
+		res, err := store.Migrate(ctx)
+		if err != nil {
+			t.Fatalf("migrate: %v", err)
+		}
+		want := CurrentSchemaVersion()
+		if res.From != want || res.To != want || len(res.Applied) != 0 {
+			t.Fatalf("a current ledger migrated something: %+v", res)
+		}
 	if v, err := store.SchemaVersion(ctx); err != nil || v != CurrentSchemaVersion() {
 		t.Fatalf("schema version is %d (err %v), want %d", v, err, CurrentSchemaVersion())
 	}
