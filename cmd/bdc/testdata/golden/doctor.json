@@ -1,0 +1,67 @@
+{
+  "bdc": "1",
+  "command": "doctor",
+  "ok": true,
+  "data": {
+    "checks": [
+      {
+        "name": "ledger_open",
+        "status": "ok",
+        "detail": "engine open at <tmp>/repo/.git/beadcrumbs"
+      },
+      {
+        "name": "schema_version",
+        "status": "ok",
+        "detail": "schema version 1"
+      },
+      {
+        "name": "journal_size",
+        "status": "ok",
+        "detail": "chunk journal is <size> bytes"
+      },
+      {
+        "name": "restore_leftovers",
+        "status": "ok",
+        "detail": "no interrupted restore"
+      },
+      {
+        "name": "polymorphic_targets",
+        "status": "ok",
+        "detail": "every polymorphic target points at a live record"
+      },
+      {
+        "name": "head_revision",
+        "status": "ok",
+        "detail": "every Insight's head matches its latest revision"
+      }
+    ],
+    "schema_version": 1,
+    "journal_bytes": <size>,
+    "ledger_path": "<tmp>/repo/.git/beadcrumbs",
+    "beads": null,
+    "counts": {
+      "crumbs_by_state": {
+        "accepted": 2,
+        "candidate": 1
+      },
+      "insights": 1,
+      "revisions": 2,
+      "harvests": 1,
+      "references": 3,
+      "proposals": 3,
+      "promotions_by_status": {
+        "applied": 1,
+        "failed": 1,
+        "rejected": 1
+      }
+    },
+    "ok": true
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

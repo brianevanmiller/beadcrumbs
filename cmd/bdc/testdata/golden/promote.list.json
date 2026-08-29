@@ -1,0 +1,132 @@
+{
+  "bdc": "1",
+  "command": "promote.list",
+  "ok": true,
+  "data": {
+    "proposals": [
+      {
+        "id": "<pp_3>",
+        "insight_id": "<ins_1>",
+        "revision_id": "<rev_2>",
+        "class": "learning",
+        "dest_kind": "docs",
+        "dest_locator": "docs/learnings/freshness.md",
+        "dest_workspace": "",
+        "content": "Every read states the freshness of anything it cached.",
+        "content_hash": "<sha256>",
+        "confidence": 0.5,
+        "requested_authority": "advisory",
+        "policy_version": "1",
+        "redaction_version": "1",
+        "created_at": "<time>",
+        "actor_id": "tester",
+        "actor_kind": "human",
+        "status": "rejected",
+        "authority_required": "none",
+        "attempts": [
+          {
+            "id": "<prm_3>",
+            "proposal_id": "<pp_3>",
+            "attempt": 1,
+            "status": "rejected",
+            "detail": "the learning is already covered by the decision record",
+            "occurred_at": "<time>",
+            "actor_id": "tester",
+            "actor_kind": "human"
+          }
+        ],
+        "receipt": null,
+        "durable": false
+      },
+      {
+        "id": "<pp_2>",
+        "insight_id": "<ins_1>",
+        "revision_id": "<rev_1>",
+        "class": "policy",
+        "dest_kind": "docs",
+        "dest_locator": "docs/policy/ledger.md",
+        "dest_workspace": "",
+        "content": "Agents may not grant mandatory authority.",
+        "content_hash": "<sha256>",
+        "confidence": 0.5,
+        "requested_authority": "advisory",
+        "policy_version": "1",
+        "redaction_version": "1",
+        "created_at": "<time>",
+        "actor_id": "tester",
+        "actor_kind": "agent",
+        "actor_model": "test-model",
+        "session_id": "test-session",
+        "status": "proposed",
+        "authority_required": "human",
+        "attempts": [],
+        "receipt": null,
+        "durable": false
+      },
+      {
+        "id": "<pp_1>",
+        "insight_id": "<ins_1>",
+        "revision_id": "<rev_2>",
+        "class": "decision",
+        "dest_kind": "docs",
+        "dest_locator": "docs/decisions/0001-one-engine.md",
+        "dest_workspace": "",
+        "capabilities": [
+          "stable-anchor"
+        ],
+        "content": "One engine, one transaction, one close.",
+        "content_hash": "<sha256>",
+        "confidence": 0.8,
+        "requested_authority": "advisory",
+        "policy_version": "1",
+        "redaction_version": "1",
+        "created_at": "<time>",
+        "actor_id": "tester",
+        "actor_kind": "human",
+        "status": "applied",
+        "authority_required": "none",
+        "attempts": [
+          {
+            "id": "<prm_1>",
+            "proposal_id": "<pp_1>",
+            "attempt": 1,
+            "status": "failed",
+            "detail": "the docs write did not land: the branch was protected",
+            "occurred_at": "<time>",
+            "actor_id": "tester",
+            "actor_kind": "human"
+          },
+          {
+            "id": "<prm_2>",
+            "proposal_id": "<pp_1>",
+            "attempt": 2,
+            "status": "applied",
+            "occurred_at": "<time>",
+            "actor_id": "tester",
+            "actor_kind": "human"
+          }
+        ],
+        "receipt": {
+          "id": "<rcp_1>",
+          "promotion_id": "<prm_2>",
+          "kind": "docs",
+          "locator": "docs/decisions/0001-one-engine.md",
+          "anchor": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+          "verified": true,
+          "reference_id": "<ref_3>",
+          "recorded_at": "<time>",
+          "actor_id": "tester",
+          "actor_kind": "human"
+        },
+        "durable": true
+      }
+    ]
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

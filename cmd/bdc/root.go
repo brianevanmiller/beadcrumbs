@@ -1,195 +1,406 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/brianevanmiller/beadcrumbs/internal/store"
+
+	"github.com/brianevanmiller/beadcrumbs/internal/beads"
+	"github.com/brianevanmiller/beadcrumbs/internal/ledger"
+	"github.com/brianevanmiller/beadcrumbs/internal/redact"
+	"github.com/brianevanmiller/beadcrumbs/internal/store/dolt"
 )
 
-var (
-	dbPath        string
-	jsonOutput    bool
-	storeInstance store.Storage
+// version is the bdc release version reported in every envelope's meta.
+const version = "1.0.0"
+
+// ledgerMode declares what a command needs before its body runs. Cobra has no
+// typed per-command metadata, so it travels as an annotation; an unrecognised
+// value panics because it can only be a coding mistake.
+type ledgerMode string
+
+const (
+	ledgerRequired ledgerMode = "required" // the default: open or fail
+	ledgerOptional ledgerMode = "optional" // doctor: report whatever it finds
+	ledgerAbsent   ledgerMode = "none"     // init, restore: need the Location, not the engine
+	ledgerDetached ledgerMode = "detached" // version: needs neither
 )
 
-var rootCmd = &cobra.Command{
-	Use:   "bdc",
-	Short: "beadcrumbs - Track how understanding evolves through dialogues",
-	Long: `beadcrumbs is a Git-backed CLI tool for tracking the evolution of understanding.
-It captures insights from dialogues and preserves the narrative journey of discovery.
+const (
+	ledgerAnnotation = "bdc.ledger"
+	waitAnnotation   = "bdc.maxOpenWait"
+	holdAnnotation   = "bdc.maxOpenHold"
+)
 
-Like breadcrumbs leaving a trail, beadcrumbs captures the small pieces of understanding
-that lead to the bigger tasks (beads) in your workflow.`,
-	SilenceUsage: true,
+// app is one invocation. It is the only place the ledger is opened and closed,
+// which is what makes "one short-lived engine per command" structural rather
+// than a rule every command body has to remember.
+type app struct {
+	out *emitter
+
+	cwd     string
+	loc     dolt.Location
+	store   *dolt.Store
+	openErr error
+	led     *ledger.Ledger
+	tracker tracker
+
+	// Recorded by the command body so main can emit exactly one envelope.
+	command string
+	result  result
+	bodyRan bool
+
+	jsonOut   bool
+	quiet     bool
+	directory string
+	actor     string
+	actorKind string
+	model     string
+	session   string
+	noEnrich  bool
 }
 
-func init() {
-	rootCmd.PersistentFlags().StringVar(&dbPath, "db", ".beadcrumbs/beadcrumbs.db", "path to the database")
-	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "output in JSON format")
-	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
-		// Skip resolution for commands that manage their own DB path
-		switch cmd.Name() {
-		case "init", "locate", "version", "upgrade":
-			return nil
-		}
-		resolveDBPath(cmd)
+func newApp(stdout, stderr io.Writer) *app {
+	return &app{out: newEmitter(stdout, stderr), command: "unknown"}
+}
+
+// closer exposes the open store as an io.Closer without leaking a typed nil,
+// which would make a nil check on the interface pass and Close panic.
+func (a *app) closer() io.Closer {
+	if a.store == nil {
 		return nil
 	}
+	return a.store
 }
 
-// getStore returns the store instance (read-write), initializing it if necessary.
-func getStore() (store.Storage, error) {
-	if storeInstance != nil {
-		return storeInstance, nil
+func (a *app) newRootCommand() *cobra.Command {
+	root := &cobra.Command{
+		Use:           "bdc",
+		Short:         "Beadcrumbs — a repository-local reasoning ledger",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		// `bdc` and `bdc --help` must work outside a repository, so the root
+		// itself needs nothing from the ledger.
+		Annotations: map[string]string{ledgerAnnotation: string(ledgerDetached)},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				return usageError(fmt.Errorf("unknown command %q; run `bdc --help`", args[0]))
+			}
+			return usageError(errors.New("no command given; run `bdc --help`"))
+		},
+		PersistentPreRunE: a.prepare,
 	}
 
-	// Check if the database exists
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("database not found at %s. Run 'bdc init' first", dbPath)
-	}
+	f := root.PersistentFlags()
+	f.BoolVar(&a.jsonOut, "json", false, "emit the JSON envelope on stdout")
+	f.BoolVar(&a.quiet, "quiet", false, "suppress warnings on stderr")
+	f.StringVarP(&a.directory, "directory", "C", "", "run as if bdc were started in this directory")
+	f.StringVar(&a.actor, "actor", os.Getenv("BDC_ACTOR"),
+		"who is acting (recorded as provenance; default $BDC_ACTOR, then $USER for a human and `agent` for an agent)")
+	f.StringVar(&a.actorKind, "actor-kind", os.Getenv("BDC_ACTOR_KIND"),
+		"human or agent (default $BDC_ACTOR_KIND, then agent when both --model and --session are set)")
+	f.StringVar(&a.model, "model", os.Getenv("BDC_ACTOR_MODEL"), "acting agent's model identifier")
+	f.StringVar(&a.session, "session", os.Getenv("BDC_SESSION"), "session identifier for grouping provenance")
+	f.BoolVar(&a.noEnrich, "no-enrich", false, "skip optional tracker enrichment")
 
-	// Ensure the directory exists
-	dir := filepath.Dir(dbPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create directory: %w", err)
-	}
+	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return usageError(err) })
 
-	// Open the store (runs migrations)
-	s, err := store.NewStore(dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
-	}
-
-	storeInstance = s
-	return s, nil
+	root.AddCommand(
+		a.newVersionCommand(),
+		a.newInitCommand(),
+		a.newDoctorCommand(),
+		a.newMigrateCommand(),
+		a.newBackupCommand(),
+		a.newRestoreCommand(),
+		a.newGCCommand(),
+		a.newCaptureCommand(),
+		a.newCrumbCommand(),
+		a.newHarvestCommand(),
+		a.newInsightCommand(),
+		a.newReferenceCommand(),
+		a.newValidateCommand(),
+		a.newAuthorityCommand(),
+		a.newPromoteCommand(),
+		a.newContextCommand(),
+		a.newHandoffCommand(),
+		a.newPrimeCommand(),
+		a.newHooksCommand(),
+	)
+	return root
 }
 
-// getReadOnlyStore returns a read-only store instance, initializing it if necessary.
-// Used by query-only commands (list, timeline, show, questions, decisions, etc.)
-// to avoid acquiring write locks or triggering file watchers.
-func getReadOnlyStore() (store.Storage, error) {
-	if storeInstance != nil {
-		return storeInstance, nil
-	}
+// prepare resolves the ledger for the command about to run. It is the only
+// caller of dolt.Discover and dolt.Open.
+func (a *app) prepare(cmd *cobra.Command, args []string) error {
+	a.command = commandName(cmd)
+	a.out.jsonMode = a.jsonOut
+	a.out.quiet = a.quiet
+	a.out.schema = func() int { return dolt.CurrentSchemaVersion() }
 
-	// Check if the database exists
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("database not found at %s. Run 'bdc init' first", dbPath)
+	a.actorKind = resolveActorKind(a.actorKind, a.model, a.session)
+	if a.actorKind != "human" && a.actorKind != "agent" {
+		return ledger.Fail(ledger.ErrInvalidInput, "invalid_actor_kind",
+			"--actor-kind must be human or agent, got %q", a.actorKind)
 	}
+	a.actor = resolveActor(a.actor, a.actorKind)
 
-	// Open in read-only mode — no migrations, no JSONL import
-	s, err := store.NewReadOnlyStore(dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open database (read-only): %w", err)
-	}
-
-	storeInstance = s
-	return s, nil
-}
-
-// closeStore closes the store if it's open.
-func closeStore() {
-	if storeInstance != nil {
-		storeInstance.Close()
-		storeInstance = nil
-	}
-}
-
-// resolveDBPath resolves the database path using multiple strategies.
-func resolveDBPath(cmd *cobra.Command) {
-	if cmd.Flags().Changed("db") {
-		return
-	}
-	if envPath := os.Getenv("BDC_DB_PATH"); envPath != "" {
-		dbPath = envPath
-		return
-	}
-	if resolved := walkUpForDB(); resolved != "" {
-		dbPath = resolved
-		return
-	}
-	if resolved := resolveViaGitCommonDir(); resolved != "" {
-		dbPath = resolved
-		return
-	}
-}
-
-// walkUpForDB walks up from CWD looking for .beadcrumbs/beadcrumbs.db.
-func walkUpForDB() string {
-	dir, err := os.Getwd()
-	if err != nil {
-		return ""
-	}
-	for {
-		candidate := filepath.Join(dir, ".beadcrumbs", "beadcrumbs.db")
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-	return ""
-}
-
-// resolveViaGitCommonDir finds the main repo root via git-common-dir
-// and checks for .beadcrumbs/beadcrumbs.db there.
-func resolveViaGitCommonDir() string {
-	repoRoot := gitCommonDirRoot("")
-	if repoRoot == "" {
-		return ""
-	}
-	candidate := filepath.Join(repoRoot, ".beadcrumbs", "beadcrumbs.db")
-	if _, err := os.Stat(candidate); err == nil {
-		return candidate
-	}
-	return ""
-}
-
-// gitCommonDirRoot returns the main repo root directory by running
-// `git rev-parse --git-common-dir` and taking its parent. If dir is
-// non-empty, git runs with -C dir; otherwise it uses the current directory.
-// Returns "" if not in a git repo or if the result is the local .git
-// (meaning we're already in the main repo, not a worktree).
-func gitCommonDirRoot(dir string) string {
-	var cmd *exec.Cmd
-	if dir != "" {
-		cmd = exec.Command("git", "-C", dir, "rev-parse", "--git-common-dir")
-	} else {
-		cmd = exec.Command("git", "rev-parse", "--git-common-dir")
-	}
-	output, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	gitCommonDir := strings.TrimSpace(string(output))
-	if gitCommonDir == "" || gitCommonDir == ".git" {
-		return ""
-	}
-	baseDir := dir
-	if baseDir == "" {
-		baseDir, err = os.Getwd()
+	cwd := a.directory
+	if cwd == "" {
+		wd, err := os.Getwd()
 		if err != nil {
-			return ""
+			return ledger.FailWith(ledger.ErrInvalidInput, "invalid_directory", err,
+				"cannot determine the current directory")
 		}
+		cwd = wd
 	}
-	if !filepath.IsAbs(gitCommonDir) {
-		gitCommonDir = filepath.Join(baseDir, gitCommonDir)
+	a.cwd = cwd
+
+	mode := ledgerModeOf(cmd)
+	if mode == ledgerDetached {
+		// `bdc version` and `bdc --help` need nothing from Git, and Discover
+		// costs four `git` subprocesses. The Stop hook runs one of these at
+		// every agent turn end.
+		return nil
 	}
-	return filepath.Dir(gitCommonDir)
+	loc, discoverErr := dolt.Discover(cmd.Context(), cwd)
+	a.loc = loc
+	switch {
+	case discoverErr == nil:
+	case mode == ledgerRequired:
+		return discoverErr
+	case errors.Is(discoverErr, ledger.ErrNoLedger):
+		// init creates it; doctor and restore report or replace it.
+		a.openErr = discoverErr
+		if mode == ledgerAbsent {
+			a.openErr = nil
+		}
+		return nil
+	default:
+		return discoverErr
+	}
+
+	if mode == ledgerAbsent {
+		return nil
+	}
+
+	wait := durationAnnotation(cmd, waitAnnotation)
+	if narrowed, ok := hookWait(cmd, args); ok {
+		wait = narrowed
+	}
+	store, err := dolt.Open(cmd.Context(), loc, dolt.Config{
+		MaxOpenWait: wait,
+		MaxOpenHold: durationAnnotation(cmd, holdAnnotation),
+		Command:     a.command,
+		ActorKind:   a.actorKind,
+	})
+	if err != nil {
+		if mode == ledgerOptional {
+			a.openErr = err
+			return nil
+		}
+		return err
+	}
+	a.store = store
+
+	schema, err := store.SchemaVersion(cmd.Context())
+	if err != nil {
+		return err
+	}
+	a.out.schema = func() int { return schema }
+	return nil
 }
 
-// truncate shortens a string to maxLen characters with ellipsis.
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
+// ledger builds the domain module for the command about to run, once per
+// invocation. It lives here because the Redactor is constructed from
+// repo_config, which has to be read from the open store *before* the Ledger
+// that injects it exists — so this is the one place that ordering is expressed.
+func (a *app) ledger(ctx context.Context) (*ledger.Ledger, error) {
+	if a.led != nil {
+		return a.led, nil
 	}
-	return s[:maxLen-3] + "..."
+	if a.store == nil {
+		if a.openErr != nil {
+			return nil, a.openErr
+		}
+		return nil, ledger.Fail(ledger.ErrNoLedger, "no_ledger",
+			"this command needs an open ledger; run `bdc init` first")
+	}
+	cfg, err := ledger.LoadRepoConfig(ctx, a.store)
+	if err != nil {
+		return nil, err
+	}
+	redactor, err := redact.New(redact.Config{
+		Version:  cfg.RedactionVersion,
+		Patterns: cfg.RedactPatterns,
+	})
+	if err != nil {
+		return nil, err
+	}
+	actor := ledger.Provenance{
+		ActorID:    a.actor,
+		ActorKind:  ledger.ActorKind(a.actorKind),
+		ActorModel: a.model,
+		SessionID:  a.session,
+	}
+	if err := actor.Validate(); err != nil {
+		return nil, err
+	}
+	a.led = ledger.New(a.store, ledger.Options{
+		Actor:    actor,
+		Redactor: redactor,
+		Config:   cfg,
+		Enricher: beads.Enricher(a.beadsAdapter(ctx)),
+	})
+	return a.led, nil
+}
+
+// tracker memoises the optional Beads detection. Detection costs two `bd`
+// subprocesses, several commands need the answer, and it never fails: a missing,
+// too-old, or workspace-less `bd` is an Availability the caller reports and
+// carries on past.
+type tracker struct {
+	done    bool
+	adapter *beads.Adapter
+	av      beads.Availability
+}
+
+// beadsAdapter is the enricher for this invocation, or nil. --no-enrich skips
+// detection entirely, which is what makes that flag mean something rather than
+// only suppressing a warning.
+func (a *app) beadsAdapter(ctx context.Context) *beads.Adapter {
+	if a.noEnrich {
+		return nil
+	}
+	if !a.tracker.done {
+		root := a.loc.RepoRoot
+		if root == "" {
+			root = a.cwd
+		}
+		a.tracker.done = true
+		a.tracker.adapter, a.tracker.av = beads.Detect(ctx, root)
+	}
+	return a.tracker.adapter
+}
+
+// beadsAvailability is what `bdc doctor` reports. nil means the question was not
+// asked, which is the honest answer under --no-enrich.
+func (a *app) beadsAvailability(ctx context.Context) *beads.Availability {
+	if a.noEnrich {
+		return nil
+	}
+	a.beadsAdapter(ctx)
+	av := a.tracker.av
+	return &av
+}
+
+// warnRedaction reports that stored text was rewritten. A caller has to be able
+// to see that its content changed before it was persisted; the finding names the
+// rule and the position and never the secret.
+func (a *app) warnRedaction(findings []ledger.Finding) {
+	for _, f := range findings {
+		a.out.warn("redacted", fmt.Sprintf("rule %s replaced %d bytes at offset %d",
+			f.Rule, f.Length, f.Offset))
+	}
+}
+
+// handle adapts a command body to Cobra while recording the outcome, so main
+// emits exactly one envelope no matter where the failure came from.
+func (a *app) handle(fn func(*cobra.Command, []string) (result, error)) func(*cobra.Command, []string) error {
+	return func(cmd *cobra.Command, args []string) error {
+		res, err := fn(cmd, args)
+		a.bodyRan = true
+		a.command = commandName(cmd)
+		a.result = res
+		return err
+	}
+}
+
+// handleLedger is handle for a command that needs the domain module. Opening it
+// is the same four lines in every such body and the one thing they all do first,
+// so the seam between "this command needs a ledger" and "here is what it does
+// with one" belongs in the signature.
+func (a *app) handleLedger(fn func(*cobra.Command, []string, *ledger.Ledger) (result, error)) func(*cobra.Command, []string) error {
+	return a.handle(func(cmd *cobra.Command, args []string) (result, error) {
+		led, err := a.ledger(cmd.Context())
+		if err != nil {
+			return result{}, err
+		}
+		return fn(cmd, args, led)
+	})
+}
+
+// commandName is the dotted envelope command: `bdc crumb list` -> "crumb.list".
+func commandName(cmd *cobra.Command) string {
+	parts := strings.Fields(cmd.CommandPath())
+	if len(parts) <= 1 {
+		return "bdc"
+	}
+	return strings.Join(parts[1:], ".")
+}
+
+func ledgerModeOf(cmd *cobra.Command) ledgerMode {
+	raw, ok := cmd.Annotations[ledgerAnnotation]
+	if !ok {
+		return ledgerRequired
+	}
+	switch mode := ledgerMode(raw); mode {
+	case ledgerRequired, ledgerOptional, ledgerAbsent, ledgerDetached:
+		return mode
+	default:
+		panic(fmt.Sprintf("bdc: command %q declares unknown ledger mode %q", cmd.CommandPath(), raw))
+	}
+}
+
+func durationAnnotation(cmd *cobra.Command, key string) time.Duration {
+	raw, ok := cmd.Annotations[key]
+	if !ok {
+		return 0 // dolt.Config applies its default
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		panic(fmt.Sprintf("bdc: command %q declares %s=%q, which is not a duration", cmd.CommandPath(), key, raw))
+	}
+	return d
+}
+
+// resolveActorKind decides who is acting when the caller did not say. `human` is
+// the value every authority gate is satisfied by, so a plain default of `human`
+// would make the privileged answer the one you get by forgetting a flag — and
+// the whole authority axis inert on any path that forgets it.
+//
+// A run that carries both a model identifier and a session id came from an agent
+// harness and is recorded as one. Both are required because that is what agent
+// provenance means: promoting a half-identified run to `agent` would only trade
+// a false `human` record for a rejected write.
+func resolveActorKind(declared, model, session string) string {
+	if declared != "" {
+		return declared
+	}
+	if model != "" && session != "" {
+		return string(ledger.ActorAgent)
+	}
+	return string(ledger.ActorHuman)
+}
+
+// resolveActor names the actor. $USER is the right answer for a human at a
+// terminal and the wrong one for an agent: attributing an agent's decisions to
+// whoever owns the login is a false provenance record, which is worse than a
+// generic one.
+func resolveActor(declared, kind string) string {
+	if declared != "" {
+		return declared
+	}
+	if kind == string(ledger.ActorAgent) {
+		return "agent"
+	}
+	if user := os.Getenv("USER"); user != "" {
+		return user
+	}
+	return "unknown"
 }

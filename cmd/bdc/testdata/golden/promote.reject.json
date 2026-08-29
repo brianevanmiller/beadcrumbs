@@ -1,0 +1,24 @@
+{
+  "bdc": "1",
+  "command": "promote.reject",
+  "ok": true,
+  "data": {
+    "promotion": {
+      "id": "<prm_3>",
+      "proposal_id": "<pp_3>",
+      "attempt": 1,
+      "status": "rejected",
+      "detail": "the learning is already covered by the decision record",
+      "occurred_at": "<time>",
+      "actor_id": "tester",
+      "actor_kind": "human"
+    }
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

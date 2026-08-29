@@ -2,29 +2,23 @@
 
 const { spawn } = require('child_process');
 const path = require('path');
-const os = require('os');
 
-// Determine binary name based on platform
-const binaryName = os.platform() === 'win32' ? 'bdc.exe' : 'bdc';
-const binaryPath = path.join(__dirname, binaryName);
+const binaryPath = path.join(__dirname, 'bdc');
 
-// Spawn the binary with all arguments
-const child = spawn(binaryPath, process.argv.slice(2), {
-  stdio: 'inherit',
-  windowsHide: true
-});
+const child = spawn(binaryPath, process.argv.slice(2), { stdio: 'inherit' });
 
 child.on('error', (err) => {
   if (err.code === 'ENOENT') {
-    console.error('Error: bdc binary not found. Try reinstalling:');
-    console.error('  npm uninstall -g @beadcrumbs/bdc');
-    console.error('  npm install -g @beadcrumbs/bdc');
+    console.error('Error: the bdc binary is missing. The postinstall step did not complete.');
+    console.error('  npm uninstall -g @beadcrumbs/bdc && npm install -g @beadcrumbs/bdc');
     process.exit(1);
   }
-  console.error('Error executing bdc:', err.message);
+  console.error(`Error executing bdc: ${err.message}`);
   process.exit(1);
 });
 
-child.on('exit', (code) => {
-  process.exit(code || 0);
+// bdc's exit codes are contractual (0-8), so pass the child's status through
+// unchanged. A signal death becomes 128+signo rather than a fabricated 0.
+child.on('exit', (code, signal) => {
+  process.exit(signal ? 128 + require('os').constants.signals[signal] : code);
 });

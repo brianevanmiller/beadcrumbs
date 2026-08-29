@@ -1,0 +1,22 @@
+{
+  "bdc": "1",
+  "command": "promote.propose",
+  "ok": false,
+  "data": null,
+  "warnings": [],
+  "error": {
+    "code": "authority_required",
+    "message": "this proposal requires human authority: class \"policy\", destination docs:docs/policy/ledger.md. A human can grant it with `bdc authority <pp_2> --level default --rationale ...`",
+    "details": {
+      "authority_required": "human",
+      "content_hash": "<sha256>",
+      "created": true,
+      "proposal_id": "<pp_2>"
+    }
+  },
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

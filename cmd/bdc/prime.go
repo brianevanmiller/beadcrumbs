@@ -3,210 +3,74 @@ package main
 import (
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/brianevanmiller/beadcrumbs/internal/ledger"
 )
 
-var primeExportMode bool
+func (a *app) newPrimeCommand() *cobra.Command {
+	var budget int
 
-var primeCmd = &cobra.Command{
-	Use:   "prime",
-	Short: "Output AI-optimized beadcrumbs workflow context",
-	Long: `Output essential beadcrumbs workflow context in AI-optimized markdown format.
+	cmd := &cobra.Command{
+		Use:   "prime",
+		Short: "Report what a session may rely on before it starts",
+		Long: "Report the ledger's standing conclusions, sorted by what a reader may do with " +
+			"them:\n\n" +
+			"  mandatory        must be followed\n" +
+			"  working default  settled unless a new review says otherwise\n" +
+			"  advisory         citable, not settled — not listed here\n" +
+			"  cautions         disputed, rejected, or superseded: unusable without a new review\n\n" +
+			"A working default is an Insight whose latest verdict is unreviewed or supported " +
+			"and whose latest authority is default or mandatory. Mandatory Insights appear in " +
+			"both lists, and --budget never drops them: an agent that cannot see a rule will " +
+			"break it.",
+		Args: cobra.NoArgs,
+	}
+	budgetFlag(cmd, &budget)
 
-Designed for Claude Code hooks (SessionStart, PreCompact) to inject
-beadcrumbs workflow instructions into AI agent context automatically.
+	cmd.RunE = a.handleLedger(func(cmd *cobra.Command, _ []string, led *ledger.Ledger) (result, error) {
+		n, err := led.Narrative(cmd.Context(), ledger.NarrativeQuery{
+			Mode: ledger.ModePrime, Budget: budget,
+		})
+		if err != nil {
+			return result{}, err
+		}
+		a.warnNotices(n.Notices)
+		return result{Data: n, Human: func(w io.Writer) { renderPrime(w, n) }}, nil
+	})
+	return cmd
+}
 
-When .beadcrumbs/ is not found, exits silently (exit 0, no output).
-This enables safe cross-project hook integration.
-
-Place a .beadcrumbs/PRIME.md file to override the default output entirely.
-Use --export to dump the default content for customization.`,
-	Run: func(cmd *cobra.Command, args []string) {
-		bcDir := findBeadcrumbsDir()
-		if bcDir == "" {
-			// Not in a beadcrumbs project -- but check if repo tracks
-			// beadcrumbs files (cloned repo that needs local init)
-			if repoTracksBeadcrumbs() {
-				fmt.Fprintln(os.Stderr, "# bdc: This project uses beadcrumbs but is not initialized locally.")
-				fmt.Fprintln(os.Stderr, "# Run: bdc init (then bdc setup claude if hooks are not configured)")
-				fmt.Fprintln(os.Stderr, "# See BDC_GUIDE.md for full setup instructions.")
+func renderPrime(w io.Writer, n ledger.Narrative) {
+	fmt.Fprintf(w, "%s\n", n.Summary)
+	if len(n.Mandatory) > 0 {
+		fmt.Fprintln(w, "\nMANDATORY — must be followed")
+		renderRules(w, n.Mandatory)
+	}
+	if len(n.WorkingDefaults) > len(n.Mandatory) {
+		fmt.Fprintln(w, "\nWORKING DEFAULTS — settled unless a new review says otherwise")
+		for _, i := range n.WorkingDefaults {
+			if i.Standing == ledger.StandingMandatory {
+				continue // already listed above; repeating it here is noise
 			}
-			os.Exit(0)
-		}
-
-		// Check for custom PRIME.md override (unless --export flag)
-		if !primeExportMode {
-			primePath := filepath.Join(bcDir, "PRIME.md")
-			if content, err := os.ReadFile(primePath); err == nil {
-				fmt.Print(string(content))
-				return
-			}
-		}
-
-		// Output default workflow context
-		outputPrimeContext(os.Stdout)
-	},
-}
-
-// repoTracksBeadcrumbs checks if the current git repo tracks .beadcrumbs/ files.
-// This detects cloned repos that use beadcrumbs but haven't been initialized locally.
-func repoTracksBeadcrumbs() bool {
-	cmd := exec.Command("git", "ls-tree", "-r", "--name-only", "HEAD", ".beadcrumbs/")
-	output, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-	return len(strings.TrimSpace(string(output))) > 0
-}
-
-// findBeadcrumbsDir walks up from CWD looking for .beadcrumbs/, then
-// falls back to git-common-dir parent for worktree support.
-// Returns the path if found, empty string otherwise.
-func findBeadcrumbsDir() string {
-	dir, err := os.Getwd()
-	if err != nil {
-		return ""
-	}
-	for {
-		bcPath := filepath.Join(dir, ".beadcrumbs")
-		if info, err := os.Stat(bcPath); err == nil && info.IsDir() {
-			return bcPath
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-	// Try git-common-dir parent (worktree support)
-	if repoRoot := gitCommonDirRoot(""); repoRoot != "" {
-		bcPath := filepath.Join(repoRoot, ".beadcrumbs")
-		if info, err := os.Stat(bcPath); err == nil && info.IsDir() {
-			return bcPath
+			renderRules(w, []ledger.NarrativeInsight{i})
 		}
 	}
-	return ""
+	if len(n.Cautions) > 0 {
+		fmt.Fprintln(w, "\nCAUTIONS — unusable without a new review")
+		for _, c := range n.Cautions {
+			fmt.Fprintf(w, "  %s  %s (%s)\n    %s\n", c.ID, oneLine(c.Title, 56), c.Class, c.Detail)
+		}
+	}
 }
 
-// outputPrimeContext outputs beadcrumbs workflow context in markdown format.
-func outputPrimeContext(w io.Writer) {
-	context := `# Beadcrumbs Insight Tracker Active
-
-> **Context Recovery**: Run ` + "`bdc prime`" + ` after compaction, clear, or new session
-> Hooks auto-call this in Claude Code when .beadcrumbs/ detected
-
-## Core Rules
-- **Use bdc (beadcrumbs)** for ALL reasoning and understanding tracking
-- **Use bd (beads)** for task tracking -- they are complementary tools
-- bd tracks *what* you're doing; bdc tracks *why*
-- Always use ` + "`--thread`" + ` to associate captures with context
-- Always use ` + "`--author cc:<model>`" + ` for AI agent attribution (e.g., ` + "`cc:opus-4.6`" + `)
-- Do NOT capture routine tool calls, simple acknowledgments, or mechanical steps
-
-## Session Protocol
-
-**Session start:**
-` + "```bash" + `
-bdc thread new "Brief description of this session's goal"
-bdc origin set claude:<session-id>
-bdc capture --thread <ref> --hypothesis "Initial approach" --author cc:<model>
-` + "```" + `
-
-**During session** (capture as reasoning evolves):
-` + "```bash" + `
-bdc capture --thread <ref> --hypothesis "Weighing approach X" --author cc:<model>
-bdc capture --thread <ref> --discovery "Found evidence for Y" --author cc:<model>
-bdc capture --thread <ref> --question "Should we use Z?" --author cc:<model>
-bdc capture --thread <ref> --feedback "Human adjusted specs" --author brian
-bdc capture --thread <ref> --pivot "Switching approach because..." --author cc:<model>
-bdc capture --thread <ref> --decision "Committed to approach" --author cc:<model>
-` + "```" + `
-
-**Session end:**
-` + "```bash" + `
-bdc capture --thread <ref> --decision "Final outcome summary" --author cc:<model>
-bdc origin clear
-bdc thread close <thread-id>
-` + "```" + `
-
-**Resuming a previous session:**
-` + "```bash" + `
-bdc thread list --status=active
-bdc timeline <thread-id>
-bdc questions --unresolved
-` + "```" + `
-
-## Insight Types
-
-| Type | When to Use | Symbol |
-|------|------------|--------|
-| hypothesis | Speculation before evidence | ` + "`--hypothesis`" + ` |
-| discovery | Evidence-based finding | ` + "`--discovery`" + ` |
-| question | Open uncertainty | ` + "`--question`" + ` |
-| feedback | External/human input received | ` + "`--feedback`" + ` |
-| pivot | Direction changed | ` + "`--pivot`" + ` |
-| decision | Committed to approach | ` + "`--decision`" + ` |
-
-## Essential Commands
-
-### Threads
-- ` + "`bdc thread new \"<title>\"`" + ` - Start a narrative thread
-- ` + "`bdc thread list --status=active`" + ` - See open threads
-- ` + "`bdc thread close <id>`" + ` - Conclude a thread
-
-### Origin Tracking
-- ` + "`bdc origin set <system:id>`" + ` - Set origin for this session
-- ` + "`bdc origin show`" + ` - Show current origin
-- ` + "`bdc origin clear`" + ` - Clear origin
-- ` + "`bdc origins`" + ` - List all origins with counts
-
-### Capturing
-- ` + "`bdc capture --thread <ref> --<type> \"...\" --author cc:<model>`" + `
-- ` + "`bdc capture --origin <system:id> --<type> \"...\" --thread <ref>`" + ` - Explicit origin
-- Thread ref accepts: thread ID (thr-xxx), bead ID (bd-xxx), or external ref (linear:ENG-456, jira:PROJ-123, gh:42)
-- Origin resolves: --origin flag > BDC_ORIGIN env > .beadcrumbs/origin file
-
-### Viewing
-- ` + "`bdc timeline [thread-id]`" + ` - Chronological view
-- ` + "`bdc decisions [thread-id]`" + ` - Filter to decisions only
-- ` + "`bdc questions --unresolved`" + ` - Open questions needing answers
-- ` + "`bdc list --thread=<id> --type=<type>`" + ` - Filtered insight list
-- ` + "`bdc timeline --origin <system:id>`" + ` - Filter by origin
-- ` + "`bdc list --origin <system:id>`" + ` - Filter by origin
-
-### Beads Integration
-- ` + "`bdc link <id> --spawns=<bead-id>`" + ` - Link insight to task it spawned
-- ` + "`bdc trace <bead-id>`" + ` - Trace reasoning chain for a task
-- ` + "`bdc spawn <insight-id> --title=\"...\"`" + ` - Create task from insight
-
-## What to Capture
-
-| Scenario | Type | Author |
-|----------|------|--------|
-| AI weighs a possible approach | --hypothesis | --author cc:<model> |
-| AI finds evidence for/against something | --discovery | --author cc:<model> |
-| Open uncertainty or question | --question | either |
-| Human explains reasoning or adjusts specs | --feedback | --author brian |
-| Direction changes | --pivot | whoever initiated it |
-| Committed approach or final call | --decision | whoever made the call |
-
-## What NOT to Capture
-- Routine tool calls (file reads, grep, glob, running builds)
-- Minor formatting or whitespace changes
-- Simple acknowledgments ("OK", "got it", "done")
-- Restating what the user said without adding new reasoning
-- Mechanical steps unless the result reveals something unexpected
-- Single-line bug fixes with obvious cause and solution
-`
-	_, _ = fmt.Fprint(w, context)
-}
-
-func init() {
-	primeCmd.Flags().BoolVar(&primeExportMode, "export", false, "Output default content (ignores PRIME.md override)")
-	rootCmd.AddCommand(primeCmd)
+func renderRules(w io.Writer, insights []ledger.NarrativeInsight) {
+	for _, i := range insights {
+		fmt.Fprintf(w, "  %s  %s (%s, confidence %.2f, %s)\n",
+			i.ID, oneLine(i.Title, 56), i.Class, i.Confidence, i.Verdict)
+		if i.Excerpt != "" {
+			fmt.Fprintf(w, "    %s\n", i.Excerpt)
+		}
+	}
 }

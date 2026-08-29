@@ -1,0 +1,11 @@
+{
+  "$schema": "https://skills.sh/schemas/skills.sh.schema.json",
+  "notGrouped": "bottom",
+  "groupings": [
+    {
+      "title": "Beadcrumbs",
+      "description": "Capture reasoning as Crumbs, synthesise them into Insights, and promote them to durable destinations, through the bdc CLI.",
+      "skills": ["beadcrumbs"]
+    }
+  ]
+}

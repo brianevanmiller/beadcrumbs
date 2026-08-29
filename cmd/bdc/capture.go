@@ -1,442 +1,122 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
-	"time"
 
-	"github.com/brianevanmiller/beadcrumbs/internal/beads"
-	gh "github.com/brianevanmiller/beadcrumbs/internal/github"
-	"github.com/brianevanmiller/beadcrumbs/internal/linear"
-	"github.com/brianevanmiller/beadcrumbs/internal/store"
-	"github.com/brianevanmiller/beadcrumbs/internal/types"
 	"github.com/spf13/cobra"
+
+	"github.com/brianevanmiller/beadcrumbs/internal/ledger"
 )
 
-var (
-	captureType       string
-	captureThreadID   string
-	captureHypothesis bool
-	captureDiscovery  bool
-	captureQuestion   bool
-	captureFeedback   bool
-	capturePivot      bool
-	captureDecision   bool
-	captureTimestamp  string
-	captureAuthor     string
-	captureEndorsedBy []string
-	captureOrigin     string
-)
+// captureData is the `{crumb}` shape from the CLI contract. The redaction
+// findings travel in warnings[] rather than in data, because a Crumb's content
+// is already the redacted text and a caller acting on data should not have to
+// reason about what it used to be.
+type captureData struct {
+	Crumb ledger.Crumb `json:"crumb"`
+}
 
-var captureCmd = &cobra.Command{
-	Use:   "capture <content>",
-	Short: "Capture a new insight",
-	Long: `Creates a new insight with the given content and saves it to the store.
+// defaultCaptureConfidence is the author confidence recorded when none is
+// given. It is declared rather than inferred: confidence is an independent axis
+// from evidence and validation, and a silent 1.0 would claim certainty the
+// caller never expressed.
+const defaultCaptureConfidence = 0.5
 
-The --thread flag is strongly encouraged to associate insights with their
-context. It accepts:
-  - Thread ID: thr-xxx
-  - Bead ID: bd-xxx or bead-xxx (auto-creates/links thread)
-  - External ref: linear:TASK-123, github:owner/repo#42
+func (a *app) newCaptureCommand() *cobra.Command {
+	var (
+		confidence float64
+		refs       []string
+		fromFile   string
+	)
 
-Examples:
-  bdc capture --thread bd-a1b2 --decision "We'll use Redis for caching"
-  bdc capture --thread linear:ENG-456 --pivot "Need to rethink the data model"
-  bdc capture --hypothesis "The bug might be in the auth middleware" --author cc:opus-4.6
-  bdc capture --origin claude:sess_abc123 --discovery "Found root cause" --thread thr-xxx`,
-	Args: cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		content := args[0]
+	cmd := &cobra.Command{
+		Use:   "capture [text|-]",
+		Short: "Record one reasoning fragment as a Crumb",
+		Long: "Capture one atomic fragment: a correction, a discovery, a rejected approach, a " +
+			"decision fragment. One fragment per Crumb.\n\n" +
+			"Text comes from the argument, from stdin with `-`, or from --from-file. Content is " +
+			"redacted before it is written; a secret the redactor cannot confidently replace " +
+			"aborts the capture with nothing persisted.",
+		Args: cobra.MaximumNArgs(1),
+	}
+	cmd.Flags().Float64Var(&confidence, "confidence", defaultCaptureConfidence,
+		"author confidence in this fragment, 0 to 1")
+	cmd.Flags().StringArrayVar(&refs, "ref", nil,
+		"attach a reference as kind:locator[@relation] (repeatable; relation defaults to subject)")
+	cmd.Flags().StringVar(&fromFile, "from-file", "", "read the fragment from a file")
 
-		// Determine insight type from flags
-		insightType, err := determineInsightType()
+	cmd.RunE = a.handleLedger(func(cmd *cobra.Command, args []string, led *ledger.Ledger) (result, error) {
+		content, err := readContent(cmd.InOrStdin(), args, fromFile)
 		if err != nil {
-			return err
+			return result{}, err
 		}
-
-		// Parse timestamp if provided
-		var timestamp time.Time
-		if captureTimestamp != "" {
-			timestamp, err = parseTimestamp(captureTimestamp)
+		specs := make([]ledger.RefSpec, 0, len(refs))
+		for _, raw := range refs {
+			spec, err := ledger.ParseRefSpec(raw, ledger.RelationSubject)
 			if err != nil {
-				return fmt.Errorf("invalid timestamp: %w", err)
+				return result{}, err
 			}
+			specs = append(specs, spec)
 		}
 
-		// Create the insight with optional timestamp
-		var insight *types.Insight
-		if !timestamp.IsZero() {
-			insight = types.NewInsightWithTimestamp(content, insightType, timestamp)
-		} else {
-			insight = types.NewInsight(content, insightType)
-		}
-
-		// Set thread ID if provided
-		if captureThreadID != "" {
-			threadID, err := resolveThreadRef(captureThreadID)
-			if err != nil {
-				return fmt.Errorf("failed to resolve thread reference: %w", err)
-			}
-			insight.ThreadID = threadID
-		}
-
-		// Set endorsed-by if provided
-		if len(captureEndorsedBy) > 0 {
-			insight.EndorsedBy = captureEndorsedBy
-		}
-
-		// Save to store
-		s, err := getStore()
+		res, err := led.CaptureCrumb(cmd.Context(), ledger.CaptureCrumb{
+			Content:    content,
+			Confidence: confidence,
+			References: specs,
+		})
 		if err != nil {
-			return err
+			return result{}, err
 		}
-		defer closeStore()
-
-		// Set author if provided (stored directly as string)
-		if captureAuthor != "" {
-			insight.AuthorID = captureAuthor
-			insight.CreatedBy = captureAuthor // Legacy field
+		a.warnRedaction(res.Findings)
+		if res.Deduplicated {
+			a.out.warn("crumb_deduplicated",
+				"this session already holds a Crumb with the same content; returning "+string(res.Crumb.ID))
 		}
 
-		// Resolve origin: --origin flag > BDC_ORIGIN env > .beadcrumbs/origin file
-		origin := resolveOrigin(cmd)
-		if origin != "" {
-			insight.Source.Ref = origin
-			insight.Source.Type = inferSourceType(origin, captureAuthor)
-		} else if strings.HasPrefix(captureAuthor, "cc:") {
-			// Author-based source_type: cc:* implies ai-session
-			insight.Source.Type = "ai-session"
-		}
-
-		if err := s.CreateInsight(insight); err != nil {
-			return fmt.Errorf("failed to save insight: %w", err)
-		}
-
-		if jsonOutput {
-			out, err := json.MarshalIndent(insight, "", "  ")
-			if err != nil {
-				return fmt.Errorf("failed to marshal JSON: %w", err)
+		return result{Data: captureData{Crumb: res.Crumb}, Human: func(w io.Writer) {
+			fmt.Fprintf(w, "%s captured (%s, confidence %.3f)\n",
+				res.Crumb.ID, res.Crumb.ReviewState, res.Crumb.Confidence)
+			for _, ref := range res.References {
+				fmt.Fprintf(w, "  %s %s:%s\n", ref.Relation, ref.Kind, ref.Locator)
 			}
-			fmt.Println(string(out))
-			return nil
-		}
-
-		fmt.Printf("Created insight: %s\n", insight.ID)
-		if insight.ThreadID != "" {
-			fmt.Printf("  Thread: %s\n", insight.ThreadID)
-		}
-		if insight.AuthorID != "" {
-			fmt.Printf("  Author: %s\n", insight.AuthorID)
-		}
-		if len(insight.EndorsedBy) > 0 {
-			fmt.Printf("  Endorsed by: %s\n", strings.Join(insight.EndorsedBy, ", "))
-		}
-		if insight.Source.Ref != "" {
-			fmt.Printf("  Origin: %s (%s)\n", insight.Source.Ref, insight.Source.Type)
-		}
-		return nil
-	},
+		}}, nil
+	})
+	return cmd
 }
 
-func determineInsightType() (types.InsightType, error) {
-	// Count how many type flags are set
-	count := 0
-	var selectedType types.InsightType
-
-	if captureHypothesis {
-		count++
-		selectedType = types.InsightHypothesis
+// readContent resolves the three ways a fragment arrives. They are mutually
+// exclusive on purpose: two sources of content is a caller that does not know
+// what it is storing.
+func readContent(stdin io.Reader, args []string, fromFile string) (string, error) {
+	positional := ""
+	if len(args) == 1 {
+		positional = args[0]
 	}
-	if captureDiscovery {
-		count++
-		selectedType = types.InsightDiscovery
-	}
-	if captureQuestion {
-		count++
-		selectedType = types.InsightQuestion
-	}
-	if captureFeedback {
-		count++
-		selectedType = types.InsightFeedback
-	}
-	if capturePivot {
-		count++
-		selectedType = types.InsightPivot
-	}
-	if captureDecision {
-		count++
-		selectedType = types.InsightDecision
-	}
-
-	// If --type flag is set, use it
-	if captureType != "" {
-		if count > 0 {
-			return "", fmt.Errorf("cannot use both --type and shorthand flags")
+	switch {
+	case positional != "" && fromFile != "":
+		return "", ledger.Fail(ledger.ErrInvalidInput, "invalid_usage",
+			"pass the text or --from-file, not both")
+	case fromFile != "":
+		b, err := os.ReadFile(fromFile)
+		if err != nil {
+			return "", ledger.FailWith(ledger.ErrInvalidInput, "invalid_content", err,
+				"cannot read %s", fromFile)
 		}
-		t := types.InsightType(captureType)
-		if !t.IsValid() {
-			return "", fmt.Errorf("invalid insight type: %s. Valid types: hypothesis, discovery, question, feedback, pivot, decision", captureType)
+		return string(b), nil
+	case positional == "-":
+		b, err := io.ReadAll(stdin)
+		if err != nil {
+			return "", ledger.FailWith(ledger.ErrInvalidInput, "invalid_content", err,
+				"cannot read the fragment from stdin")
 		}
-		return t, nil
+		return string(b), nil
+	case strings.TrimSpace(positional) == "":
+		return "", ledger.Fail(ledger.ErrInvalidInput, "invalid_content",
+			"a Crumb needs content: pass it as an argument, as `-` for stdin, or with --from-file")
+	default:
+		return positional, nil
 	}
-
-	// If exactly one shorthand flag is set, use it
-	if count == 1 {
-		return selectedType, nil
-	}
-
-	// If multiple shorthand flags are set, error
-	if count > 1 {
-		return "", fmt.Errorf("only one type flag can be set")
-	}
-
-	// Default to discovery if no type is specified
-	return types.InsightDiscovery, nil
-}
-
-// parseTimestamp parses a timestamp string in various formats.
-// Supports RFC3339, common date formats, and relative time expressions.
-func parseTimestamp(ts string) (time.Time, error) {
-	// Try RFC3339 first
-	if t, err := time.Parse(time.RFC3339, ts); err == nil {
-		return t, nil
-	}
-
-	// Try RFC3339Nano
-	if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
-		return t, nil
-	}
-
-	// Try common date-time formats
-	formats := []string{
-		"2006-01-02T15:04:05",
-		"2006-01-02 15:04:05",
-		"2006-01-02",
-		"Jan 2, 2006 3:04 PM",
-		"Jan 2, 2006",
-	}
-
-	for _, format := range formats {
-		if t, err := time.Parse(format, ts); err == nil {
-			return t, nil
-		}
-	}
-
-	// Try relative time expressions (e.g., "2h ago", "1d ago")
-	if strings.HasSuffix(ts, " ago") {
-		durationStr := strings.TrimSuffix(ts, " ago")
-		// Handle day/week shortcuts
-		durationStr = strings.ReplaceAll(durationStr, "d", "h")
-		durationStr = strings.ReplaceAll(durationStr, "w", "h")
-
-		// Parse as if it were hours for d/w
-		if strings.Contains(ts, "d ago") {
-			parts := strings.Split(strings.TrimSuffix(ts, " ago"), "d")
-			if len(parts) > 0 {
-				var days int
-				if _, err := fmt.Sscanf(parts[0], "%d", &days); err == nil {
-					return time.Now().Add(-time.Duration(days) * 24 * time.Hour), nil
-				}
-			}
-		}
-		if strings.Contains(ts, "w ago") {
-			parts := strings.Split(strings.TrimSuffix(ts, " ago"), "w")
-			if len(parts) > 0 {
-				var weeks int
-				if _, err := fmt.Sscanf(parts[0], "%d", &weeks); err == nil {
-					return time.Now().Add(-time.Duration(weeks) * 7 * 24 * time.Hour), nil
-				}
-			}
-		}
-
-		// Try standard duration
-		if d, err := time.ParseDuration(durationStr); err == nil {
-			return time.Now().Add(-d), nil
-		}
-	}
-
-	return time.Time{}, fmt.Errorf("unrecognized timestamp format: %s", ts)
-}
-
-// resolveThreadRef resolves a thread reference to a thread ID.
-// Accepts: thr-xxx (thread ID), bd-xxx (bead ID), or external:ref format.
-func resolveThreadRef(ref string) (string, error) {
-	// Direct thread ID
-	if strings.HasPrefix(ref, "thr-") {
-		return ref, nil
-	}
-
-	// External ref (e.g., "linear:ENG-456")
-	if beads.IsExternalRef(ref) {
-		return resolveExternalThreadRef(ref)
-	}
-
-	// Bead ID — normalize to external ref and create/find thread
-	if beads.IsBeadID(ref) {
-		return resolveExternalThreadRef(beads.BeadIDToExternalRef(ref))
-	}
-
-	return ref, nil
-}
-
-// resolveExternalThreadRef resolves an external ref to a thread ID,
-// creating the thread and mapping if needed.
-func resolveExternalThreadRef(ref string) (string, error) {
-	s, err := getStore()
-	if err != nil {
-		return "", err
-	}
-
-	// Check for existing mapping
-	mapping, err := s.GetExternalRefMappingByRef(ref)
-	if err != nil {
-		return "", fmt.Errorf("failed to look up external ref: %w", err)
-	}
-	if mapping != nil {
-		return mapping.ThreadID, nil
-	}
-
-	// No mapping — parse the ref
-	extRef, err := beads.ParseExternalRef(ref)
-	if err != nil {
-		return "", err
-	}
-
-	// For Linear refs, try to fetch issue details
-	if extRef.System == "linear" {
-		return resolveLinearRef(s, extRef)
-	}
-
-	// For GitHub refs, try to fetch PR title
-	if extRef.System == "github" {
-		return resolveGitHubRef(s, extRef)
-	}
-
-	// For bead refs, use the user-facing bd-xxx format as title
-	if extRef.System == "bead" {
-		return createThreadForExternalRef(s, extRef, "bd-"+extRef.ID)
-	}
-
-	// For other systems, create thread with the ref as title
-	return createThreadForExternalRef(s, extRef, extRef.ID)
-}
-
-// resolveLinearRef creates a thread linked to a Linear issue,
-// fetching the issue title if a Linear CLI is available.
-func resolveLinearRef(s store.Storage, extRef *beads.ExternalRef) (string, error) {
-	// Load config for adapter detection
-	configTool, configPath, apiKey := getLinearConfig(s)
-
-	adapter, err := linear.Detect(configTool, configPath, apiKey)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Linear CLI not available (%v). Creating thread without issue details.\n", err)
-		return createThreadForExternalRef(s, extRef, extRef.ID)
-	}
-
-	issue, err := adapter.ViewIssue(extRef.ID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Could not fetch Linear issue %s: %v\n", extRef.ID, err)
-		return createThreadForExternalRef(s, extRef, extRef.ID)
-	}
-
-	title := fmt.Sprintf("%s: %s", issue.ID, issue.Title)
-	return createThreadForExternalRef(s, extRef, title)
-}
-
-// resolveGitHubRef creates a thread linked to a GitHub PR,
-// fetching the PR title if the gh CLI is available.
-func resolveGitHubRef(s store.Storage, extRef *beads.ExternalRef) (string, error) {
-	ghCli, err := gh.Detect()
-	if err != nil {
-		return createThreadForExternalRef(s, extRef, extRef.ID)
-	}
-
-	// extRef.ID is "owner/repo#42" — extract the number for ViewPR
-	parts := strings.SplitN(extRef.ID, "#", 2)
-	if len(parts) != 2 {
-		return createThreadForExternalRef(s, extRef, extRef.ID)
-	}
-
-	pr, err := ghCli.ViewPR(parts[1], parts[0])
-	if err != nil || pr == nil {
-		fmt.Fprintf(os.Stderr, "Warning: Could not fetch GitHub PR %s: %v\n", extRef.ID, err)
-		return createThreadForExternalRef(s, extRef, extRef.ID)
-	}
-
-	title := fmt.Sprintf("%s: %s", extRef.ID, pr.Title)
-	return createThreadForExternalRef(s, extRef, title)
-}
-
-// createThreadForExternalRef creates a new thread and maps it to the external ref.
-func createThreadForExternalRef(s store.Storage, extRef *beads.ExternalRef, title string) (string, error) {
-	thread := types.NewThread(title)
-	if err := s.CreateThread(thread); err != nil {
-		return "", fmt.Errorf("failed to create thread: %w", err)
-	}
-
-	now := time.Now()
-	mapping := &store.ExternalRefMapping{
-		ExternalRef: extRef.Raw,
-		ThreadID:    thread.ID,
-		System:      extRef.System,
-		ExternalID:  extRef.ID,
-		Metadata:    "{}",
-		CreatedAt:   now,
-		UpdatedAt:   now,
-	}
-	if err := s.CreateExternalRefMapping(mapping); err != nil {
-		return "", fmt.Errorf("failed to save external ref mapping: %w", err)
-	}
-
-	fmt.Printf("Created thread %s linked to %s\n", thread.ID, beads.FormatExternalRef(extRef))
-	return thread.ID, nil
-}
-
-func init() {
-	rootCmd.AddCommand(captureCmd)
-
-	captureCmd.Flags().StringVar(&captureType, "type", "", "insight type (hypothesis|discovery|question|feedback|pivot|decision)")
-	captureCmd.Flags().StringVar(&captureThreadID, "thread", "", "thread/bead/external ref to associate with")
-	captureCmd.Flags().BoolVar(&captureHypothesis, "hypothesis", false, "mark as hypothesis (speculation before evidence)")
-	captureCmd.Flags().BoolVar(&captureDiscovery, "discovery", false, "mark as discovery (evidence-based finding)")
-	captureCmd.Flags().BoolVar(&captureQuestion, "question", false, "mark as question (open uncertainty)")
-	captureCmd.Flags().BoolVar(&captureFeedback, "feedback", false, "mark as feedback (external input received)")
-	captureCmd.Flags().BoolVar(&capturePivot, "pivot", false, "mark as pivot (direction changed)")
-	captureCmd.Flags().BoolVar(&captureDecision, "decision", false, "mark as decision (committed to approach)")
-	captureCmd.Flags().StringVar(&captureTimestamp, "timestamp", "", "when the insight occurred (RFC3339, date, or relative like '2h ago')")
-	captureCmd.Flags().StringVar(&captureAuthor, "author", "", "who captured this insight (e.g., 'brian', 'cc:opus-4.6')")
-	captureCmd.Flags().StringSliceVar(&captureEndorsedBy, "endorsed-by", nil, "who endorsed this insight (repeatable)")
-	captureCmd.Flags().StringVar(&captureOrigin, "origin", "", "origin identifier (e.g., 'claude:sess_abc123', 'notion:page-id')")
-}
-
-// resolveOrigin resolves the origin value from flag > env > file.
-// If --origin was explicitly passed (even as empty string), that takes precedence.
-func resolveOrigin(cmd *cobra.Command) string {
-	if cmd.Flags().Changed("origin") {
-		return strings.TrimSpace(captureOrigin)
-	}
-	if envOrigin := os.Getenv("BDC_ORIGIN"); envOrigin != "" {
-		return strings.TrimSpace(envOrigin)
-	}
-	return readOriginFile()
-}
-
-// inferSourceType determines the source type based on origin prefix and author.
-// AI tool prefixes map to "ai-session", everything else defaults to "human".
-func inferSourceType(origin, author string) string {
-	aiPrefixes := []string{
-		"claude:", "cursor:", "codex:", "warp:", "gemini:", "zed:", "opencode:",
-	}
-	for _, prefix := range aiPrefixes {
-		if strings.HasPrefix(origin, prefix) {
-			return "ai-session"
-		}
-	}
-	// Author-based fallback: cc:* implies ai-session
-	if strings.HasPrefix(author, "cc:") {
-		return "ai-session"
-	}
-	return "human"
 }

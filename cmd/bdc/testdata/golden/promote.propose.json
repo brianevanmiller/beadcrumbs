@@ -1,0 +1,38 @@
+{
+  "bdc": "1",
+  "command": "promote.propose",
+  "ok": true,
+  "data": {
+    "proposal": {
+      "id": "<pp_1>",
+      "insight_id": "<ins_1>",
+      "revision_id": "<rev_2>",
+      "class": "decision",
+      "dest_kind": "docs",
+      "dest_locator": "docs/decisions/0001-one-engine.md",
+      "dest_workspace": "",
+      "capabilities": [
+        "stable-anchor"
+      ],
+      "content": "One engine, one transaction, one close.",
+      "content_hash": "<sha256>",
+      "confidence": 0.8,
+      "requested_authority": "advisory",
+      "policy_version": "1",
+      "redaction_version": "1",
+      "created_at": "<time>",
+      "actor_id": "tester",
+      "actor_kind": "human"
+    },
+    "created": true,
+    "content_hash": "<sha256>",
+    "authority_required": "none"
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

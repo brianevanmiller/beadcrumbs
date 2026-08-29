@@ -1,0 +1,30 @@
+{
+  "bdc": "1",
+  "command": "capture",
+  "ok": true,
+  "data": {
+    "crumb": {
+      "id": "<crb_4>",
+      "content": "The failing run logged [REDACTED:aws-access-key-id] into the build output.",
+      "content_hash": "<sha256>",
+      "review_state": "candidate",
+      "confidence": 0.4,
+      "captured_at": "<time>",
+      "redaction_version": "1",
+      "actor_id": "tester",
+      "actor_kind": "human"
+    }
+  },
+  "warnings": [
+    {
+      "code": "redacted",
+      "message": "rule aws-access-key-id replaced <size> bytes at offset 23"
+    }
+  ],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

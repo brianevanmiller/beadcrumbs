@@ -1,0 +1,36 @@
+{
+  "bdc": "1",
+  "command": "promote.record",
+  "ok": true,
+  "data": {
+    "promotion": {
+      "id": "<prm_2>",
+      "proposal_id": "<pp_1>",
+      "attempt": 2,
+      "status": "applied",
+      "occurred_at": "<time>",
+      "actor_id": "tester",
+      "actor_kind": "human"
+    },
+    "receipt": {
+      "id": "<rcp_1>",
+      "promotion_id": "<prm_2>",
+      "kind": "docs",
+      "locator": "docs/decisions/0001-one-engine.md",
+      "anchor": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+      "verified": true,
+      "reference_id": "<ref_3>",
+      "recorded_at": "<time>",
+      "actor_id": "tester",
+      "actor_kind": "human"
+    },
+    "durable": true
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

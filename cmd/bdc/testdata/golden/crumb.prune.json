@@ -1,0 +1,19 @@
+{
+  "bdc": "1",
+  "command": "crumb.prune",
+  "ok": true,
+  "data": {
+    "pruned": 1,
+    "pruned_ids": [
+      "<crb_3>"
+    ],
+    "blocked": []
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

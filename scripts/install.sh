@@ -1,266 +1,158 @@
 #!/usr/bin/env bash
 #
-# beadcrumbs (bdc) installation script
-# Usage: curl -fsSL https://raw.githubusercontent.com/beadcrumbs/beadcrumbs/main/scripts/install.sh | bash
+# Install bdc from a GitHub release.
 #
+#   curl -fsSL https://raw.githubusercontent.com/brianevanmiller/beadcrumbs/v1.0.0/scripts/install.sh | bash
+#
+# Downloads the prebuilt static-ICU archive for this platform, verifies its
+# SHA-256 against the release's checksums.txt, and installs one binary.
+#
+# There is no source-build fallback. bdc needs Go >= 1.26.2, CGO, and ICU4C, and
+# a source build links ICU dynamically against a prefix that will not exist on
+# another machine. A script that quietly compiles one instead of downloading it
+# hands you a binary you cannot move, so this fails with instructions instead.
+#
+# Environment:
+#   BDC_VERSION      release to install (default: latest)
+#   BDC_INSTALL_DIR  where to put the binary (default: /usr/local/bin, else ~/.local/bin)
+#   BDC_BASE_URL     override the download base; accepts a local directory for testing
 
-set -e
+# -E is load-bearing, not style: without errtrace an ERR trap is not inherited by
+# shell functions, and every failure path below — fetch, die, resolve_version,
+# detect_platform, main itself — is inside one. Verified on bash 3.2, the /bin/bash
+# every stock macOS ships and the one `curl … | bash` in the header runs.
+set -Eeuo pipefail
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+REPO="brianevanmiller/beadcrumbs"
 
-log_info() {
-    echo -e "${BLUE}==>${NC} $1"
+RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'; BLUE=$'\033[0;34m'; NC=$'\033[0m'
+info()    { printf '%s==>%s %s\n' "$BLUE" "$NC" "$1"; }
+ok()      { printf '%s==>%s %s\n' "$GREEN" "$NC" "$1"; }
+warn()    { printf '%s==>%s %s\n' "$YELLOW" "$NC" "$1"; }
+die()     { printf '%sError:%s %s\n' "$RED" "$NC" "$1" >&2; exit 1; }
+
+manual_instructions() {
+  cat >&2 <<EOF
+
+Prebuilt binaries exist for macOS and Linux on arm64 and amd64 only.
+Windows is not supported.
+
+To build from source you need Go >= 1.26.2, CGO, and ICU4C:
+  macOS:  brew install icu4c
+          CGO_CPPFLAGS="-I\$(brew --prefix icu4c)/include" \\
+          CGO_LDFLAGS="-L\$(brew --prefix icu4c)/lib" \\
+          go install github.com/${REPO}/cmd/bdc@latest
+  Debian: sudo apt install libicu-dev
+          go install github.com/${REPO}/cmd/bdc@latest
+
+Releases: https://github.com/${REPO}/releases
+EOF
 }
+trap 'manual_instructions' ERR
 
-log_success() {
-    echo -e "${GREEN}==>${NC} $1"
-}
-
-log_warning() {
-    echo -e "${YELLOW}==>${NC} $1"
-}
-
-log_error() {
-    echo -e "${RED}Error:${NC} $1" >&2
-}
-
-# Detect OS and architecture
 detect_platform() {
-    local os arch
-
-    case "$(uname -s)" in
-        Darwin)
-            os="darwin"
-            ;;
-        Linux)
-            os="linux"
-            ;;
-        FreeBSD)
-            os="freebsd"
-            ;;
-        *)
-            log_error "Unsupported operating system: $(uname -s)"
-            exit 1
-            ;;
-    esac
-
-    case "$(uname -m)" in
-        x86_64|amd64)
-            arch="amd64"
-            ;;
-        aarch64|arm64)
-            arch="arm64"
-            ;;
-        armv7*|armv6*|armhf|arm)
-            arch="arm"
-            ;;
-        *)
-            log_error "Unsupported architecture: $(uname -m)"
-            exit 1
-            ;;
-    esac
-
-    echo "${os}_${arch}"
+  case "$(uname -s)" in
+    Darwin) os=darwin ;;
+    Linux)  os=linux ;;
+    MINGW*|MSYS*|CYGWIN*|Windows_NT)
+      die "Windows is not supported. bdc runs on macOS and Linux only." ;;
+    *) die "Unsupported operating system: $(uname -s). bdc runs on macOS and Linux only." ;;
+  esac
+  case "$(uname -m)" in
+    x86_64|amd64)  arch=amd64 ;;
+    aarch64|arm64) arch=arm64 ;;
+    *) die "Unsupported architecture: $(uname -m). bdc ships arm64 and amd64 only." ;;
+  esac
 }
 
-# Re-sign binary for macOS to avoid slow Gatekeeper checks
-resign_for_macos() {
-    local binary_path=$1
-
-    if [[ "$(uname -s)" != "Darwin" ]]; then
-        return 0
-    fi
-
-    if ! command -v codesign &> /dev/null; then
-        return 0
-    fi
-
-    log_info "Re-signing binary for macOS..."
-    codesign --remove-signature "$binary_path" 2>/dev/null || true
-    if codesign --force --sign - "$binary_path"; then
-        log_success "Binary re-signed for this machine"
-    fi
+resolve_version() {
+  if [ -n "${BDC_VERSION:-}" ]; then
+    printf '%s' "${BDC_VERSION#v}"
+    return
+  fi
+  local tag
+  tag=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+        | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)
+  [ -n "$tag" ] || die "cannot determine the latest release; set BDC_VERSION"
+  printf '%s' "${tag#v}"
 }
 
-# Check if Go is installed
-check_go() {
-    if command -v go &> /dev/null; then
-        local go_version=$(go version | awk '{print $3}' | sed 's/go//')
-        log_info "Go detected: $(go version)"
-        return 0
-    else
-        return 1
-    fi
+# Fetch from either an https base or a local directory, so this script can be
+# exercised against a locally built asset without a network or a publish.
+fetch() {
+  local base=$1 name=$2 dest=$3
+  case "$base" in
+    http://*|https://*) curl -fsSL "${base}/${name}" -o "$dest" ;;
+    file://*)           cp "${base#file://}/${name}" "$dest" ;;
+    *)                  cp "${base}/${name}" "$dest" ;;
+  esac
 }
 
-# Install using go install
-install_with_go() {
-    log_info "Installing bdc using 'go install'..."
-
-    if go install github.com/brianevanmiller/beadcrumbs/cmd/bdc@latest; then
-        log_success "bdc installed successfully via go install"
-
-        local gobin
-        gobin=$(go env GOBIN 2>/dev/null || true)
-        if [ -n "$gobin" ]; then
-            bin_dir="$gobin"
-        else
-            bin_dir="$(go env GOPATH)/bin"
-        fi
-
-        resign_for_macos "$bin_dir/bdc"
-
-        if [[ ":$PATH:" != *":$bin_dir:"* ]]; then
-            log_warning "$bin_dir is not in your PATH"
-            echo ""
-            echo "Add this to your shell profile (~/.bashrc, ~/.zshrc, etc.):"
-            echo "  export PATH=\"\$PATH:$bin_dir\""
-            echo ""
-        fi
-
-        return 0
-    else
-        log_error "go install failed"
-        return 1
-    fi
+sha256_of() {
+  if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+  else die "neither shasum nor sha256sum is available; cannot verify the download"
+  fi
 }
 
-# Build from source
-build_from_source() {
-    log_info "Building bdc from source..."
-
-    local tmp_dir
-    tmp_dir=$(mktemp -d)
-
-    cd "$tmp_dir"
-    log_info "Cloning repository..."
-
-    if git clone --depth 1 https://github.com/brianevanmiller/beadcrumbs.git; then
-        cd beadcrumbs
-        log_info "Building binary..."
-
-        if go build -o bdc ./cmd/bdc; then
-            local install_dir
-            if [[ -w /usr/local/bin ]]; then
-                install_dir="/usr/local/bin"
-            else
-                install_dir="$HOME/.local/bin"
-                mkdir -p "$install_dir"
-            fi
-
-            log_info "Installing to $install_dir..."
-            if [[ -w "$install_dir" ]]; then
-                mv bdc "$install_dir/"
-            else
-                sudo mv bdc "$install_dir/"
-            fi
-
-            resign_for_macos "$install_dir/bdc"
-
-            log_success "bdc installed to $install_dir/bdc"
-
-            if [[ ":$PATH:" != *":$install_dir:"* ]]; then
-                log_warning "$install_dir is not in your PATH"
-                echo ""
-                echo "Add this to your shell profile (~/.bashrc, ~/.zshrc, etc.):"
-                echo "  export PATH=\"\$PATH:$install_dir\""
-                echo ""
-            fi
-
-            cd - > /dev/null || cd "$HOME"
-            rm -rf "$tmp_dir"
-            return 0
-        else
-            log_error "Build failed"
-            cd - > /dev/null || cd "$HOME"
-            rm -rf "$tmp_dir"
-            return 1
-        fi
-    else
-        log_error "Failed to clone repository"
-        rm -rf "$tmp_dir"
-        return 1
-    fi
-}
-
-# Verify installation
-verify_installation() {
-    if command -v bdc &> /dev/null; then
-        log_success "bdc is installed and ready!"
-        echo ""
-        bdc --help | head -5
-        echo ""
-        echo "Get started:"
-        echo "  cd your-project"
-        echo "  bdc init"
-        echo "  bdc capture \"Your first insight\" --hypothesis"
-        echo ""
-        return 0
-    else
-        log_error "bdc was installed but is not in PATH"
-        return 1
-    fi
-}
-
-# Main installation flow
 main() {
-    echo ""
-    echo "beadcrumbs (bdc) Installer"
-    echo ""
+  echo
+  info "Installing bdc"
 
-    log_info "Detecting platform..."
-    local platform
-    platform=$(detect_platform)
-    log_info "Platform: $platform"
+  detect_platform
+  local version base archive tmp
+  version=$(resolve_version)
+  base="${BDC_BASE_URL:-https://github.com/${REPO}/releases/download/v${version}}"
+  archive="beadcrumbs_${version}_${os}_${arch}.tar.gz"
 
-    # Try go install first (most reliable for Go projects)
-    if check_go; then
-        if install_with_go; then
-            verify_installation
-            exit 0
-        fi
-    fi
+  info "Platform: ${os}/${arch}, version ${version}"
 
-    # Try building from source
-    log_warning "Falling back to building from source..."
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"; manual_instructions' ERR
+  # shellcheck disable=SC2064
+  trap "rm -rf '$tmp'" EXIT
 
-    if ! check_go; then
-        log_warning "Go is not installed"
-        echo ""
-        echo "bdc requires Go to install. You can:"
-        echo "  1. Install Go from https://go.dev/dl/"
-        echo "  2. Use your package manager:"
-        echo "     - macOS: brew install go"
-        echo "     - Ubuntu/Debian: sudo apt install golang"
-        echo ""
-        echo "After installing Go, run this script again."
-        exit 1
-    fi
+  info "Downloading ${archive}"
+  fetch "$base" "$archive" "$tmp/$archive"
+  fetch "$base" "checksums.txt" "$tmp/checksums.txt"
 
-    if build_from_source; then
-        verify_installation
-        exit 0
-    fi
+  local expected actual
+  expected=$(grep -F "$archive" "$tmp/checksums.txt" | awk '{print $1}' | head -1)
+  [ -n "$expected" ] || die "$archive is not listed in checksums.txt"
+  actual=$(sha256_of "$tmp/$archive")
+  [ "$expected" = "$actual" ] || die "checksum mismatch: expected $expected, got $actual"
+  ok "Checksum verified"
 
-    # All methods failed
-    log_error "Installation failed"
-    echo ""
-    echo "Manual installation:"
-    echo "  1. Install Go from https://go.dev/dl/"
-    echo "  2. Run: go install github.com/brianevanmiller/beadcrumbs/cmd/bdc@latest"
-    echo ""
-    echo "Or build from source:"
-    echo "  git clone https://github.com/brianevanmiller/beadcrumbs.git"
-    echo "  cd beadcrumbs"
-    echo "  go build -o bdc ./cmd/bdc/"
-    echo "  sudo mv bdc /usr/local/bin/"
-    echo ""
-    exit 1
+  tar -xzf "$tmp/$archive" -C "$tmp" bdc
+
+  local install_dir="${BDC_INSTALL_DIR:-}"
+  if [ -z "$install_dir" ]; then
+    if [ -w /usr/local/bin ]; then install_dir=/usr/local/bin
+    else install_dir="$HOME/.local/bin"; fi
+  fi
+  mkdir -p "$install_dir"
+  install -m 0755 "$tmp/bdc" "$install_dir/bdc"
+
+  # An unsigned binary copied out of a tarball trips Gatekeeper's slow path on
+  # every run; an ad-hoc signature makes it a one-time cost.
+  if [ "$os" = darwin ] && command -v codesign >/dev/null 2>&1; then
+    codesign --force --sign - "$install_dir/bdc" >/dev/null 2>&1 || true
+  fi
+
+  ok "Installed $install_dir/bdc"
+  "$install_dir/bdc" version
+
+  case ":$PATH:" in
+    *":$install_dir:"*) ;;
+    *) warn "$install_dir is not on your PATH"
+       echo "  export PATH=\"\$PATH:$install_dir\"" ;;
+  esac
+
+  trap - ERR
+  echo
+  echo "Get started:"
+  echo "  cd your-repo && bdc init && bdc capture \"your first fragment\""
+  echo
 }
 
 main "$@"

@@ -1,0 +1,167 @@
+name: ci
+
+# Native runners only. CGO_ENABLED=1 with a foreign GOOS fails in runtime/cgo
+# without a cross C toolchain, so there is no cross-compilation anywhere in this
+# repository and no job that pretends otherwise. Windows is not supported: it is
+# not proven, so it is not claimed, and an untested job would imply it is.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test ${{ matrix.os }} go${{ matrix.go }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        # The floor is imposed by dolthub/driver, not chosen. Latest catches a
+        # toolchain regression before a user does.
+        go: ['1.26.2', 'stable']
+    steps:
+      - uses: actions/checkout@v4
+
+      # ICU4C is a build prerequisite, not an optimisation: go-icu-regex binds it
+      # unconditionally and there is no ICU-free build tag, so a missing header
+      # is a build break at `unicode/regex.h file not found`, never a fallback.
+      - name: Install ICU4C (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libicu-dev
+
+      - name: Install ICU4C (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install icu4c
+          echo "CGO_CPPFLAGS=-I$(brew --prefix icu4c)/include" >> "$GITHUB_ENV"
+          echo "CGO_LDFLAGS=-L$(brew --prefix icu4c)/lib" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache: true
+
+      # The Beads integration is optional, and an optional integration CI never
+      # runs is one nobody has run: TestCoreWorkflowWithBeads skips without a
+      # `bd` on PATH. The version is pinned to the one internal/beads was
+      # measured against. A third-party download must not fail this build, so
+      # the step is allowed to fail and the test reports the skip and its reason.
+      - name: Install bd
+        continue-on-error: true
+        env:
+          BD_VERSION: '1.2.2'
+        run: |
+          set -euo pipefail
+          case "$(uname -s)" in
+            Darwin) os=darwin ;;
+            Linux)  os=linux ;;
+          esac
+          case "$(uname -m)" in
+            x86_64|amd64)  arch=amd64 ;;
+            aarch64|arm64) arch=arm64 ;;
+          esac
+          archive="beads_${BD_VERSION}_${os}_${arch}.tar.gz"
+          curl -fsSL "https://github.com/gastownhall/beads/releases/download/v${BD_VERSION}/${archive}" \
+            -o "$RUNNER_TEMP/$archive"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" ./bd
+          sudo install -m 0755 "$RUNNER_TEMP/bd" /usr/local/bin/bd
+          bd version
+
+      - run: go build ./...
+        env:
+          CGO_ENABLED: 1
+
+      - run: go vet ./...
+        env:
+          CGO_ENABLED: 1
+
+      # There is no integration build tag. Embedded Dolt needs no infrastructure,
+      # and the module does not compile without CGO and ICU4C, so a tag could only
+      # hide the tests that matter. Only the race build runs: it is a superset of
+      # the plain one, and running both doubles a 4-cell matrix to prove nothing
+      # the second run does not already prove.
+      - run: go test -race -timeout 30m ./...
+        env:
+          CGO_ENABLED: 1
+
+  supply-chain:
+    name: supply chain
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - run: sudo apt-get update && sudo apt-get install -y libicu-dev
+
+      # Stable toolchain, not go.mod's floor: stdlib advisories are fixed by
+      # newer patch releases, and the gate should judge dependencies, not the
+      # minimum toolchain a contributor may build with.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+
+      # A dependency change is reviewable only if the diff is in front of the
+      # reviewer. This prints the module graph delta against the base of the PR.
+      - name: Module graph diff
+        if: github.event_name == 'pull_request'
+        run: |
+          go list -m -f '{{.Path}} {{.Version}}' all | sort > /tmp/head.txt
+          git worktree add /tmp/base "${{ github.event.pull_request.base.sha }}"
+          (cd /tmp/base && go list -m -f '{{.Path}} {{.Version}}' all | sort > /tmp/base.txt) || : > /tmp/base.txt
+          diff -u /tmp/base.txt /tmp/head.txt || true
+
+      # govulncheck's symbol analysis is the gate. A vulnerability the binary can
+      # actually reach fails the build; one that only sits in a required module
+      # is reported and does not.
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        env:
+          CGO_ENABLED: 1
+
+  packaging:
+    name: packaging ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ICU4C (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libicu-dev
+
+      - name: Install ICU4C (macOS)
+        if: runner.os == 'macOS'
+        run: brew install icu4c
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Builds the static-ICU artifact, then runs the real installers into
+      # throwaway prefixes and asserts the binary has no non-system dynamic
+      # library and actually opens a ledger. Nothing is installed globally and
+      # nothing is published.
+      - run: test/packaging/smoke.sh

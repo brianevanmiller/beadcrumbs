@@ -1,0 +1,53 @@
+{
+  "bdc": "1",
+  "command": "harvest",
+  "ok": true,
+  "data": {
+    "harvest": {
+      "id": "<hrv_1>",
+      "mode": "manual",
+      "outcome": "completed",
+      "crumbs_considered": 2,
+      "crumbs_selected": 2,
+      "policy_version": "1",
+      "redaction_version": "1",
+      "started_at": "<time>",
+      "finished_at": "<time>",
+      "actor_id": "tester",
+      "actor_kind": "human"
+    },
+    "insight": {
+      "id": "<ins_1>",
+      "head_revision": 1,
+      "created_at": "<time>",
+      "actor_id": "tester",
+      "actor_kind": "human"
+    },
+    "revision": {
+      "id": "<rev_1>",
+      "insight_id": "<ins_1>",
+      "revision": 1,
+      "title": "One engine, one transaction, one close",
+      "content": "Every bdc invocation opens one short-lived engine, performs one bounded transaction, and closes it. Reads state the freshness of anything cached.",
+      "content_hash": "<sha256>",
+      "class": "decision",
+      "confidence": 0.8,
+      "harvest_id": "<hrv_1>",
+      "created_at": "<time>",
+      "actor_id": "tester",
+      "actor_kind": "human"
+    },
+    "crumbs_captured": [],
+    "redaction": {
+      "version": "1",
+      "findings": []
+    }
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

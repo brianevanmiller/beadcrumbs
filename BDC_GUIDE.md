@@ -1,348 +1,336 @@
-# BDC (Beadcrumbs) Guide for AI Agents
+# bdc command reference
 
-This file contains canonical bdc (beadcrumbs) workflow instructions for AI agents.
-Use bdc to capture the *reasoning* behind work — not the work itself (that's what bd is for).
+Every `bdc` command, its flags, and the `data` object it returns under `--json`.
 
-> **For project-specific instructions**, see AGENTS.md in the repository root.
-> This file only covers bdc tool usage, not project-specific workflows.
+**This file is a reference, not the contract.** The contract an agent follows is
+[`skills/beadcrumbs/SKILL.md`](skills/beadcrumbs/SKILL.md) — what to capture, when to harvest,
+and what to do when a promotion is blocked. Read that first; come here for a flag.
+
+## Envelope
+
+Every command emits one envelope on stdout under `--json`. Prose goes to stderr. The two never
+mix, and there is no partial envelope: a write that fails mid-transaction rolls back and reports
+one error.
+
+```json
+{
+  "bdc": "1",
+  "command": "reference.list",
+  "ok": true,
+  "data": {},
+  "warnings": [{"code": "beads_unavailable",
+                "message": "beads references resolve to their locator; bd is unavailable here: not_installed"}],
+  "error": null,
+  "meta": {"bdc_version": "1.0.0", "ledger_schema": 1, "generated_at": "2026-08-28T14:00:00.000000Z"}
+}
+```
+
+On failure `ok` is `false`, `data` is `null`, and `error` is `{"code", "message", "details"}`.
+
+| Exit | Meaning | `error.code` prefix |
+|---|---|---|
+| 0 | success | — |
+| 1 | usage or validation error | `invalid_*` |
+| 2 | not found | `not_found` |
+| 3 | policy or authority denied | `policy_denied`, `authority_denied`, `authority_required` |
+| 4 | ledger busy — lock backoff exhausted | `ledger_busy` |
+| 5 | no ledger | `no_ledger` |
+| 6 | storage or integrity error | `storage_*`, `integrity_*` |
+| 7 | redaction abort — nothing persisted | `redaction_failed` |
+| 8 | adapter error | `adapter_*` |
+
+Exit 4 is retryable and exit 7 is not: a redaction abort means the text itself has to change.
+
+## Warning codes
+
+`warnings[]` is the non-fatal channel: something a caller has to see that does not make the write
+wrong. Every entry is `{code, message}`; the code is what a script matches. Warnings survive a
+failure — a proposal blocked on authority was still recorded, and its warnings describe that
+write.
+
+| Code | Raised by | Meaning |
+|---|---|---|
+| `redacted` | any write | the redactor rewrote the text; the message names the rule, offset, and length, never the match |
+| `crumb_deduplicated` | `capture` | an identical capture in the same session resolved to the existing Crumb |
+| `prune_blocked` | `crumb prune` | one Crumb was refused; see `blocked[]` for the reason code |
+| `validation_without_evidence` | `validate` | a verdict that is expected to cite evidence cited none |
+| `proposal_confidence_diverged` | `promote propose` | an idempotent hit asked for a different confidence; proposals are immutable, so the stored value stands |
+| `proposal_evidence_diverged` | `promote propose` | an idempotent hit cited evidence the stored proposal does not carry; it was not added |
+| `receipt_not_durable` | `promote record` | the destination declares no `stable-anchor`, so the receipt proves an attempt, not a durable record |
+| `receipt_without_anchor` | `promote record` | the destination declares `stable-anchor` but no `--anchor` was given |
+| `external_hash_not_content_addressable` | `promote record` | `--external-hash` was recorded against a destination that cannot verify one |
+| `receipt_unverified` | `promote record` | the write was asserted rather than observed; pass `--verified` only when it was read back |
+| `budget_truncated` | `prime`, `context`, `handoff` | the answer was trimmed to fit `--budget`; the message names what was dropped |
+| `budget_exceeded` | `prime` | nothing further may be dropped — the summary and any mandatory Insight are always reported |
+| `beads_unavailable` | `reference list --refresh` | `bd` is missing, too old, or has no workspace here; the reason is in the message |
+| `no_enricher` | `reference list --refresh` | no adapter serves that reference kind |
+| `enrich_failed` | `reference list --refresh` | the adapter answered for one reference and its answer could not be read |
+| `enrichment_disabled` | `reference list --refresh` | `--no-enrich` was given, so `--refresh` observed nothing |
+| `hook_skipped` | `hooks run` | the trigger did nothing, and why |
+| `unharvested_crumbs` | `hooks run` | outstanding candidates this repository harvests manually |
+| `hook_not_ours` | `hooks uninstall` | a hook bdc did not write was left exactly as it is |
+| `no_ledger` | `hooks uninstall` | there is no ledger here, so `harvest.auto` was not cleared |
+
+## Global flags
+
+| Flag | Environment default | Effect |
+|---|---|---|
+| `--json` | — | emit the envelope on stdout |
+| `--actor` | `$BDC_ACTOR` | who is acting; recorded as provenance. Falls back to `$USER` for a human and the literal `agent` for an agent — an agent's decisions are never attributed to whoever owns the login |
+| `--actor-kind` | `$BDC_ACTOR_KIND` | `human` or `agent`. Only a human may grant `mandatory` authority |
+| `--model` | `$BDC_ACTOR_MODEL` | the acting agent's model identifier |
+| `--session` | `$BDC_SESSION` | session identifier for grouping provenance, and the key `capture` deduplicates on |
+| `-C`, `--directory` | — | run as if started in this directory |
+| `--quiet` | — | suppress warnings on stderr |
+| `--no-enrich` | — | skip optional tracker enrichment |
+
+**The actor-kind default is not `human`.** Undeclared, a run that carries *both* a model and a
+session is recorded as `agent`; anything else is recorded as `human`. `human` is the value every
+authority gate is satisfied by, so it is deliberately not the value you get by setting half of
+an agent's identity. Declaring `agent` without both a model and a session is refused with
+`invalid_provenance`, exit 1.
 
 ---
 
-## Prerequisites (Auto-Setup for AI Agents)
+## Ledger
 
-Before using any `bdc` command, check if bdc is installed and initialized in this project:
+### `bdc init`
+`--stealth` (default) `--visible` `--force`
 
-```bash
-command -v bdc >/dev/null 2>&1 && bdc prime >/dev/null 2>&1 && echo "bdc ready" || echo "bdc not ready"
-```
+Creates the ledger at `<git-common-dir>/beadcrumbs`, which every linked worktree resolves to and
+`git status` never sees. `--visible` uses `<main-worktree>/.beadcrumbs` and adds it to
+`.git/info/exclude`. `--force` replaces a target directory that holds no Dolt database.
 
-If **bdc ready**, skip to the next section. If **bdc not ready**, follow the steps below. Do NOT skip this. Do NOT repeatedly attempt bdc commands that fail — bootstrap once, then proceed.
+→ `{path, stealth, schema_version, created}`
 
-> **Worktree note:** bdc automatically finds the main repo's database from git worktrees. No extra configuration needed. See the [Stealth Mode Guide](docs/guides/stealth-mode.md#how-it-works-with-git-worktrees) for the full worktree topology.
+### `bdc doctor`
+`--verbose`
 
-### Step 0: Check if bdc is installed but can't find a database
+→ `{checks[], schema_version, journal_bytes, ledger_path, beads, counts, ok}` — each check is
+`{name, status, detail}`, `beads` is what the optional tracker detection found (`null` under
+`--no-enrich`), and `counts` is the per-table record count (`null` when the ledger would not
+open, because a zero for every table would read as an empty ledger rather than an unreadable
+one).
 
-If `command -v bdc` succeeds but `bdc prime` produces no output, the database may exist in a different directory tree (e.g., you're in a workspace parent, not inside a git repo or worktree). Run:
+doctor reports health inside the envelope and always exits 0 with `error: null` — a ledger it
+cannot open is what it exists for. Branch on `data`, never on the exit code: `ledger_present`
+failing is "no ledger here", `ledger_lock` failing is another process holding the engine, and
+`schema_version` failing is a mismatch `bdc migrate` repairs.
 
-```bash
-bdc locate
-```
+### `bdc migrate`
 
-This searches for databases by walking up from CWD, checking git worktree roots, and scanning child directories. If databases are found, present the numbered list to the user and ask which to use. Include an option for the user to enter a path manually. Once chosen, set `BDC_DB_PATH`:
+Applies the schema migrations this build ships and the ledger has not. Idempotent: a current
+ledger reports `from == to` and applies nothing. This is the repair for a `schema_version`
+mismatch — `bdc init` is not, because it returns early on an existing ledger. A ledger newer
+than this build cannot be repaired downward; upgrade bdc.
 
-```bash
-export BDC_DB_PATH="<chosen path>"
-```
+→ `{from, to, applied[]}`
 
-For persistent activation, add to `.envrc` (with direnv) or the project's shell config. Then re-run the readiness check above. If `bdc locate` finds nothing, continue with Step 1 below.
+### `bdc version`
 
-### Step 1: Install the bdc binary
+→ `{version, schema_version, dolt_driver, go, platform}`. Runs without opening the engine, so it
+answers even when the ledger is busy or broken.
 
-Try each method in order. Stop at the first success:
+### `bdc backup <dest-url>` / `bdc restore <src-url>`
+restore: `--force` (required when a ledger already exists)
 
-```bash
-# Method A: Install script (preferred)
-curl -fsSL https://raw.githubusercontent.com/brianevanmiller/beadcrumbs/main/scripts/install.sh | bash
+Backup carries history, not just the head. Restore stages into a temporary directory and swaps
+atomically; an interrupted restore leaves the original intact and `doctor` reports the leftovers.
 
-# Method B: npm (if curl fails)
-npm install -g @beadcrumbs/bdc
+→ `{destination, bytes, schema_version}` / `{restored, schema_version, records}`
 
-# Method C: Go install (if Go is available)
-go install github.com/brianevanmiller/beadcrumbs/cmd/bdc@latest
-```
+### `bdc gc`
 
-Verify installation: `command -v bdc && bdc --help | head -3`
-
-If all methods fail, inform the user they need Go installed (`brew install go` on macOS) and retry.
-
-### Step 2: Initialize the project
-
-**Ask the user** which mode they prefer before proceeding. Do not assume.
-
-- **Team mode** (`bdc init`): Tracks `.beadcrumbs/` JSONL files in git so other contributors can see reasoning history. Installs git hooks for auto-sync. Choose this if the team wants shared insight tracking.
-- **Local-only / stealth mode** (`bdc init --stealth`): Keeps beadcrumbs data local via `.git/info/exclude`. No git hooks, no `.gitignore` changes. Choose this for personal use without affecting the repo. Convert later with `bdc unstealth`. See the [Stealth Mode Guide](docs/guides/stealth-mode.md).
-
-### Step 3: Import existing data (cloned repos only)
-
-If this repo already has beadcrumbs JSONL files tracked in git, import them to rebuild the local database:
-
-```bash
-test -f .beadcrumbs/insights.jsonl && bdc import
-```
-
-### Step 4: Configure Claude Code hooks
-
-```bash
-bdc setup claude
-```
-
-This registers `bdc prime` as a SessionStart and PreCompact hook so beadcrumbs context is automatically available in future sessions.
-
-### Step 5: Verify
-
-```bash
-bdc prime | head -3
-```
-
-You should see the "Beadcrumbs Insight Tracker Active" header. Setup is complete.
+Reclaims the Dolt chunk journal. → `{before_bytes, after_bytes, duration_ms}`
 
 ---
 
-## Insight Tracking with bdc (beadcrumbs)
+## Crumbs
 
-**IMPORTANT**: This project uses **bdc (beadcrumbs)** to track reasoning and understanding. bd tracks *what* you're doing; bdc tracks *why*.
+### `bdc capture <text|->`
+`--confidence` (0–1, default 0.5) `--ref kind:locator[@relation]` (repeatable) `--from-file`
 
-### Why bdc?
+One fragment per Crumb: a correction, a discovery, a rejected approach, external feedback.
+Redaction runs before the write. A finding it cannot resolve aborts with exit 7 and nothing
+persisted. Transcript-shaped and oversize input is refused rather than truncated.
 
-- Narrative-aware: Captures the evolution of understanding across sessions
-- Git-backed: SQLite database with auto-sync, portable across machines
-- Agent-optimized: Structured insight types, thread refs, author attribution
-- Beads-integrated: Link insights to tasks with `spawns` and `trace`
-- Prevents lost context: Reasoning survives conversation compaction and session boundaries
+→ `{crumb}`
 
-### Quick Start
+### `bdc crumb list`
+`--state candidate|accepted|rejected` (repeatable) `--since` `--session` `--limit` `--offset`
 
-**Open a thread:**
-```bash
-bdc thread new "Implement address fuzzy matching"
-```
+`--since` takes RFC3339, a date, or a duration like `24h`. → `{crumbs[], total}`
 
-**Capture insights:**
-```bash
-bdc capture --thread <ref> --hypothesis "Levenshtein might work for street matching" --author cc:opus-4.6
-bdc capture --thread <ref> --decision "Using USPS standardization + exact match" --author cc:opus-4.6
-```
+### `bdc crumb show <id>`
+`--events`
 
-**Close when done:**
-```bash
-bdc thread close <thread-id>
-```
+→ `{crumb, review_events[], references[], harvests[], insights[]}`. `harvests` and `insights` can
+both be non-empty at once — a Crumb is never consumed by being harvested.
 
-### Insight Types
+### `bdc crumb review <id>...`
+`--state accepted|rejected` (required) `--rationale` (required)
 
-- `hypothesis` - Speculation before evidence (weighing an approach)
-- `discovery` - Evidence-based finding (something confirmed or disproven)
-- `question` - Open uncertainty (needs resolution)
-- `feedback` - External input received (human adjusting specs or direction)
-- `pivot` - Direction changed (approach abandoned for a new one)
-- `decision` - Committed to approach (final call made)
+Append-only. Reviewing again adds an event; it never rewrites one. → `{crumbs[], events[]}`
 
-### Author Convention
+### `bdc crumb prune`
+`--id` (repeatable) `--before` `--state candidate` `--yes` (required)
 
-- AI agents: `--author cc:<model>` (e.g., `--author cc:opus-4.6`, `--author cc:sonnet-4`)
-- Human: `--author brian`
-- Use the author that *initiated* the insight, not who typed it
+Retention, not erasure — see [README](README.md#retention-not-erasure). Refuses any state but
+`candidate`, and refuses a Crumb that feeds a Harvest. → `{pruned, pruned_ids[], blocked[]}`,
+where each `blocked` entry is `{crumb_id, reason, code}` with `code` one of `not_candidate` or
+`supports_insight`. A blocked Crumb is also a `prune_blocked` warning; the command still succeeds.
 
-### Thread Reference Priority
+---
 
-The `--thread` flag accepts multiple reference formats. Prefer in this order:
+## Harvest and Insights
 
-1. **Task tracker ref** if using an external tracker: `--thread linear:ENG-456`, `--thread jira:PROJ-123`, `--thread gh:42`
-   - For Linear refs, bdc auto-creates a thread linked to the issue and fetches the issue title
-2. **Bead ID** if a bd issue exists: `--thread bd-a1b2`
-   - Creates a real thread with an external ref mapping (system: "bead")
-3. **Thread ID** if resuming existing: `--thread thr-xxxx`
-4. **Descriptive title** as fallback when creating: `bdc thread new "Fix auth timeout bug"`
+### `bdc harvest`
+`--crumb` (repeatable) `--since` `--title` `--content`/`--content-file` `--class` `--confidence`
+`--auto` `--dry-run`
 
-### Multi-System Linking
+Weighs Crumbs and synthesises them into a revisioned Insight. With no `--title`/`--content`/
+`--class` it records what it weighed and stops — the right answer when there are fragments but no
+conclusion yet. `--auto` only labels the Harvest record as automatic; it is not itself gated. What
+is opt-in per repository is whether a hook runs one at all (`bdc hooks install --auto-harvest`).
 
-A single thread can be linked to multiple external systems simultaneously. This is useful when a Linear ticket represents an epic/feature and beads represent implementation subtasks:
+→ `{harvest, insight, revision, crumbs_captured[], redaction:{version, findings}}`
 
-```bash
-# Create thread linked to both Linear and a bead in one command
-bdc thread new "Implement caching layer" --linear ENG-456 --bead bd-abc1
+Classes: `learning`, `memory`, `decision`, `adr`, `policy`, `term`, `business-ontology`,
+`technical-ontology`, `mapping`.
 
-# Or link incrementally — start with one, add the other later
-bdc capture --thread linear:ENG-456 --hypothesis "..." --author cc:opus-4.6
-bdc thread link thr-xxxx bd-abc1
+### `bdc insight list`
+`--class` `--since` `--verdict` `--authority` `--limit` `--offset` (all repeatable filters)
 
-# Individual insights can also spawn beads via dependencies (separate mechanism)
-bdc link ins-xxxx --spawns=bd-def2
-```
+→ `{insights[], total}`
 
-Thread-level links (via `--thread`, `--linear`, `--bead`, or `bdc thread link`) associate the whole thread with an external system. Dependency links (via `bdc link --spawns`) create causal relationships between specific insights and specific beads. Both mechanisms coexist and serve different purposes.
+### `bdc insight show <id>`
+`--revision` `--lineage`
 
-### Workflow for AI Agents
+→ `{insight, revision, revisions[], crumbs[], references[], validations[], authorities[], proposals[], lineage[]}`
 
-1. **Session start**: Open a thread, set origin, and capture initial intent
-   ```bash
-   # Set origin to identify this session's insights
-   bdc origin set claude:<session-id>
+### `bdc insight revise <id>`
+`--content`/`--content-file` `--rationale` (required) `--title` `--class` `--confidence` `--crumb`
 
-   # Option A: auto-create thread from tracker ref (recommended for Linear users)
-   bdc capture --thread linear:ENG-456 --hypothesis "Redis might be overkill, in-memory LRU could suffice" --author cc:opus-4.6
+A revision preserves the prior revision, its derivation, and its evidence. Unset fields carry
+forward. → `{insight, revision}`
 
-   # Option B: explicit thread creation with --linear flag
-   bdc thread new "Implement caching layer for API" --linear ENG-456
-   bdc capture --thread thr-xxxx --hypothesis "Redis might be overkill" --author cc:opus-4.6
+---
 
-   # Option C: standalone thread (no tracker)
-   bdc thread new "Implement caching layer for API"
-   bdc capture --thread <ref> --hypothesis "Redis might be overkill" --author cc:opus-4.6
-   ```
+## Verdict and authority
 
-2. **During session**: Capture as reasoning evolves — always use `--thread`
-   ```bash
-   # Weighing approaches
-   bdc capture --thread <ref> --hypothesis "Could use node-cache for simplicity" --author cc:opus-4.6
+These are two axes, not one. A `supported` verdict says the reasoning holds; an authority level
+says how far a record binds. Both are append-only histories with an effective value.
 
-   # Found evidence
-   bdc capture --thread <ref> --discovery "Benchmarks show node-cache handles 10k keys under 50ms" --author cc:opus-4.6
+### `bdc validate <target-id>`
+`--verdict unreviewed|supported|disputed|rejected|superseded` `--rationale` (required)
+`--evidence kind:locator` `--superseded-by`
 
-   # Human adjusts specs
-   bdc capture --thread <ref> --feedback "Need TTL support, 1-hour expiry minimum" --author brian
+→ `{validation, effective_verdict}`
 
-   # Open question
-   bdc capture --thread <ref> --question "Should cache invalidate on webhook or poll?" --author cc:opus-4.6
+### `bdc authority <target-id>`
+`--level advisory|default|mandatory` `--scope` `--destination kind:locator` `--rationale` (required)
 
-   # Direction changed
-   bdc capture --thread <ref> --pivot "Switching to Redis — TTL + pub/sub invalidation needed" --author cc:opus-4.6
+`mandatory` requires `--actor-kind human`; an agent attempting it is denied with exit 3, and that
+refusal is a live runtime assertion, not a convention. → `{authority, effective_level}`
 
-   # Final call
-   bdc capture --thread <ref> --decision "Using Redis with 1-hour TTL and pub/sub invalidation" --author cc:opus-4.6
-   ```
+---
 
-3. **Session end / PR creation**: Capture outcome, clear origin, and close thread
-   ```bash
-   bdc capture --thread <ref> --decision "PR #42 implements Redis caching with pub/sub invalidation" --author cc:opus-4.6
-   bdc origin clear
-   bdc thread close <thread-id>
-   ```
+## References
 
-4. **Rule**: Do NOT archive or delete a git branch until the beadcrumbs thread is closed with final insights recorded.
+Locators are opaque. Beadcrumbs never parses one, and there are no tracker-specific columns.
 
-   **Auto-push**: If the thread is linked to a Linear issue, closing it automatically posts a summary comment (decisions, pivots, discoveries) to the issue. See the [Linear Integration Guide](docs/guides/linear.md).
+### `bdc reference add <target-id>`
+`--kind` (required) `--locator` (required) `--workspace` `--relation source|evidence|subject|spawned-work`
+`--label`
 
-5. **Cross-session resumption**: When resuming work in a new session
-   ```bash
-   # Set origin for the new session
-   bdc origin set claude:<new-session-id>
+→ `{reference, link}`
 
-   # Find active threads
-   bdc thread list --status=active
+### `bdc reference list`
+`--target` `--kind` `--relation` `--limit` `--refresh`
 
-   # Review prior reasoning (optionally filter by prior session's origin)
-   bdc timeline <thread-id>
-   bdc timeline --origin claude:<old-session-id>
+`--refresh` re-observes the cache through an installed enricher. The cache is never
+authoritative. → `{references[]}`, each with a `freshness`
 
-   # Check for unresolved questions
-   bdc questions --unresolved
+---
 
-   # Continue capturing on the existing thread
-   bdc capture --thread <ref> --discovery "Found the root cause" --author cc:<model>
-   ```
-
-6. **Project-specific lifecycle**: For projects with a beadcrumbs lifecycle guide (see `docs/guides/lifecycle.md`), follow that for detailed phase-by-phase integration.
-
-### What to Capture
-
-| Scenario | Type | Author |
-|----------|------|--------|
-| Human explains reasoning or adjusts specs | `--feedback` | `--author brian` |
-| AI weighs a possible approach | `--hypothesis` | `--author cc:<model>` |
-| AI finds evidence for or against something | `--discovery` | `--author cc:<model>` |
-| Open uncertainty or question | `--question` | either |
-| Direction changes | `--pivot` | whoever initiated it |
-| Committed approach or final call | `--decision` | whoever made the call |
-
-### What NOT to Capture
-
-Do not create beadcrumbs for:
-
-- Routine tool calls (file reads, grep, glob, running builds)
-- Minor formatting or whitespace changes
-- Simple acknowledgments ("OK", "got it", "done")
-- Restating what the user said without adding new reasoning
-- Mechanical steps (installing deps, running migrations) unless the *result* reveals something unexpected
-- Single-line bug fixes with obvious cause and solution
-
-### Integration with Beads (bd)
-
-Beadcrumbs tracks reasoning; Beads tracks tasks. There are two ways to link them:
-
-**Thread-level linking** — associate a reasoning thread with a bead task:
-```bash
-# Via --thread flag (auto-creates thread and mapping)
-bdc capture --thread bd-abc1 --hypothesis "..." --author cc:opus-4.6
-
-# Via thread creation flag
-bdc thread new "Implement caching" --bead bd-abc1
-
-# Via generic thread link command
-bdc thread link thr-xxxx bd-abc1
-```
-
-**Dependency linking** — connect a specific insight to a bead it spawned:
-```bash
-# An insight led to creating a task
-bdc link ins-7f2a --spawns=bd-abc1
-
-# Trace what reasoning led to a specific task
-bdc trace bd-abc1
-
-# Create a task directly from an insight
-bdc spawn ins-7f2a --title="Implement exponential backoff for retries"
-```
-
-Both mechanisms work together. Thread links say "this reasoning is about bd-abc1". Dependency links say "this specific insight produced bd-abc1".
-
-### Essential Commands
-
-```bash
-# Threads
-bdc thread new "<title>"                    # Start a narrative thread
-bdc thread list --status=active             # See open threads
-bdc thread close <id>                       # Conclude a thread
-
-# Origin tracking
-bdc origin set <system:id>                  # Set origin for this session
-bdc origin show                             # Show current origin
-bdc origin clear                            # Clear origin
-bdc origins                                 # List all origins with counts
-
-# Capturing insights
-bdc capture --thread <ref> --<type> "..."   # Record an insight
-bdc capture --thread <ref> --hypothesis "..." --author cc:opus-4.6
-bdc capture --thread <ref> --decision "..." --author brian
-bdc capture --origin <system:id> --<type> "..."  # Explicit origin on single capture
-
-# Viewing
-bdc timeline [thread-id]                    # Chronological view
-bdc timeline --origin <system:id>           # Filter by origin
-bdc decisions [thread-id]                   # Filter to decisions only
-bdc pivots [thread-id]                      # Filter to pivots only
-bdc questions --unresolved                  # Open questions needing answers
-bdc list --origin <system:id>               # Filter by origin
-
-# Linking to beads
-bdc link <id> --spawns=<bead-id>            # Link insight to task (dependency)
-bdc trace <bead-id>                         # Trace reasoning chain for a task
-bdc spawn <insight-id> --title="..."        # Create task from insight
-bdc thread link <thread-id> <ref>           # Link thread to any external ref
-
-# Setup (see docs/guides/stealth-mode.md for mode switching)
-bdc init                                    # Initialize in a new repo
-bdc init --stealth                          # Local-only (not tracked in git)
-bdc stealth / unstealth                     # Switch between stealth and normal mode
-bdc prime                                   # Output AI workflow context
-
-# Linear integration (see docs/guides/linear.md)
-bdc linear setup                            # Detect and configure Linear CLI
-bdc linear status                           # Show integration status
-bdc linear push <thread-id>                 # Post summary to Linear issue
-bdc linear link <thread-id> <issue-id>      # Link thread to Linear issue
-bdc thread new "title" --linear ENG-456     # Create thread linked to Linear
-```
-
-### Important Rules
-
-- ✅ Use bdc for ALL reasoning and understanding tracking
-- ✅ Always use `--thread` to associate captures with context
-- ✅ Always use `--author` for attribution (cc:<model> or brian)
-- ✅ Open a thread at session start, close at session end
-- ✅ Close threads before archiving or deleting branches
-- ✅ Link insights to beads when they spawn work (`bdc link --spawns`)
-- ❌ Do NOT capture routine tool calls or mechanical steps
-- ❌ Do NOT capture simple acknowledgments or restated info
-- ❌ Do NOT skip the thread close at session end
-- ❌ Do NOT use bdc for task tracking (use bd for that)
+## Promotion
+
+### `bdc promote propose`
+`--insight` (required) `--class` (required) `--destination kind:locator` (required) `--revision`
+`--workspace` `--capability` (repeatable) `--evidence` (repeatable) `--content`/`--content-file`
+`--authority` `--supersedes` `--confidence`
+
+Never performs an external write and never calls an adapter. Idempotent by canonical content
+hash — re-proposing identical content to the same destination returns the existing proposal with
+`created:false`, enforced by a unique index rather than by convention.
+
+Blocked by authority: the proposal is still recorded, but the response is `ok:false`, exit 3,
+`error.code:"authority_required"`, `error.details:{proposal_id, content_hash, created, authority_required}`.
+Grant with `bdc authority` and retry against that `proposal_id`. Do not work around it.
+
+Capabilities are declared, never inferred: `requires-human-authority`, `supports-supersession`,
+`supports-review-thread`, `append-only`, `stable-anchor`, `content-addressable`.
+
+→ `{proposal, created, content_hash, authority_required}`
+
+### `bdc promote record <proposal-id>`
+`--locator` (required) `--anchor` `--external-hash` `--verified`
+
+The receipt for a write that landed. `--verified` means the recorder observed the written record
+rather than asserting it. → `{promotion, receipt, durable}`
+
+### `bdc promote reject <proposal-id>` — `--rationale` (required)
+A human decided not to write it. → `{promotion}`
+
+### `bdc promote fail <proposal-id>` — `--detail` (required)
+The write was attempted and did not land. The proposal stays retryable; the next `record` or
+`fail` is attempt *n+1*. → `{promotion}`
+
+`record`, `reject`, and `fail` are the three terminal outcomes of one attempt. A proposal left at
+`proposed` forever is the failure mode the last two exist to prevent.
+
+### `bdc promote list`
+`--insight` `--status` `--destination-kind` `--limit`
+
+→ `{proposals[]}`, each with `attempts[]` and `receipt`
+
+---
+
+## Narrative
+
+All three bound their output with `--budget`, in approximate tokens; the default is **4000** and
+`--budget 0` means the whole answer. `prime` never drops a mandatory Insight to fit a budget — it
+emits a `budget_exceeded` warning instead, so a thin-looking `prime` is a warning to read.
+
+| Command | Flags | `data` |
+|---|---|---|
+| `bdc prime` | `--budget` | `{summary, working_defaults[], mandatory[], cautions[]}` |
+| `bdc context` | `--since` `--insight` `--limit` `--budget` | `{summary, insights[], open_questions[], recent_crumbs[], promotions[]}` |
+| `bdc handoff` | `--since` `--budget` | `{summary, state, unreviewed_crumbs, open_proposals[], workspace}` |
+
+---
+
+## Hooks (optional)
+
+Never part of the contract. See [docs/guides/hooks.md](docs/guides/hooks.md).
+
+### `bdc hooks install` / `uninstall`
+`--force` `--auto-harvest` (install only — the per-repository opt-in to automatic harvesting)
+
+Writes chained `pre-push` and `post-merge` shims, preserving any pre-existing hook and its exit
+status. → `{hooks[], chained[], auto_harvest}`
+
+### `bdc hooks run <hook>`
+
+A hook that cannot get the lock waits longer than a normal command and then **exits 0** with one
+line on stderr naming what it skipped. A hook must never fail a `git push`, and a hook that
+silently swallows the miss is how a harvest gets lost. → `{hook, action, result}`
+
+---
+
+## Beads
+
+If `bd` is on PATH with a workspace, `beads:` references are enriched with title and status
+through supported `bd --json` commands. Beadcrumbs never reads Beads' database. Absence,
+staleness, and a missing workspace are distinguishable states, all of them warnings — never an
+error, and never a blocked write. `--no-enrich` skips the adapter entirely.

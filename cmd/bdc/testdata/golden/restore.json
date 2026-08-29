@@ -1,0 +1,17 @@
+{
+  "bdc": "1",
+  "command": "restore",
+  "ok": true,
+  "data": {
+    "restored": "<tmp>/repo/.git/beadcrumbs",
+    "schema_version": 1,
+    "records": 36
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.0",
+    "ledger_schema": 1,
+    "generated_at": "<time>"
+  }
+}

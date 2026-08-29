@@ -1,205 +1,121 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
+	"io"
 
 	"github.com/spf13/cobra"
+
+	"github.com/brianevanmiller/beadcrumbs/internal/beads"
+	"github.com/brianevanmiller/beadcrumbs/internal/ledger"
+	"github.com/brianevanmiller/beadcrumbs/internal/store/dolt"
 )
 
-var doctorCmd = &cobra.Command{
-	Use:   "doctor",
-	Short: "Run health checks on the beadcrumbs installation",
-	Long: `Runs a series of diagnostic checks to verify the beadcrumbs installation is
-healthy. Checks SQLite integrity, JSONL ↔ DB consistency, git hook installation,
-directory permissions, origin file, and database file.
-
-Exit code 0 if all checks pass, 1 if any fail.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		allPassed := true
-
-		// --- Check: Database file exists and is non-zero ---
-		dbInfo, err := os.Stat(dbPath)
-		if err != nil {
-			fmt.Printf("  ✗ Database file not found at %s\n", dbPath)
-			allPassed = false
-		} else if dbInfo.Size() == 0 {
-			fmt.Printf("  ✗ Database file is empty at %s\n", dbPath)
-			allPassed = false
-		} else {
-			sizeKB := dbInfo.Size() / 1024
-			fmt.Printf("  ✓ Database file OK (%d KB)\n", sizeKB)
-		}
-
-		// --- Open read-only store for DB checks ---
-		s, storeErr := getReadOnlyStore()
-		defer func() {
-			if s != nil {
-				s.Close()
-				storeInstance = nil
-			}
-		}()
-
-		// --- Check: SQLite integrity ---
-		if storeErr != nil {
-			fmt.Printf("  ✗ Failed to open database: %v\n", storeErr)
-			allPassed = false
-		} else {
-			db := s.DB()
-			var result string
-			row := db.QueryRow("PRAGMA integrity_check")
-			if err := row.Scan(&result); err != nil {
-				fmt.Printf("  ✗ SQLite integrity check failed: %v\n", err)
-				allPassed = false
-			} else if result != "ok" {
-				fmt.Printf("  ✗ SQLite integrity check failed: %s\n", result)
-				allPassed = false
-			} else {
-				fmt.Println("  ✓ SQLite integrity check passed")
-			}
-
-			// --- Check: JSONL ↔ DB consistency ---
-			beadcrumbsDir := filepath.Dir(dbPath)
-			type tableCheck struct {
-				jsonlFile string
-				table     string
-				label     string
-			}
-			checks := []tableCheck{
-				{filepath.Join(beadcrumbsDir, "insights.jsonl"), "insights", "insights"},
-				{filepath.Join(beadcrumbsDir, "threads.jsonl"), "threads", "threads"},
-				{filepath.Join(beadcrumbsDir, "deps.jsonl"), "dependencies", "deps"},
-			}
-
-			consistencyPassed := true
-			parts := make([]string, 0, len(checks))
-			for _, c := range checks {
-				jsonlCount := countJSONLLines(c.jsonlFile)
-				var dbCount int
-				row := db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", c.table))
-				if err := row.Scan(&dbCount); err != nil {
-					fmt.Printf("  ✗ JSONL ↔ DB consistency: failed to query %s: %v\n", c.table, err)
-					consistencyPassed = false
-					allPassed = false
-					break
-				}
-				parts = append(parts, fmt.Sprintf("%s (%d/%d)", c.label, jsonlCount, dbCount))
-				if jsonlCount != dbCount {
-					consistencyPassed = false
-					allPassed = false
-				}
-			}
-			if len(parts) == len(checks) {
-				if consistencyPassed {
-					fmt.Printf("  ✓ JSONL ↔ DB consistency: %s\n", strings.Join(parts, ", "))
-				} else {
-					fmt.Printf("  ✗ JSONL ↔ DB consistency mismatch: %s\n", strings.Join(parts, ", "))
-				}
-			}
-		}
-
-		// --- Check: Directory permissions ---
-		beadcrumbsDir := filepath.Dir(dbPath)
-		if info, err := os.Stat(beadcrumbsDir); err != nil {
-			fmt.Printf("  ✗ Directory not found: %s\n", beadcrumbsDir)
-			allPassed = false
-		} else if !info.IsDir() {
-			fmt.Printf("  ✗ %s is not a directory\n", beadcrumbsDir)
-			allPassed = false
-		} else {
-			// Test writability by attempting to create a temp file
-			testFile := filepath.Join(beadcrumbsDir, ".bdc_doctor_write_test")
-			f, err := os.OpenFile(testFile, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
-			if err != nil {
-				fmt.Printf("  ✗ Directory not writable: %s\n", beadcrumbsDir)
-				allPassed = false
-			} else {
-				f.Close()
-				os.Remove(testFile)
-				fmt.Println("  ✓ Directory permissions OK")
-			}
-		}
-
-		// --- Check: Origin file ---
-		originPath := filepath.Join(filepath.Dir(dbPath), "origin")
-		if _, err := os.Stat(originPath); os.IsNotExist(err) {
-			// Origin file is optional — not a failure
-			fmt.Println("  ✓ Origin file not set (optional)")
-		} else if err != nil {
-			fmt.Printf("  ✗ Origin file error: %v\n", err)
-			allPassed = false
-		} else {
-			content, err := os.ReadFile(originPath)
-			if err != nil {
-				fmt.Printf("  ✗ Origin file unreadable: %v\n", err)
-				allPassed = false
-			} else {
-				trimmed := strings.TrimSpace(string(content))
-				if trimmed == "" {
-					fmt.Println("  ✗ Origin file exists but is empty")
-					allPassed = false
-				} else {
-					fmt.Printf("  ✓ Origin file valid (%s)\n", truncate(trimmed, 60))
-				}
-			}
-		}
-
-		// --- Check: Git hooks ---
-		gitDir, err := getGitDir()
-		if err != nil {
-			fmt.Println("  ✗ Git hooks: not a git repository")
-			allPassed = false
-		} else {
-			hooksDir := filepath.Join(gitDir, "hooks")
-			hookChecks := []string{"pre-commit", "post-merge"}
-			var hookFailures []string
-			for _, hook := range hookChecks {
-				hookPath := filepath.Join(hooksDir, hook)
-				content, err := os.ReadFile(hookPath)
-				if err != nil {
-					hookFailures = append(hookFailures, hook+" not installed")
-				} else if !strings.Contains(string(content), "beadcrumbs") {
-					hookFailures = append(hookFailures, hook+" missing beadcrumbs reference")
-				}
-			}
-			if len(hookFailures) > 0 {
-				fmt.Printf("  ✗ Git hooks: %s\n", strings.Join(hookFailures, "; "))
-				allPassed = false
-			} else {
-				fmt.Printf("  ✓ Git hooks: pre-commit and post-merge installed\n")
-			}
-		}
-
-		if !allPassed {
-			return fmt.Errorf("one or more checks failed")
-		}
-		return nil
-	},
+type doctorData struct {
+	Checks        []ledger.Check      `json:"checks"`
+	SchemaVersion int                 `json:"schema_version"`
+	JournalBytes  int64               `json:"journal_bytes"`
+	LedgerPath    string              `json:"ledger_path"`
+	Beads         *beads.Availability `json:"beads"`
+	// Counts is null when the ledger would not open: there is nothing to count,
+	// and a zero for every table would read as an empty ledger rather than an
+	// unreadable one.
+	Counts *ledger.Counts `json:"counts"`
+	OK     bool           `json:"ok"`
 }
 
-// countJSONLLines counts non-empty lines in a JSONL file.
-// Each non-empty line represents one record.
-func countJSONLLines(path string) int {
-	f, err := os.Open(path)
+func (a *app) newDoctorCommand() *cobra.Command {
+	var verbose bool
+
+	cmd := &cobra.Command{
+		Use:   "doctor",
+		Short: "Report ledger health and recovery state",
+		Long: "Report ledger health. doctor is the one command that stays useful when the ledger " +
+			"cannot be opened: a ledger locked by another process, an uninitialised repository, and " +
+			"an interrupted restore are each reported as a named failing check rather than an error.",
+		Args: cobra.NoArgs,
+		// Optional: a ledger that will not open is exactly what doctor is for.
+		Annotations: map[string]string{
+			ledgerAnnotation: string(ledgerOptional),
+			// Short: doctor should report "locked" quickly rather than block.
+			waitAnnotation: "2s",
+		},
+	}
+	cmd.Flags().BoolVar(&verbose, "verbose", false, "show every check, not only the ones needing attention")
+
+	cmd.RunE = a.handle(func(cmd *cobra.Command, _ []string) (result, error) {
+		d, err := a.diagnose(cmd)
+		if err != nil {
+			return result{}, err
+		}
+		return result{Data: d, Human: func(w io.Writer) {
+			fmt.Fprintf(w, "ledger %s\n", d.LedgerPath)
+			for _, c := range d.Checks {
+				if !verbose && c.Status == dolt.StatusOK {
+					continue
+				}
+				fmt.Fprintf(w, "  [%-4s] %-20s %s\n", c.Status, c.Name, c.Detail)
+			}
+			if d.Counts != nil {
+				fmt.Fprintf(w, "  %s\n", describeCounts(*d.Counts))
+			}
+			fmt.Fprintf(w, "  %s\n", describeBeads(d.Beads))
+			state := "ok"
+			if !d.OK {
+				state = "needs attention"
+			}
+			fmt.Fprintf(w, "%s (schema %d, journal %d bytes)\n", state, d.SchemaVersion, d.JournalBytes)
+		}}, nil
+	})
+	return cmd
+}
+
+// diagnose runs the fullest diagnosis the ledger's state allows. An open ledger
+// gets the domain's own invariant checks — the polymorphic targets and the
+// materialised head revision, which no storage check can see — on top of the
+// storage report; a ledger that will not open gets the storage report alone,
+// because there is nothing to ask the domain about.
+func (a *app) diagnose(cmd *cobra.Command) (doctorData, error) {
+	ctx := cmd.Context()
+	d := doctorData{Beads: a.beadsAvailability(ctx)}
+
+	if a.store == nil {
+		report := dolt.DiagnoseUnopened(a.loc, a.openErr)
+		d.Checks, d.SchemaVersion = report.Checks, report.SchemaVersion
+		d.JournalBytes, d.LedgerPath, d.OK = report.JournalBytes, report.LedgerPath, report.OK
+		return d, nil
+	}
+
+	led, err := a.ledger(ctx)
 	if err != nil {
-		return 0
+		return doctorData{}, err
 	}
-	defer f.Close()
-
-	count := 0
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line != "" {
-			count++
-		}
+	report, err := led.Doctor(ctx)
+	if err != nil {
+		return doctorData{}, err
 	}
-	return count
+	d.Checks, d.SchemaVersion = report.Checks, report.SchemaVersion
+	d.JournalBytes, d.LedgerPath, d.OK = report.JournalBytes, report.LedgerPath, report.OK
+	d.Counts = &report.Counts
+	return d, nil
 }
 
-func init() {
-	rootCmd.AddCommand(doctorCmd)
+func describeCounts(c ledger.Counts) string {
+	crumbs := 0
+	for _, n := range c.CrumbsByState {
+		crumbs += n
+	}
+	return fmt.Sprintf("holding: %d crumb(s), %d insight(s), %d revision(s), %d harvest(s), %d reference(s), %d proposal(s)",
+		crumbs, c.Insights, c.Revisions, c.Harvests, c.References, c.Proposals)
+}
+
+func describeBeads(av *beads.Availability) string {
+	switch {
+	case av == nil:
+		return "beads: not checked (--no-enrich)"
+	case av.Present:
+		return fmt.Sprintf("beads: %s, workspace prefix %q", av.Version, av.Prefix)
+	default:
+		return "beads: unavailable (" + av.Reason + ")"
+	}
 }
