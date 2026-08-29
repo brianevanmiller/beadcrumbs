@@ -33,7 +33,7 @@ grant `mandatory` authority.
 | Platforms | macOS and Linux, `arm64` and `amd64` |
 | Windows | **Not supported.** See [Windows](#windows) |
 | Git | required — the ledger lives inside the repository's Git directory |
-| Binary size | ~135 MB. Embedded Dolt with statically linked ICU. Stated up front because it is not a typo |
+| Binary size | ~142 MB. Embedded Dolt with statically linked ICU. Stated up front because it is not a typo |
 | Runtime deps | none for the released binary (`otool -L` / `ldd` show system libraries only) |
 
 ## Install
