@@ -4,6 +4,8 @@
 
 | Document | Description |
 |---|---|
+| **[Cloud harness research](2026-08-29-cloud-harness-research.md)** | Amp, Conductor, and Delta measured against these findings |
+| **[Cloud sync design](2026-08-29-cloud-sync-design.md)** | The `bdc sync` design this research recommends |
 | **[Dolt operating model research](2026-08-28-dolt-operating-model-research.md)** | Why embedded Dolt; where the size and lock constraints came from |
 | **[Reasoning ledger design](2026-08-27-reasoning-ledger-design.md)** | v1 architecture |
 | [Stealth mode guide](guides/stealth-mode.md) | Where the ledger lives today |
