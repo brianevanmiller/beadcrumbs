@@ -378,6 +378,8 @@ var (
 		"crumb_review_events.rationale", "validations.rationale", "authorities.rationale",
 		"promotion_proposals.content", "promotions.detail",
 		"refs.label", "refs.meta",
+		"prompts.question_template", "prompts.options_json",
+		"asks.question_snapshot", "asks.options_snapshot", "asks.answer_text", "asks.skip_reason",
 	}
 
 	// rejectColumns are identity: rewriting one would silently change which
@@ -413,6 +415,10 @@ var (
 		"promotions.actor_id", "promotions.actor_model", "promotions.session_id", "promotions.harness",
 		"receipts.kind",
 		"receipts.actor_id", "receipts.actor_model", "receipts.session_id", "receipts.harness",
+		"prompts.prompt_key", "prompts.trigger_class",
+		"prompts.actor_id", "prompts.actor_model", "prompts.session_id", "prompts.harness",
+		"asks.prompt_key", "asks.choice_id", "asks.enqueue_session_id", "asks.via_session",
+		"asks.actor_id", "asks.actor_model", "asks.session_id", "asks.harness",
 	}
 )
 
@@ -484,10 +490,11 @@ type redactionCase struct {
 func redactionCases() []redactionCase {
 	ctx := context.Background()
 	var (
-		crumb    ledger.CrumbID
-		insight  ledger.InsightID
-		revision ledger.RevisionID
-		proposal ledger.ProposalID
+		crumb     ledger.CrumbID
+		insight   ledger.InsightID
+		revision  ledger.RevisionID
+		proposal  ledger.ProposalID
+		choiceAsk ledger.AskID
 	)
 	withSecret := func(prose string) string { return prose + " " + githubTokenFixture }
 	const locatorSecret = "AKIAIOSFODNN7EXAMPLE"
@@ -639,6 +646,68 @@ func redactionCases() []redactionCase {
 					Kind: "docs", Locator: "docs/runbook.md", Relation: ledger.RelationSource,
 				},
 				Label: withSecret("the runbook that quotes"),
+			})
+			return err
+		},
+	}, {
+		// A registered question is caller prose on exactly the same footing as
+		// a Crumb: it is written once and then quoted into every ask minted
+		// from it, so a secret that survives here survives into every snapshot.
+		name:    "prompt registry",
+		columns: []string{"prompts.question_template", "prompts.options_json"},
+		run: func(f *fixture) error {
+			_, _, err := f.L.AddPrompt(ctx, ledger.AddPrompt{
+				Key: "census-choice", Respondent: ledger.PromptRespondentHuman,
+				Question:   withSecret("what about {target}, the one mentioning"),
+				AnswerKind: ledger.AnswerKindChoice,
+				Options: []ledger.AskOption{
+					{ID: "yes", Label: withSecret("yes, the one naming")},
+					{ID: "no", Label: "no"},
+				},
+				TriggerClass: "manual",
+			})
+			return err
+		},
+	}, {
+		name:    "ask snapshot",
+		columns: []string{"asks.question_snapshot", "asks.options_snapshot"},
+		run: func(f *fixture) error {
+			ask, err := f.L.EnqueueAsk(ctx, ledger.EnqueueAsk{
+				PromptKey: "census-choice",
+				Target:    ledger.RecordRef{Kind: ledger.KindCrumb, ID: string(crumb)},
+			})
+			choiceAsk = ask.ID
+			return err
+		},
+	}, {
+		name:    "ask answer",
+		columns: []string{"asks.answer_text"},
+		run: func(f *fixture) error {
+			if _, _, err := f.L.AddPrompt(ctx, ledger.AddPrompt{
+				Key: "census-text", Respondent: ledger.PromptRespondentHuman,
+				Question: "what else is true of {target}?", AnswerKind: ledger.AnswerKindShortText,
+				TriggerClass: "manual",
+			}); err != nil {
+				return err
+			}
+			ask, err := f.L.EnqueueAsk(ctx, ledger.EnqueueAsk{
+				PromptKey: "census-text",
+				Target:    ledger.RecordRef{Kind: ledger.KindCrumb, ID: string(crumb)},
+			})
+			if err != nil {
+				return err
+			}
+			_, err = f.L.AnswerAsk(ctx, ledger.AnswerAsk{
+				AskID: ask.ID, Text: withSecret("the log also held"),
+			})
+			return err
+		},
+	}, {
+		name:    "ask skip",
+		columns: []string{"asks.skip_reason"},
+		run: func(f *fixture) error {
+			_, err := f.L.SkipAsk(ctx, ledger.SkipAsk{
+				AskID: choiceAsk, Reason: withSecret("not now; it quotes"),
 			})
 			return err
 		},

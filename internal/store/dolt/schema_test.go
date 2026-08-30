@@ -41,6 +41,14 @@ func rejects(t *testing.T, s *Store, constraint, query string, args ...any) {
 
 const humanProv = `'brian', 'human', NULL, NULL`
 
+// The id prefixes the raw-SQL fixtures mint. They are spelled out rather than
+// imported so a change to the ledger's constants shows up here as a failing
+// constraint test rather than as a silently renamed fixture.
+const (
+	ledgerPrefixPrompt = "pmt_"
+	ledgerPrefixAsk    = "ask_"
+)
+
 func seedCrumb(t *testing.T, s *Store, id, hash string) {
 	t.Helper()
 	mustExec(t, s, fmt.Sprintf(`INSERT INTO crumbs
@@ -271,4 +279,88 @@ func TestSchemaVersionIsRecordedByReplacingTheSingleton(t *testing.T) {
 	if version != 2 {
 		t.Fatalf("schema version = %d, want the version the replacement recorded", version)
 	}
+}
+
+// The sampling tables carry the same kind of database-level guarantees the rest
+// of the schema does. Each of these is reachable from a write path, and each is
+// checked in Go as well; the point of the pair is that the Go half can be
+// forgotten and the row still cannot exist.
+
+const seededFlushPrompt = "pmt_01992a00-0000-7000-8000-000000000003"
+
+func askInsert(columns, values string) string {
+	return `INSERT INTO asks
+		(id, prompt_id, prompt_key, prompt_version, respondent, state, question_snapshot,
+		 created_at, expires_at, actor_id, actor_kind` + columns + `)
+		VALUES (?, '` + seededFlushPrompt + `', 'context-flush', 1, 'human', 'pending', 'a question',
+		 UTC_TIMESTAMP(6), UTC_TIMESTAMP(6), 'brian', 'human'` + values + `)`
+}
+
+func TestSchemaRejectsMalformedPrompts(t *testing.T) {
+	s := schemaFixture(t)
+	insert := func(columns, values string) string {
+		return `INSERT INTO prompts
+			(id, prompt_key, version, respondent, question_template, answer_kind,
+			 trigger_class, origin, active, created_at, actor_id, actor_kind` + columns + `)
+			VALUES (?, 'census', 1, 'human', 'a question?', 'short-text',
+			 'manual', 'curated', 1, UTC_TIMESTAMP(6), 'brian', 'human'` + values + `)`
+	}
+	mustExec(t, s, insert("", ""), id(ledgerPrefixPrompt, "1"))
+
+	rejects(t, s, "ck_prompts_key", `INSERT INTO prompts
+		(id, prompt_key, version, respondent, question_template, answer_kind,
+		 trigger_class, origin, active, created_at, actor_id, actor_kind)
+		VALUES (?, '', 1, 'human', 'a question?', 'short-text', 'manual', 'curated', 1,
+		 UTC_TIMESTAMP(6), 'brian', 'human')`, id(ledgerPrefixPrompt, "2"))
+
+	rejects(t, s, "ck_prompts_version", `INSERT INTO prompts
+		(id, prompt_key, version, respondent, question_template, answer_kind,
+		 trigger_class, origin, active, created_at, actor_id, actor_kind)
+		VALUES (?, 'census', 0, 'human', 'a question?', 'short-text', 'manual', 'curated', 1,
+		 UTC_TIMESTAMP(6), 'brian', 'human')`, id(ledgerPrefixPrompt, "3"))
+
+	rejects(t, s, "ck_prompts_active", `INSERT INTO prompts
+		(id, prompt_key, version, respondent, question_template, answer_kind,
+		 trigger_class, origin, active, created_at, actor_id, actor_kind)
+		VALUES (?, 'census', 2, 'human', 'a question?', 'short-text', 'manual', 'curated', 2,
+		 UTC_TIMESTAMP(6), 'brian', 'human')`, id(ledgerPrefixPrompt, "4"))
+
+	rejects(t, s, "ck_prompts_q", `INSERT INTO prompts
+		(id, prompt_key, version, respondent, question_template, answer_kind,
+		 trigger_class, origin, active, created_at, actor_id, actor_kind)
+		VALUES (?, 'census', 3, 'human', '', 'short-text', 'manual', 'curated', 1,
+		 UTC_TIMESTAMP(6), 'brian', 'human')`, id(ledgerPrefixPrompt, "5"))
+
+	rejects(t, s, "ck_prompts_prov", `INSERT INTO prompts
+		(id, prompt_key, version, respondent, question_template, answer_kind,
+		 trigger_class, origin, active, created_at, actor_id, actor_kind, actor_model, session_id)
+		VALUES (?, 'census', 4, 'agent', 'a question?', 'short-text', 'manual', 'curated', 1,
+		 UTC_TIMESTAMP(6), 'claude', 'agent', NULL, NULL)`, id(ledgerPrefixPrompt, "6"))
+}
+
+func TestSchemaRejectsMalformedAsks(t *testing.T) {
+	s := schemaFixture(t)
+	mustExec(t, s, askInsert("", ""), id(ledgerPrefixAsk, "1"))
+
+	// A target is a kind and an id together. Half of one names nothing, and the
+	// column pair is polymorphic so no foreign key can say so.
+	rejects(t, s, "ck_asks_target", askInsert(", target_kind", ", 'crumb'"), id(ledgerPrefixAsk, "2"))
+	rejects(t, s, "ck_asks_target", askInsert(", target_id", ", 'crb_x'"), id(ledgerPrefixAsk, "3"))
+
+	rejects(t, s, "ck_asks_latency", askInsert(", latency_ms", ", -1"), id(ledgerPrefixAsk, "4"))
+
+	rejects(t, s, "ck_asks_q", `INSERT INTO asks
+		(id, prompt_id, prompt_key, prompt_version, respondent, state, question_snapshot,
+		 created_at, actor_id, actor_kind)
+		VALUES (?, '`+seededFlushPrompt+`', 'context-flush', 1, 'human', 'pending', '',
+		 UTC_TIMESTAMP(6), 'brian', 'human')`, id(ledgerPrefixAsk, "5"))
+
+	rejects(t, s, "ck_asks_prov", `INSERT INTO asks
+		(id, prompt_id, prompt_key, prompt_version, respondent, state, question_snapshot,
+		 created_at, actor_id, actor_kind, actor_model, session_id)
+		VALUES (?, '`+seededFlushPrompt+`', 'context-flush', 1, 'agent', 'pending', 'a question',
+		 UTC_TIMESTAMP(6), 'claude', 'agent', NULL, NULL)`, id(ledgerPrefixAsk, "6"))
+
+	// The prompt an ask was minted from cannot be deleted out from under it.
+	rejects(t, s, "fk_asks_prompt", `DELETE FROM prompts WHERE id = '`+seededFlushPrompt+`'`)
 }

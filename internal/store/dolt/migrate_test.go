@@ -14,7 +14,13 @@ import (
 // openSchema1 is a ledger that stopped after 001_init.sql. It is the v1.0.0
 // snapshot this build migrates; applying every embedded script would already be
 // schema 2 and would not prove the rewrite.
-func openSchema1(t *testing.T) *Store {
+func openSchema1(t *testing.T) *Store { return openSchemaThrough(t, 1) }
+
+// openSchemaThrough is a ledger that stopped after migration `version`. Every
+// script up to it is applied through applyMigration, so 002's Go-side rewrite
+// runs exactly as it does in production and the result is a real older ledger
+// rather than a hand-built approximation of one.
+func openSchemaThrough(t *testing.T, version int) *Store {
 	t.Helper()
 	ctx := context.Background()
 	repo := fixtureRepo(t)
@@ -27,7 +33,7 @@ func openSchema1(t *testing.T) *Store {
 		t.Fatalf("creating %s: %v", loc.Dir, err)
 	}
 
-	body := schema1Body(t)
+	scripts := schemaBodiesThrough(t, version)
 	release := acquireProcessLock(loc.Dir, t.Name())
 	err = func() error {
 		defer release()
@@ -38,32 +44,81 @@ func openSchema1(t *testing.T) *Store {
 			return err
 		}
 		return withEngine(ctx, loc.Dir, DatabaseName, func(db *sql.DB) error {
-			if err := execScript(ctx, db, body); err != nil {
-				return err
+			for _, m := range scripts {
+				if err := applyMigration(ctx, db, m); err != nil {
+					return err
+				}
 			}
-			_, err := db.ExecContext(ctx, "CALL DOLT_COMMIT('-A', '--allow-empty', '-m', ?)", "test: schema 1")
+			_, err := db.ExecContext(ctx, "CALL DOLT_COMMIT('-A', '--allow-empty', '-m', ?)", "test: older schema")
 			return err
 		})
 	}()
 	if err != nil {
-		t.Fatalf("creating a schema-1 ledger: %v", err)
+		t.Fatalf("creating a schema-%d ledger: %v", version, err)
 	}
 	return openLedger(t, loc, Config{Command: t.Name()})
 }
 
-func schema1Body(t *testing.T) string {
+func schemaBodiesThrough(t *testing.T, version int) []migration {
 	t.Helper()
 	ms, err := migrations()
 	if err != nil {
 		t.Fatalf("reading migrations: %v", err)
 	}
+	var out []migration
 	for _, m := range ms {
-		if m.version == 1 {
-			return m.body
+		if m.version <= version {
+			out = append(out, m)
 		}
 	}
-	t.Fatal("this build embeds no 001_init.sql")
-	return ""
+	if len(out) != version {
+		t.Fatalf("this build embeds %d of the %d migrations up to version %d", len(out), version, version)
+	}
+	return out
+}
+
+// Schema 3 is additive and pure SQL: an existing ledger keeps everything it
+// held and gains a seeded registry plus the two policy keys ParseRepoConfig
+// requires. A migration that landed the tables and forgot the seeds would leave
+// every command failing at startup on an integrity error.
+func TestMigrateV2AddsTheSeededSamplingRegistry(t *testing.T) {
+	ctx := context.Background()
+	s := openSchemaThrough(t, 2)
+	crumb := uuid7("crb_", "1")
+	seedCrumb(t, s, crumb, strings.Repeat("d", 64))
+
+	res, err := s.Migrate(ctx)
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if res.From != 2 || res.To != 3 || len(res.Applied) != 1 {
+		t.Fatalf("migrate result = %+v, want 2 -> 3 applying one script", res)
+	}
+	if n := countRows(t, s.DB(), `SELECT COUNT(*) FROM prompts WHERE active = 1`); n != 3 {
+		t.Fatalf("%d active seeded prompt(s), want 3", n)
+	}
+	if n := countRows(t, s.DB(),
+		`SELECT COUNT(*) FROM repo_config WHERE k IN ('ask.max_per_deliver', 'ask.expire_after')`); n != 2 {
+		t.Fatalf("%d of the two sampling policy keys were seeded", n)
+	}
+	if n := countRows(t, s.DB(), `SELECT COUNT(*) FROM crumbs WHERE id = '`+crumb+`'`); n != 1 {
+		t.Fatal("the migration lost a Crumb that predated it")
+	}
+	if err := s.Read(ctx, func(snap ledger.Snapshot) error {
+		cfg, err := snap.Config()
+		if err != nil {
+			return err
+		}
+		_, err = ledger.ParseRepoConfig(cfg)
+		return err
+	}); err != nil {
+		t.Fatalf("the migrated configuration does not parse: %v", err)
+	}
+
+	again, err := s.Migrate(ctx)
+	if err != nil || len(again.Applied) != 0 {
+		t.Fatalf("second migrate: %+v %v", again, err)
+	}
 }
 
 func uuid7(prefix, suffix string) string {
@@ -143,8 +198,8 @@ func TestMigrateV1RewritesReferenceIDsAndLeavesDoctorClean(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if res.From != 1 || res.To != 2 || len(res.Applied) != 1 {
-		t.Fatalf("migrate result = %+v, want 1 -> 2 with one script", res)
+	if res.From != 1 || res.To != CurrentSchemaVersion() || len(res.Applied) != CurrentSchemaVersion()-1 {
+		t.Fatalf("migrate result = %+v, want 1 -> %d applying every later script", res, CurrentSchemaVersion())
 	}
 
 	want := string(ledger.ReferenceIDFor(kind, locator, workspace))
@@ -167,7 +222,7 @@ func TestMigrateV1RewritesReferenceIDsAndLeavesDoctorClean(t *testing.T) {
 	if err != nil {
 		t.Fatalf("diagnose after migrate: %v", err)
 	}
-	if report.SchemaVersion != 2 || !report.OK {
+	if report.SchemaVersion != CurrentSchemaVersion() || !report.OK {
 		t.Fatalf("doctor after migrate: schema=%d ok=%v checks=%v", report.SchemaVersion, report.OK, report.Checks)
 	}
 	if err := s.Read(ctx, func(snap ledger.Snapshot) error {
@@ -187,7 +242,7 @@ func TestMigrateV1RewritesReferenceIDsAndLeavesDoctorClean(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second migrate: %v", err)
 	}
-	if again.From != 2 || again.To != 2 || len(again.Applied) != 0 {
+	if again.From != CurrentSchemaVersion() || again.To != CurrentSchemaVersion() || len(again.Applied) != 0 {
 		t.Fatalf("second migrate applied something: %+v", again)
 	}
 }
