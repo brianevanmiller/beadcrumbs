@@ -70,7 +70,13 @@ var promptTargetKinds = map[string][]RecordKind{
 var askOpenStates = []AskState{AskPending, AskDelivered}
 
 // Ask is one question put to one respondent. The provenance quartet is the
-// process that minted it; the answer's own provenance lives on the Crumb.
+// process that minted it and is never rewritten; the answer's own provenance
+// lives on the Crumb, and via_session is how a relay is reconstructed.
+//
+// Absent optional values are omitted rather than emitted empty, as on Crumb.
+// The three that are not — target, latency_ms, and the two timestamps — render
+// as null, because `omitempty` does not apply to a struct or a pointer and null
+// is the honest shape for "this has not happened yet".
 type Ask struct {
 	ID               AskID            `json:"id"`
 	PromptID         PromptID         `json:"prompt_id"`
@@ -80,15 +86,15 @@ type Ask struct {
 	Target           RecordRef        `json:"target"`
 	State            AskState         `json:"state"`
 	QuestionSnapshot string           `json:"question_snapshot"`
-	Options          []AskOption      `json:"options"`
-	EnqueueSessionID string           `json:"enqueue_session_id"`
-	ViaSession       string           `json:"via_session"`
-	CrumbID          CrumbID          `json:"crumb_id"`
-	ValidationID     ValidationID     `json:"validation_id"`
-	AuthorityID      AuthorityID      `json:"authority_id"`
-	ChoiceID         string           `json:"choice_id"`
-	AnswerText       string           `json:"answer_text"`
-	SkipReason       string           `json:"skip_reason"`
+	Options          []AskOption      `json:"options,omitempty"`
+	EnqueueSessionID string           `json:"enqueue_session_id,omitempty"`
+	ViaSession       string           `json:"via_session,omitempty"`
+	CrumbID          CrumbID          `json:"crumb_id,omitempty"`
+	ValidationID     ValidationID     `json:"validation_id,omitempty"`
+	AuthorityID      AuthorityID      `json:"authority_id,omitempty"`
+	ChoiceID         string           `json:"choice_id,omitempty"`
+	AnswerText       string           `json:"answer_text,omitempty"`
+	SkipReason       string           `json:"skip_reason,omitempty"`
 	LatencyMS        *int             `json:"latency_ms"`
 	CreatedAt        time.Time        `json:"created_at"`
 	DeliveredAt      *time.Time       `json:"delivered_at"`
@@ -384,15 +390,40 @@ func (l *Ledger) prepareNudges(snap Snapshot) ([]Ask, error) {
 		if err != nil {
 			continue
 		}
-		open, err := openAskExists(snap, ask)
+		asked, err := nudgeAlreadyPut(snap, ask)
 		if err != nil {
 			return nil, err
 		}
-		if !open {
+		if !asked {
 			out = append(out, ask)
 		}
 	}
 	return out, nil
+}
+
+// nudgeAlreadyPut is why deliver cannot nag. A proposal whose nudge was
+// answered — including answered "keep waiting" — or skipped has had the
+// question put to a human, and putting it again every session is how a
+// skippable surface becomes one people stop reading. Only an *expired* nudge is
+// re-minted: nobody engaged with that one, so it was never really asked.
+//
+// An explicit `bdc ask enqueue` is deliberate and keeps the looser rule: it
+// only refuses while an ask is still open.
+func nudgeAlreadyPut(snap Snapshot, candidate Ask) (bool, error) {
+	rows, err := snap.Asks(AskQuery{
+		PromptKeys: []string{candidate.PromptKey},
+		TargetID:   candidate.Target.ID,
+		Respondent: candidate.Respondent,
+	})
+	if err != nil {
+		return false, err
+	}
+	for _, a := range rows {
+		if a.State != AskExpired {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // AnswerAsk records one answer as the respondent's own records, in one

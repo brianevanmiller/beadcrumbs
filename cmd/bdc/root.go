@@ -132,6 +132,8 @@ func (a *app) newRootCommand() *cobra.Command {
 		a.newHandoffCommand(),
 		a.newPrimeCommand(),
 		a.newHooksCommand(),
+		a.newPromptsCommand(),
+		a.newAskCommand(),
 	)
 	return root
 }

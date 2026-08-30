@@ -92,7 +92,7 @@ type Prompt struct {
 	Respondent       PromptRespondent `json:"respondent"`
 	QuestionTemplate string           `json:"question_template"`
 	AnswerKind       AnswerKind       `json:"answer_kind"`
-	Options          []AskOption      `json:"options"`
+	Options          []AskOption      `json:"options,omitempty"`
 	TriggerClass     string           `json:"trigger_class"`
 	Origin           PromptOrigin     `json:"origin"`
 	Active           bool             `json:"active"`

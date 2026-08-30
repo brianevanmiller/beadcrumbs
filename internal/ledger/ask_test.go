@@ -249,7 +249,23 @@ func TestDeliverMaterialisesOneNudgePerBlockedProposal(t *testing.T) {
 	if state := f.askState(t, q.ID); state != ledger.AskDelivered {
 		t.Fatalf("the presented ask is %s, want delivered", state)
 	}
+
+	// And answering it ends the matter. "Keep waiting" is a human's decision
+	// about this proposal; re-minting the nudge on every later deliver is how a
+	// skippable surface becomes one people stop reading.
+	if _, err := f.L.AnswerAsk(ctx(), ledger.AnswerAsk{AskID: q.ID, ChoiceID: "wait"}); err != nil {
+		t.Fatalf("answering the nudge: %v", err)
+	}
+	third := f.deliver(t, f.L, ledger.PromptRespondentHuman)
+	if len(third.Questions) != 0 {
+		t.Fatalf("an answered nudge was re-minted: %+v", third.Questions)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM asks`); n != 1 {
+		t.Fatalf("%d ask rows exist after answering the only nudge", n)
+	}
 }
+
+func ctx() context.Context { return context.Background() }
 
 // Four is the presentation batch whatever the queue holds. A surface that can
 // present ten questions is a surface that will be ignored.

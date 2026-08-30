@@ -360,7 +360,12 @@ func (l *Ledger) narrateContext(snap Snapshot, q NarrativeQuery, n *Narrative) e
 	if err != nil {
 		return err
 	}
-	n.OpenQuestions = openQuestions(insights, promotions, counts.CrumbsByState[StateCandidate])
+	asks, err := snap.Asks(AskQuery{States: askOpenStates, Respondent: PromptRespondentHuman})
+	if err != nil {
+		return err
+	}
+	n.OpenQuestions = append(openQuestions(insights, promotions, counts.CrumbsByState[StateCandidate]),
+		pendingAskQuestions(asks)...)
 	n.Summary = contextSummary(insights, n.RecentCrumbs, promotions, n.OpenQuestions, q)
 	return nil
 }
@@ -653,6 +658,33 @@ func openQuestions(insights []NarrativeInsight, promotions []NarrativePromotion,
 			Question: fmt.Sprintf("%q is %s and cannot be relied on", i.Title, i.Verdict),
 			Detail: "resolve it with `bdc validate " + string(i.RevisionID) +
 				" --verdict ... --rationale ...`, or revise the Insight",
+		})
+	}
+	return out
+}
+
+// pendingAskQuestions surfaces the human queue in the same list as everything
+// else the ledger is waiting on, because it is the same kind of thing: a
+// decision with a name and a command that closes it. Agent asks are left out —
+// they are session-local, they expire with the session that opened them, and a
+// human reading `bdc context` cannot act on one.
+//
+// An authority-nudge appears here beside the authority_required entry for the
+// same proposal. That is two affordances for one decision rather than a
+// duplicate: one names the direct grant, the other names the open question, and
+// hiding either would hide a way to close it.
+func pendingAskQuestions(asks []Ask) []NarrativeQuestion {
+	out := make([]NarrativeQuestion, 0, len(asks))
+	for _, a := range asks {
+		detail := "answer it with `bdc ask answer " + string(a.ID) + " --choice ...`"
+		if len(a.Options) == 0 {
+			detail = "answer it with `bdc ask answer " + string(a.ID) + " --text \"...\"`"
+		}
+		out = append(out, NarrativeQuestion{
+			Kind:     "pending_ask",
+			Subject:  a.Target,
+			Question: excerpt(a.QuestionSnapshot, maxExcerpt),
+			Detail:   detail + ", or decline it with `bdc ask skip " + string(a.ID) + "`",
 		})
 	}
 	return out
