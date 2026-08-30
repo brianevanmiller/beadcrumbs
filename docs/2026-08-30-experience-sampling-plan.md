@@ -92,7 +92,7 @@ Before writing code:
 | [cmd/bdc/errors.go](../cmd/bdc/errors.go) | Exit codes 0–8. Do not add a ninth. |
 | [cmd/bdc/capture.go](../cmd/bdc/capture.go) | Smallest write command. Copy its `handleLedger` + `result{Data, Human}` pattern. |
 | [cmd/bdc/promote.go](../cmd/bdc/promote.go) | Nested subcommands (`promote propose\|record\|…`). `ask` and `prompts` follow this, not a flat flag pile. |
-| [cmd/bdc/validate.go](../cmd/bdc/validate.go) / [cmd/bdc/authority.go](../cmd/bdc/authority.go) | How validation and grants are invoked today — sampling *calls the ledger operations*, it does not SQL them. |
+| [cmd/bdc/validate.go](../cmd/bdc/validate.go) / [cmd/bdc/authority.go](../cmd/bdc/authority.go) | How validation and grants are invoked today. Sampling never SQLs them — and never calls these entry points from inside `AnswerAsk` either: they stamp `l.actor` and open their own transactions. See **Write composition** in Phase 2. |
 | [cmd/bdc/context.go](../cmd/bdc/context.go) / [cmd/bdc/prime.go](../cmd/bdc/prime.go) | Narrative commands. Tracer extends `context` open questions; **does not** extend `prime`. |
 | [cmd/bdc/hooks.go](../cmd/bdc/hooks.go) | `hookTriggers` — harvest or remind, never ask. |
 | [cmd/bdc/golden_test.go](../cmd/bdc/golden_test.go) | JSON surface is a promise. New fields go in `declaredFields()`. New steps go in `contractSteps()`. |
@@ -106,8 +106,8 @@ Before writing code:
 | [internal/ledger/types.go](../internal/ledger/types.go) | Closed vocabularies, `Provenance`, `RecordKind`. |
 | [internal/ledger/ids.go](../internal/ledger/ids.go) | Kind-prefixed UUIDv7, CHAR(40). New prefixes go here. |
 | [internal/ledger/ledger.go](../internal/ledger/ledger.go) | `RepoConfig`, `ParseRepoConfig`. A missing config key is an integrity error, never a default. |
-| [internal/ledger/crumb.go](../internal/ledger/crumb.go) | `CaptureCrumb` — redaction before the transaction, session dedup. Sample Crumbs go through this (or a thin wrapper that still redacts first). |
-| [internal/ledger/validation.go](../internal/ledger/validation.go) | Append-only verdicts. Calibration calls `RecordValidation` with respondent provenance, not `l.actor`, when the respondent is not the process actor. |
+| [internal/ledger/crumb.go](../internal/ledger/crumb.go) | `CaptureCrumb` — redaction before the transaction, session dedup, `CompleteHarvest`'s tx-level `insertCrumb` composition. Sample Crumbs reuse its prepare/redact half (see **Write composition** in Phase 2); redaction still runs before the transaction. |
+| [internal/ledger/validation.go](../internal/ledger/validation.go) | Append-only verdicts. Calibration appends a validation row with respondent provenance via the prepare helpers in **Write composition** — not by calling `RecordValidation`, which stamps `l.actor` and opens its own Write. |
 | [internal/ledger/authority.go](../internal/ledger/authority.go) / [internal/ledger/policy.go](../internal/ledger/policy.go) | `mayGrant`, `AuthorityRequiredFor`, `humanAuthorityClasses` (`policy`). Sample grants must not route around these. |
 | [internal/ledger/narrative.go](../internal/ledger/narrative.go) | `openQuestions`, `Narrative.MarshalJSON`. |
 | [internal/ledger/privacy_test.go](../internal/ledger/privacy_test.go) | Every new text column must be classified redact / reject / not-free-text, and a write path must exercise it. |
@@ -234,7 +234,7 @@ CREATE TABLE asks (
   state              ENUM('pending','delivered','answered','skipped','expired') NOT NULL,
   question_snapshot  TEXT         NOT NULL,
   options_snapshot   TEXT         NULL,
-  session_id         VARCHAR(128) NULL,
+  enqueue_session_id VARCHAR(128) NULL,
   via_session        VARCHAR(128) NULL,
   crumb_id           CHAR(40)     NULL,
   validation_id      CHAR(40)     NULL,
@@ -250,10 +250,10 @@ CREATE TABLE asks (
   actor_id           VARCHAR(255) NOT NULL,
   actor_kind         ENUM('human','agent') NOT NULL,
   actor_model        VARCHAR(128) NULL,
-  actor_session_id   VARCHAR(128) NULL,
+  session_id         VARCHAR(128) NULL,
   harness            VARCHAR(64)  NULL,
   KEY ix_asks_state_resp (state, respondent, created_at),
-  KEY ix_asks_session (session_id, state),
+  KEY ix_asks_session (enqueue_session_id, state),
   KEY ix_asks_prompt_target (prompt_key, target_id, state),
   CONSTRAINT fk_asks_prompt FOREIGN KEY (prompt_id) REFERENCES prompts(id) ON DELETE RESTRICT,
   CONSTRAINT fk_asks_crumb  FOREIGN KEY (crumb_id)  REFERENCES crumbs(id)  ON DELETE RESTRICT,
@@ -262,17 +262,19 @@ CREATE TABLE asks (
       AND CHAR_LENGTH(question_snapshot) <= 4096),
   CONSTRAINT ck_asks_latency CHECK (latency_ms IS NULL OR latency_ms >= 0),
   CONSTRAINT ck_asks_prov CHECK (CHAR_LENGTH(actor_id) > 0 AND (actor_kind = 'human'
-      OR (CHAR_LENGTH(COALESCE(actor_model,'')) > 0 AND CHAR_LENGTH(COALESCE(actor_session_id,'')) > 0)))
+      OR (CHAR_LENGTH(COALESCE(actor_model,'')) > 0 AND CHAR_LENGTH(COALESCE(session_id,'')) > 0)))
 );
 ```
 
-No partial unique index (Dolt/MySQL). **Open-ask uniqueness is a ledger invariant**: at most one `pending` or `delivered` row per `(prompt_key, target_id, session_id, respondent)`. Enforce in `EnqueueAsk` with a Snapshot read inside the same Write. Two concurrent enqueues: last writer can still collide — accept a duplicate as a `delivered` no-op on answer of the first, or fail the second with `invalid_ask` `ask_already_open`. Prefer the typed error.
+Column naming: the provenance quartet is named exactly as on `crumbs` (`actor_id, actor_kind, actor_model, session_id, harness`) so anything generic over provenance columns — the redaction census, a future provenance scan, a reader — reads it correctly. The ask-scope session gets the distinct name `enqueue_session_id`; do not let `session_id` mean two things on one table.
+
+No partial unique index (Dolt/MySQL). **Open-ask uniqueness is a ledger invariant enforced in `EnqueueAsk` with a Snapshot read inside the same Write.** For a targeted prompt it is at most one `pending`/`delivered` row per `(prompt_key, target_id, respondent)` — session plays no part, so a blocked proposal is nudged once no matter how many sessions pass through. For a session-scoped prompt (NULL target, `context-flush`) it is per `(prompt_key, enqueue_session_id, respondent)`, and `enqueue_session_id` (the enqueueing process session) is required. A concurrent second enqueue that slips the check fails typed: `invalid_ask` `ask_already_open`.
 
 **Seeds** (origin `curated`, version 1, actor_id `bdc`, actor_kind `human` — same spirit as schema seeds, not a live human):
 
 | prompt_key | respondent | answer_kind | trigger_class | Question template | options_json |
 |---|---|---|---|---|---|
-| `authority-nudge` | human | choice | ledger-state | `Proposal {target} has waited for a human authority grant. Grant a working default, reject the proposal, or keep waiting?` | `[{id:grant-default,label:Grant a working default},{id:reject,label:Reject the proposal},{id:wait,label:Keep waiting}]` |
+| `authority-nudge` | human | choice | ledger-state | `Proposal {target} has waited for a human authority grant. Grant a working default, recommend rejection, or keep waiting?` | `[{id:grant-default,label:Grant a working default},{id:reject,label:Recommend rejection},{id:wait,label:Keep waiting}]` |
 | `calibration` | human | choice | manual | `I concluded ({confidence}): {excerpt} Right, partly right, or wrong?` | `[{id:right,label:Right},{id:partly,label:Partly right},{id:wrong,label:Wrong}]` |
 | `context-flush` | agent | short-text | event | `What do you currently know that the ledger does not? One fragment. Reply skip if nothing.` | NULL |
 
@@ -282,10 +284,10 @@ Template placeholders `{target}`, `{confidence}`, `{excerpt}` are substituted at
 
 | key | seed | meaning |
 |---|---|---|
-| `ask.max_per_session` | `0` | Presentation cap for one `deliver` batch. `0` means no cap. Not a daily budget. |
+| `ask.max_per_deliver` | `0` | Presentation cap for one `deliver` call. `0` means no cap beyond `maxDeliverBatch`. Not a session or daily budget — the schema records no "delivered by session" fact, so do not invent one in Go. |
 | `ask.expire_after` | `168h` | Pending/delivered asks older than this become `expired` on the next `deliver` (Go duration, stored as text). |
 
-Do **not** add `ask.max_per_session` as a silent default in Go if the key is missing. 003 writes it; `ParseRepoConfig` requires it.
+Do **not** add `ask.max_per_deliver` as a silent default in Go if the key is missing. 003 writes it; `ParseRepoConfig` requires it.
 
 **Redaction census** ([internal/ledger/privacy_test.go](../internal/ledger/privacy_test.go)):
 
@@ -293,7 +295,7 @@ Do **not** add `ask.max_per_session` as a silent default in Go if the key is mis
 |---|---|
 | `prompts.question_template`, `prompts.options_json` | redact |
 | `asks.question_snapshot`, `asks.options_snapshot`, `asks.answer_text`, `asks.skip_reason` | redact |
-| `prompts.prompt_key`, `asks.prompt_key`, `asks.choice_id`, `asks.via_session` | not-free-text |
+| `prompts.prompt_key`, `asks.prompt_key`, `asks.choice_id`, `asks.via_session`, `asks.enqueue_session_id` | not-free-text |
 
 **Counts**: extend `ledger.Counts` with `Prompts int` and `Asks int` (additive JSON). Update `snapshot.Counts`, doctor rendering, `declaredFields`. This will refresh doctor goldens — expected.
 
@@ -344,6 +346,10 @@ func (l *Ledger) AnswerAsk(ctx, AnswerAsk) (AnswerResult, error)
 func (l *Ledger) SkipAsk(ctx, SkipAsk) (Ask, error)
 ```
 
+`AddPrompt`:
+
+- Refuse `respondent` `human` or `both` when `l.actor.ActorKind == agent` (`invalid_ask`): an agent must not phrase the exam it is graded on, and the tracer has no propose path (that is Phase 6). Agent-respondent prompts may be added by either kind.
+
 `EnqueueAsk`:
 
 - Resolve the **active** prompt by key (highest version where `active=1`). Disabled → `not_found`.
@@ -353,32 +359,31 @@ func (l *Ledger) SkipAsk(ctx, SkipAsk) (Ask, error)
 - Render `question_snapshot` from the template + target. Redact the snapshot *before* Write.
 - Freeze `options_snapshot` from the prompt row (redact).
 - Set `expires_at = now + ParseDuration(config.AskExpireAfter)`.
-- Open-ask uniqueness as above.
-- `context-flush` uniqueness is per `(prompt_key, session_id, respondent)` with NULL target.
+- Open-ask uniqueness as above: targeted prompts key on `(prompt_key, target_id, respondent)` — no session; session-scoped prompts (`context-flush`, NULL target) key on `(prompt_key, enqueue_session_id, respondent)` and require `enqueue_session_id`.
 
 `DeliverAsks`:
 
 - Expire rows where `state IN (pending,delivered)` AND `expires_at <= now`.
 - If respondent is human: for each open proposal that `openQuestions` would report as `authority_required`, enqueue `authority-nudge` if no open ask exists. Failures to enqueue one proposal do not fail the deliver — skip that proposal, continue. This is the dead-letter service.
-- Select `pending` asks for that respondent, oldest first.
-- Apply `ask.max_per_session`: if > 0, return at most N that have not already been delivered this `l.actor.SessionID`. `0` = no cap. Still cap a single call at **4** questions regardless (presentation batch; matches structured-question surfaces that take 1–4). Constant `maxDeliverBatch = 4` in `ask.go`.
+- Select `pending` asks for that respondent, oldest first. If a remote merge produced duplicate open asks for one `(prompt_key, target_id, respondent)` (see Risks), present the oldest and expire the rest in the same Write.
+- Apply `ask.max_per_deliver`: if > 0, return at most N rows from this call. `0` = no cap beyond the batch cap. Still cap a single call at **4** questions regardless (presentation batch; matches structured-question surfaces that take 1–4). Constant `maxDeliverBatch = 4` in `ask.go`. The key caps one presentation batch; there is no running per-session budget in the tracer.
 - Mark selected rows `delivered`, set `delivered_at`.
 - Return them. Empty is success.
 
 `AnswerAsk`:
 
-- Load ask. State must be `pending` or `delivered` (CLI-direct may answer before deliver). `answered`/`skipped`/`expired` → `invalid_ask`.
+- Load ask. State must be `pending` or `delivered` (CLI-direct may answer before deliver). `answered`/`skipped`/`expired` → `invalid_ask`. An ask past `expires_at` that no `deliver` has swept is expired here too: flip it to `expired` in the same Write and refuse — lazy expiry must not make stale asks answerable forever.
 - Validate choice against `options_snapshot` for `choice` prompts; `--text` required for `short-text`; reject the other flag.
 - Respondent on the intent must match `ask.respondent`.
-- If ask.respondent is human and `l.actor.ActorKind == agent`, `via_session` must be set (from `l.actor.SessionID`). If the agent has no session, fail `invalid_provenance` — same rule as any agent write.
-- Capture a Crumb through the existing capture path with respondent provenance. Content is a fixed shape so harvests can parse nothing and still read it:
+- If ask.respondent is human and `l.actor.ActorKind == agent`, `via_session` is set from `l.actor.SessionID`. (`Provenance.Validate` already refuses an agent without a session; no additional check is needed.)
+- Materialise a Crumb with respondent provenance via the prepared-crumb path (see **Write composition** below) — authored, not harvested: `Automatic: false`, no `HarvestID`. Confidence is fixed by track, not flagged: `0.9` for human-track answers, `0.6` for `context-flush` (an agent answer is a hypothesis and the number should say so). Content is a fixed shape so harvests can parse nothing and still read it:
 
   ```
-  [ask {prompt_key}] {question_snapshot}
+  [ask {prompt_key}] {excerpt(question_snapshot, maxExcerpt)}
   → {choice label or text}
   ```
 
-  Optional `--note` appends a second paragraph. Size cap is still 4096; if the snapshot plus answer would exceed, fail `invalid_content` rather than truncate the snapshot (the snapshot is the audit).
+  Optional `--note` appends a second paragraph. The full snapshot's audit home is the ask row, joined by `asks.crumb_id` — the crumb never embeds more than the 240-char excerpt, so `invalid_content` for size cannot destroy an already-given answer. If capture dedups (`Deduplicated`), link the existing crumb id and proceed; a shared `crumb_id` across asks is acceptable and the ask rows still distinguish the answers.
 - Attach a Reference `bdc-ask:{ask.id}` with relation `source`? **No.** Core never invents adapter kinds, and `bdc-ask` is not an adapter. Store `asks.crumb_id` instead. That is the join.
 - Then, by `prompt_key`:
 
@@ -392,8 +397,8 @@ func (l *Ledger) SkipAsk(ctx, SkipAsk) (Ask, error)
   - Evidence: none; expect the existing `validation_without_evidence` notice on `disputed`/`rejected` and let it surface as a warning. That is honest: a tap is not a citation.
 
   **`authority-nudge`**:
-  - `grant-default`: load the proposal. If `class == "policy"` OR `requested_authority == mandatory` OR `AuthorityRequiredFor(...) == RequireHuman` *because of class/capability* that `mayGrant` cannot satisfy with a relayed human — **do not grant**. Record the Crumb, set ask answered, return `data.authority: null` and a warning `ask_grant_capped` explaining that a direct `bdc authority` is required. If the proposal *may* take a working default from a human (non-policy, not mandatory-request), call the grant path with respondent human provenance, level `default`, rationale `sampled authority-nudge`. Store `asks.authority_id`.
-  - `reject`: Crumb only. Do **not** call `RejectPromotion`. Warning `ask_reject_not_applied` (`run bdc promote reject {id}`). A relayed tap is not a signature on a terminal promotion outcome.
+  - `grant-default`: load the proposal. Refuse the grant **iff** `class == "policy"` OR `requested_authority == mandatory` — exactly those two conditions, no appeal to `AuthorityRequiredFor`. On refusal: record the Crumb, set ask answered, return `data.authority: null` and a warning `ask_grant_capped` naming the direct command (`bdc authority <id> --level …`). Otherwise append a `default`, repo-wide (unscoped — scoped grants are ignored by `humanAuthorityHeld`, and unblocking is the point) grant with respondent human provenance, rationale `sampled authority-nudge`. Store `asks.authority_id`. `authority.agent_may_set_default` does **not** gate this path — the grant is attributed to the human respondent, not the agent transport — and `TestAnswerAskGrantDefaultIgnoresAgentMaySetDefault` pins that reading so it stays a decision, not an accident.
+  - `reject`: Crumb only. Do **not** call `RejectPromotion`. Warning `ask_reject_not_applied` (`run bdc promote reject {id}`). A relayed tap is not a signature on a terminal promotion outcome — which is why the seeded option is worded "Recommend rejection", not "Reject the proposal": the question must not promise an action the answer does not perform.
   - `wait`: treat as skip semantics but state `answered` with `choice_id=wait` (it is an answer, not a skip). No Crumb required? **Yes, still a Crumb** — "keep waiting" is a human-provenance record. Cheap and queryable.
 
   **`context-flush`**: Crumb only, agent provenance. Empty text after trim → refuse `invalid_content` (they should `skip`).
@@ -402,7 +407,7 @@ func (l *Ledger) SkipAsk(ctx, SkipAsk) (Ask, error)
 
 `SkipAsk`:
 
-- pending or delivered → `skipped`, `skip_reason` optional, `resolved_at`. No Crumb.
+- pending or delivered → `skipped`, `skip_reason` optional, `resolved_at`. No Crumb. Same expiry rule as `AnswerAsk`: past `expires_at` flips to `expired` and refuses.
 
 **Authority invariant tests** (must exist, named so a later phase cannot "simplify" them away):
 
@@ -413,8 +418,10 @@ func (l *Ledger) SkipAsk(ctx, SkipAsk) (Ask, error)
 - `TestCalibrationDoesNotGrantAuthority`
 - `TestContextFlushDoesNotWriteValidation`
 - `TestRelayWithoutSessionRefused`
+- `TestAnswerAskGrantDefaultIgnoresAgentMaySetDefault`
+- `TestAddPromptHumanTrackRequiresHumanActor`
 
-**Grant path**: do not punch a hole in `mayGrant`. Implement `AnswerAsk`'s grant by building a `GrantAuthority` and temporarily using a Ledger whose actor is the respondent (`ledger.New` with respondent provenance is the honest way — or a package-internal `withActor` used only here). The process actor remains on the Ask. The authority row's `actor_kind` is `human`. `ck_aut_mandatory_human` stays the backstop; the Go check still refuses mandatory before the INSERT.
+**Write composition**: `AnswerAsk` is one `store.Write`. Do not call `CaptureCrumb` / `RecordValidation` / `GrantAuthority` from inside it — each stamps `l.actor` and opens its own transaction, and a partial answer (crumb committed, grant failed) is unacceptable in an append-only ledger. There is no `withActor` today and this PR does not add one to the public surface. Follow the `CompleteHarvest` pattern instead: extract the prepare/validate/redact half of each operation into package-internal helpers that take an explicit `Provenance` (`prepareCrumbAs`, `prepareValidationAs`, `prepareAuthorityAs` — refactor `mayGrant` into a function of the acting provenance rather than a method reading `l.actor`), run them *before* the transaction, then compose `insertCrumb(tx, …)`, `tx.AppendValidation(…)`, `tx.AppendAuthority(…)`, `tx.UpdateAsk(…)` inside a single Write. The respondent's provenance travels on the prepared rows; the process actor remains on the Ask. The mandatory/policy caps are asserted in `AnswerAsk` before the Write. Note that `ck_aut_mandatory_human` **cannot** backstop a relay — the relayed row is stamped `actor_kind='human'`, so the Go cap is the only gate; that is why the named tests above exist and must not be "simplified" away.
 
 ---
 
@@ -462,7 +469,7 @@ bdc ask skip <id> [--reason "..."]
 
 `--json` everywhere. Human renderer required. `ask deliver` with zero questions prints `no pending questions` and exits 0.
 
-Add every new JSON key to `declaredFields()` in [cmd/bdc/golden_test.go](../cmd/bdc/golden_test.go): at least `prompts`, `prompt`, `prompt_key`, `question_template`, `answer_kind`, `options`, `options_json`, `trigger_class`, `origin`, `active`, `questions`, `question_snapshot`, `choice_id`, `answer_text`, `skip_reason`, `via_session`, `latency_ms`, `delivered_at`, `resolved_at`, `expires_at`, `respondent`, `prompt_version`, `actor_session_id`.
+Add every new JSON key to `declaredFields()` in [cmd/bdc/golden_test.go](../cmd/bdc/golden_test.go): at least `prompts`, `prompt`, `prompt_key`, `question_template`, `answer_kind`, `options`, `options_json`, `trigger_class`, `origin`, `active`, `questions`, `question_snapshot`, `choice_id`, `answer_text`, `skip_reason`, `via_session`, `latency_ms`, `delivered_at`, `resolved_at`, `expires_at`, `respondent`, `prompt_version`, `enqueue_session_id`.
 
 **Goldens**: add steps to `contractSteps()` after a proposal exists so `authority-nudge` can fire:
 
@@ -574,8 +581,11 @@ Domain tests against the real Dolt fixture ([internal/ledger/fixture_test.go](..
 - Authority-nudge reject → crumb, proposal still `proposed`.
 - Context-flush → agent crumb, no validation.
 - Skip → no crumb.
-- Answer expired → error.
+- Answer past `expires_at` → error even when no deliver has swept it (row flips to `expired`).
 - Relay without agent session → `invalid_provenance`.
+- `authority.agent_may_set_default=false` does not block a relayed `grant-default` (the grant is the human respondent's).
+- `AddPrompt` with respondent `human`/`both` as an agent actor → `invalid_ask`.
+- Two open asks for one target (merge-simulated) → deliver presents the oldest, expires the rest.
 - Redaction: a secret in `--text` / `--note` / skip reason follows existing capture rules (abort exit 7).
 - Privacy census includes the new columns.
 - `ParseRepoConfig` with the new keys; without them → integrity error.
@@ -629,6 +639,7 @@ Tracer is done when all of the following are true:
 - [ ] `bdc ask answer` never grants `mandatory`.
 - [ ] Agent `context-flush` writes an agent Crumb, no validation, no authority.
 - [ ] `bdc ask skip` records `skipped` and no Crumb.
+- [ ] `bdc prompts add --respondent human` with an agent process actor is refused (`invalid_ask`).
 - [ ] Git hooks still cannot present a question; `hooks run` goldens still harvest-or-remind.
 - [ ] `bdc prime --json` keys are still `{summary, working_defaults, mandatory, cautions}`.
 - [ ] `make check` passes. Golden update diff is read, not blindly committed.
@@ -652,7 +663,7 @@ Tracer is done when all of the following are true:
 
 | Risk | Mitigation |
 |---|---|
-| Relayed taps laundered into `mandatory` or `policy` | Caps in `AnswerAsk`; DB `ck_aut_mandatory_human`; named tests. Process actor staying agent is the skill rule; ledger still checks respondent vs class. |
+| Relayed taps laundered into `mandatory` or `policy` | The Go caps in `AnswerAsk` are the **only** gate — `ck_aut_mandatory_human` cannot fire on a relay because the row is stamped `actor_kind='human'`. Hence the named tests, which a later phase must not "simplify" away. Process actor staying agent is the skill rule; ledger still checks respondent vs class. |
 | Validation inflation from one-tap `right` | Accept for tracer. Calibration writes a real validation (that is the point) and a `validation_without_evidence` warning on negative verdicts. Phase 5 can require two samples before harvest treats them as pattern. |
 | Prompt fatigue | No daily budget; presentation batch ≤ 4; skip is cheap; `ask stats` (later) is the governor. Tracer must not add nagging. |
 | Leading / self-grading questions | `calibration` snapshot uses verbatim excerpt. Agent-proposed human prompts are inactive (column exists, no propose command). |
@@ -661,6 +672,7 @@ Tracer is done when all of the following are true:
 | Golden churn from schema 2 → 3 | One `-update` run, read the diff, commit with the CLI goldens — not mixed into the schema commit. |
 | `prime` hook contract | Unchanged JSON. |
 | Open-ask uniqueness under concurrency | Typed `ask_already_open`; answer of either row is idempotent enough. Do not take a table lock beyond the existing Write transaction. |
+| Ask state merges poorly across Dolt remotes | Deliver/expire are per-clone, non-deterministic writes on shared rows, so two clones can each open or deliver an ask for the same target. Accept post-merge duplicates: deliver presents the oldest open ask per target and expires the rest; answer/skip of an already-resolved duplicate fails typed `invalid_ask`. Deterministic ask ids are deliberately **not** used — expiry plus re-ask must mint a new row. |
 
 ---
 
@@ -674,14 +686,14 @@ type DeliverResult struct {
 }
 
 type AskQuestion struct {
-    ID          AskID          `json:"id"`
-    PromptKey   string         `json:"prompt_key"`
-    Respondent  AskRespondent  `json:"respondent"`
-    Question    string         `json:"question"` // the snapshot
-    AnswerKind  AnswerKind     `json:"answer_kind"`
-    Options     []AskOption    `json:"options,omitempty"`
-    Target      RecordRef      `json:"target,omitempty"` // null if session-scoped
-    ExpiresAt   time.Time      `json:"expires_at"`
+    ID          AskID             `json:"id"`
+    PromptKey   string            `json:"prompt_key"`
+    Respondent  PromptRespondent  `json:"respondent"` // asks never carry "both"; EnqueueAsk rejects it
+    Question    string            `json:"question"` // the snapshot
+    AnswerKind  AnswerKind        `json:"answer_kind"`
+    Options     []AskOption       `json:"options,omitempty"`
+    Target      RecordRef         `json:"target"` // null if session-scoped
+    ExpiresAt   time.Time         `json:"expires_at"`
 }
 
 type AskOption struct {
@@ -690,7 +702,7 @@ type AskOption struct {
 }
 ```
 
-`AskQuestion.Target` uses existing `RecordRef.MarshalJSON` so a session-scoped ask emits `"target": null`.
+`AskQuestion.Target` uses existing `RecordRef.MarshalJSON` so a session-scoped ask emits `"target": null`. No `omitempty` on the tag — it does not apply to structs (types.go says so beside `MarshalJSON`), and the null is the contract.
 
 ### AnswerResult
 
