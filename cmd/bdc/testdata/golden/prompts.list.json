@@ -1,0 +1,86 @@
+{
+  "bdc": "1",
+  "command": "prompts.list",
+  "ok": true,
+  "data": {
+    "prompts": [
+      {
+        "id": "<pmt_1>",
+        "prompt_key": "authority-nudge",
+        "prompt_version": 1,
+        "respondent": "human",
+        "question_template": "Proposal {target} has waited for a human authority grant. Grant a working default, recommend rejection, or keep waiting?",
+        "answer_kind": "choice",
+        "options": [
+          {
+            "id": "grant-default",
+            "label": "Grant a working default"
+          },
+          {
+            "id": "reject",
+            "label": "Recommend rejection"
+          },
+          {
+            "id": "wait",
+            "label": "Keep waiting"
+          }
+        ],
+        "trigger_class": "ledger-state",
+        "origin": "curated",
+        "active": true,
+        "created_at": "<time>",
+        "actor_id": "bdc",
+        "actor_kind": "human"
+      },
+      {
+        "id": "<pmt_2>",
+        "prompt_key": "calibration",
+        "prompt_version": 1,
+        "respondent": "human",
+        "question_template": "I concluded ({confidence}): {excerpt} Right, partly right, or wrong?",
+        "answer_kind": "choice",
+        "options": [
+          {
+            "id": "right",
+            "label": "Right"
+          },
+          {
+            "id": "partly",
+            "label": "Partly right"
+          },
+          {
+            "id": "wrong",
+            "label": "Wrong"
+          }
+        ],
+        "trigger_class": "manual",
+        "origin": "curated",
+        "active": true,
+        "created_at": "<time>",
+        "actor_id": "bdc",
+        "actor_kind": "human"
+      },
+      {
+        "id": "<pmt_3>",
+        "prompt_key": "context-flush",
+        "prompt_version": 1,
+        "respondent": "agent",
+        "question_template": "What do you currently know that the ledger does not? One fragment. Reply skip if nothing.",
+        "answer_kind": "short-text",
+        "trigger_class": "event",
+        "origin": "curated",
+        "active": true,
+        "created_at": "<time>",
+        "actor_id": "bdc",
+        "actor_kind": "human"
+      }
+    ]
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.1",
+    "ledger_schema": 3,
+    "generated_at": "<time>"
+  }
+}

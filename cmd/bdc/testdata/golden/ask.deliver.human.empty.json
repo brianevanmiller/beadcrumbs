@@ -1,11 +1,9 @@
 {
   "bdc": "1",
-  "command": "migrate",
+  "command": "ask.deliver",
   "ok": true,
   "data": {
-    "from": 3,
-    "to": 3,
-    "applied": []
+    "questions": []
   },
   "warnings": [],
   "error": null,

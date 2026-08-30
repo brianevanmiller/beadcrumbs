@@ -5,13 +5,13 @@
   "data": {
     "destination": "file://<tmp>/backup",
     "bytes": <size>,
-    "schema_version": 2
+    "schema_version": 3
   },
   "warnings": [],
   "error": null,
   "meta": {
     "bdc_version": "1.0.1",
-    "ledger_schema": 2,
+    "ledger_schema": 3,
     "generated_at": "<time>"
   }
 }

@@ -3,7 +3,7 @@
   "command": "context",
   "ok": true,
   "data": {
-    "summary": "1 Insight(s) from the ledger: 1 mandatory, 0 unusable. 4 recent Crumb(s), 3 proposal(s), 2 open question(s).",
+    "summary": "1 Insight(s) from the ledger: 1 mandatory, 0 unusable. 7 recent Crumb(s), 3 proposal(s), 3 open question(s).",
     "insights": [
       {
         "id": "<ins_1>",
@@ -23,7 +23,7 @@
       {
         "kind": "unreviewed_crumbs",
         "subject": null,
-        "question": "2 Crumb(s) are waiting on review",
+        "question": "5 Crumb(s) are waiting on review",
         "detail": "run `bdc crumb list --state candidate`, then `bdc crumb review \u003cid\u003e... --state accepted|rejected --rationale ...`"
       },
       {
@@ -34,9 +34,39 @@
         },
         "question": "promoting to docs:docs/policy/ledger.md needs a human decision",
         "detail": "a human grants it with `bdc authority <pp_2> --level default|mandatory --rationale ...`"
+      },
+      {
+        "kind": "pending_ask",
+        "subject": {
+          "kind": "insight_revision",
+          "id": "<rev_1>"
+        },
+        "question": "I concluded (0.80): Every bdc invocation opens one short-lived engine, performs one bounded transaction, and closes it. Reads state the freshness of anything cached. Right, partly right, or wrong?",
+        "detail": "answer it with `bdc ask answer <ask_4> --choice ...`, or decline it with `bdc ask skip <ask_4>`"
       }
     ],
     "recent_crumbs": [
+      {
+        "id": "<crb_7>",
+        "state": "candidate",
+        "confidence": 0.6,
+        "captured_at": "<time>",
+        "excerpt": "[ask context-flush] What do you currently know that the ledger does not? One fragment. Reply skip if nothing. → the exclusive lock is held for the whole command, not only the write"
+      },
+      {
+        "id": "<crb_6>",
+        "state": "candidate",
+        "confidence": 0.9,
+        "captured_at": "<time>",
+        "excerpt": "[ask calibration] I concluded (0.80): Every bdc invocation opens one short-lived engine and closes it before it returns. Reads state the freshness of anything cached, and a handoff never refreshes. Right, partly right, or wrong? → Right"
+      },
+      {
+        "id": "<crb_5>",
+        "state": "candidate",
+        "confidence": 0.9,
+        "captured_at": "<time>",
+        "excerpt": "[ask authority-nudge] Proposal <pp_2> has waited for a human authority grant. Grant a working default, recommend rejection, or keep waiting? → Keep waiting"
+      },
       {
         "id": "<crb_4>",
         "state": "candidate",
@@ -110,7 +140,7 @@
   "error": null,
   "meta": {
     "bdc_version": "1.0.1",
-    "ledger_schema": 2,
+    "ledger_schema": 3,
     "generated_at": "<time>"
   }
 }

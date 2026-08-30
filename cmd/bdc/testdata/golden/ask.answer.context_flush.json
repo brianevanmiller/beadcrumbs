@@ -1,0 +1,51 @@
+{
+  "bdc": "1",
+  "command": "ask.answer",
+  "ok": true,
+  "data": {
+    "ask": {
+      "id": "<ask_3>",
+      "prompt_id": "<pmt_3>",
+      "prompt_key": "context-flush",
+      "prompt_version": 1,
+      "respondent": "agent",
+      "target": null,
+      "state": "answered",
+      "question_snapshot": "What do you currently know that the ledger does not? One fragment. Reply skip if nothing.",
+      "enqueue_session_id": "test-session",
+      "crumb_id": "<crb_7>",
+      "answer_text": "the exclusive lock is held for the whole command, not only the write",
+      "latency_ms": null,
+      "created_at": "<time>",
+      "delivered_at": null,
+      "resolved_at": "<time>",
+      "expires_at": "<time>",
+      "actor_id": "tester",
+      "actor_kind": "agent",
+      "actor_model": "test-model",
+      "session_id": "test-session"
+    },
+    "crumb": {
+      "id": "<crb_7>",
+      "content": "[ask context-flush] What do you currently know that the ledger does not? One fragment. Reply skip if nothing.\n→ the exclusive lock is held for the whole command, not only the write",
+      "content_hash": "<sha256>",
+      "review_state": "candidate",
+      "confidence": 0.6,
+      "captured_at": "<time>",
+      "redaction_version": "1",
+      "actor_id": "tester",
+      "actor_kind": "agent",
+      "actor_model": "test-model",
+      "session_id": "test-session"
+    },
+    "validation": null,
+    "authority": null
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.1",
+    "ledger_schema": 3,
+    "generated_at": "<time>"
+  }
+}

@@ -84,6 +84,21 @@ func contractSteps() []step {
 			facts:    []string{"path", "schema_version"},
 		},
 		{
+			// The registry ships with the three curated questions the skill and
+			// the answer paths name. A seed that failed to parse would make
+			// every enqueue a not-found: a silent feature outage.
+			name: "prompts.list", args: []string{"prompts", "list"},
+			dataKeys: []string{"prompts"}, readOnly: true,
+			facts: []string{"prompts.0.prompt_key", "prompts.0.answer_kind"},
+		},
+		{
+			// Nothing is pending and that is success, not an error. The skill
+			// runs this after every prime.
+			name: "ask.deliver.human.empty", args: []string{"ask", "deliver", "--respondent", "human"},
+			dataKeys: []string{"questions"},
+			facts:    []string{},
+		},
+		{
 			name: "capture", args: []string{"capture",
 				"The engine holds an exclusive directory lock for the life of a command.",
 				"--confidence", "0.7", "--ref", "docs:docs/design.md@source"},
@@ -251,6 +266,63 @@ func contractSteps() []step {
 			facts: []string{"proposals.0.id", "proposals.0.status"},
 		},
 		{
+			// The dead-letter service. The policy proposal above is blocked on
+			// a human decision, which is exactly a question the ledger cannot
+			// answer for itself, so delivering to a human materialises it.
+			name: "ask.deliver.human.nudge", args: []string{"ask", "deliver", "--respondent", "human"},
+			dataKeys: []string{"questions"},
+			binds:    map[string]string{"questions.0.id": "askNudge"},
+			facts:    []string{"questions.0.id", "questions.0.prompt_key"},
+		},
+		{
+			// "Keep waiting" is an answer, not a skip: a human looked and
+			// decided not yet, and that is a record worth keeping.
+			name: "ask.answer.nudge.wait", args: []string{"ask", "answer", "{askNudge}", "--choice", "wait"},
+			dataKeys: []string{"ask", "crumb", "validation", "authority"},
+			facts:    []string{"ask.id", "ask.state", "crumb.id"},
+		},
+		{
+			name: "ask.enqueue.calibration", args: []string{"ask", "enqueue",
+				"--prompt", "calibration", "--target", "{rev2}"},
+			dataKeys: []string{"ask"},
+			binds:    map[string]string{"ask.id": "askCalibration"},
+			facts:    []string{"ask.id", "ask.prompt_key"},
+		},
+		{
+			// Calibration is the one prompt that writes a validation, with the
+			// respondent's provenance rather than the process actor's.
+			name: "ask.answer.calibration.right", args: []string{"ask", "answer",
+				"{askCalibration}", "--choice", "right"},
+			dataKeys: []string{"ask", "crumb", "validation", "authority"},
+			facts:    []string{"ask.id", "validation.verdict"},
+		},
+		{
+			name: "ask.enqueue.context_flush", args: []string{"ask", "enqueue",
+				"--prompt", "context-flush",
+				"--actor-kind", "agent", "--model", "test-model", "--session", "test-session"},
+			dataKeys: []string{"ask"},
+			binds:    map[string]string{"ask.id": "askFlush"},
+			facts:    []string{"ask.id", "ask.respondent"},
+		},
+		{
+			// An agent answer is a hypothesis: an agent Crumb at lower
+			// confidence, no validation, no grant.
+			name: "ask.answer.context_flush", args: []string{"ask", "answer", "{askFlush}",
+				"--text", "the exclusive lock is held for the whole command, not only the write",
+				"--actor-kind", "agent", "--model", "test-model", "--session", "test-session"},
+			dataKeys: []string{"ask", "crumb", "validation", "authority"},
+			facts:    []string{"ask.id", "crumb.actor_kind"},
+		},
+		{
+			// Left open on purpose: `bdc context` reports the human queue in
+			// open_questions, and the steps below are what proves it.
+			name: "ask.enqueue.calibration.rev1", args: []string{"ask", "enqueue",
+				"--prompt", "calibration", "--target", "{rev1}"},
+			dataKeys: []string{"ask"},
+			binds:    map[string]string{"ask.id": "askSkippable"},
+			facts:    []string{"ask.id"},
+		},
+		{
 			name: "context", args: []string{"context"},
 			dataKeys: []string{"summary", "insights", "open_questions", "recent_crumbs", "promotions"},
 			readOnly: true,
@@ -279,6 +351,21 @@ func contractSteps() []step {
 			dataKeys: []string{"summary", "working_defaults", "mandatory", "cautions"},
 			readOnly: true,
 			facts:    []string{"summary", "mandatory.0.id", "mandatory.0.title"},
+		},
+		{
+			// Skipping writes no Crumb. Nobody said anything, and recording
+			// that they did is the fastest way to make sampled data worthless.
+			name: "ask.skip", args: []string{"ask", "skip", "{askSkippable}", "--reason", "mid-task"},
+			dataKeys: []string{"ask"},
+			facts:    []string{"ask.id", "ask.state"},
+		},
+		{
+			// Empty again, and it stays empty: an answered nudge is not
+			// re-minted, because a question put once and decided is not a
+			// question to ask every session.
+			name: "ask.deliver.empty_ok", args: []string{"ask", "deliver", "--respondent", "human"},
+			dataKeys: []string{"questions"},
+			facts:    []string{},
 		},
 		{
 			name: "crumb.prune", args: []string{"crumb", "prune", "--id", "{crumbC}", "--yes"},
@@ -483,6 +570,12 @@ func declaredFields() map[string]bool {
 		// review state and `state.promotions` by promotion status, so every
 		// member of both enums is a field name a caller may see.
 		"candidate", "accepted", "rejected", "proposed", "applied", "failed", "superseded",
+		// sampling: the prompt registry and the asks minted from it
+		"prompts", "prompt", "asks", "ask", "questions", "prompt_id", "prompt_key", "prompt_version",
+		"question_template", "answer_kind", "options", "trigger_class", "origin", "active",
+		"respondent", "question_snapshot", "enqueue_session_id", "via_session",
+		"validation_id", "authority_id", "choice_id", "answer_text", "skip_reason",
+		"latency_ms", "delivered_at", "resolved_at", "expires_at",
 		// error.details payloads
 		"field",
 	}
@@ -682,10 +775,10 @@ func lookup(v any, path string) (any, bool) {
 // the changes these goldens exist to catch.
 var (
 	idPattern = regexp.MustCompile(
-		`\b(crb|cre|hrv|ins|rev|ref|val|aut|pp|prm|rcp)_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
+		`\b(crb|cre|hrv|ins|rev|ref|val|aut|pp|prm|rcp|pmt|ask)_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
 	timePattern   = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})`)
 	hashPattern   = regexp.MustCompile(`\b[0-9a-f]{64}\b`)
-	sizePattern   = regexp.MustCompile(`("(?:journal_bytes|total_bytes|bytes|before_bytes|after_bytes|duration_ms|age_seconds)": )-?\d+(?:\.\d+)?`)
+	sizePattern   = regexp.MustCompile(`("(?:journal_bytes|total_bytes|bytes|before_bytes|after_bytes|duration_ms|age_seconds|latency_ms)": )-?\d+(?:\.\d+)?`)
 	buildPattern  = regexp.MustCompile(`("(?:go|platform|dolt_driver)": ")[^"]*"`)
 	numberPattern = regexp.MustCompile(`\b\d+ bytes\b`)
 )

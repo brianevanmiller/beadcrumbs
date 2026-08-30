@@ -4,7 +4,7 @@
   "ok": true,
   "data": {
     "version": "1.0.1",
-    "schema_version": 2,
+    "schema_version": 3,
     "dolt_driver": "<build>",
     "go": "<build>",
     "platform": "<build>"
@@ -13,7 +13,7 @@
   "error": null,
   "meta": {
     "bdc_version": "1.0.1",
-    "ledger_schema": 2,
+    "ledger_schema": 3,
     "generated_at": "<time>"
   }
 }

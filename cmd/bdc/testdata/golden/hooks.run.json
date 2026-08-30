@@ -5,18 +5,18 @@
   "data": {
     "hook": "pre-push",
     "action": "remind",
-    "result": "1 unharvested Crumb(s); run `bdc harvest` before this session ends"
+    "result": "4 unharvested Crumb(s); run `bdc harvest` before this session ends"
   },
   "warnings": [
     {
       "code": "unharvested_crumbs",
-      "message": "1 unharvested Crumb(s); run `bdc harvest` before this session ends"
+      "message": "4 unharvested Crumb(s); run `bdc harvest` before this session ends"
     }
   ],
   "error": null,
   "meta": {
     "bdc_version": "1.0.1",
-    "ledger_schema": 2,
+    "ledger_schema": 3,
     "generated_at": "<time>"
   }
 }

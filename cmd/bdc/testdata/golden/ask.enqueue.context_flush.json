@@ -1,0 +1,34 @@
+{
+  "bdc": "1",
+  "command": "ask.enqueue",
+  "ok": true,
+  "data": {
+    "ask": {
+      "id": "<ask_3>",
+      "prompt_id": "<pmt_3>",
+      "prompt_key": "context-flush",
+      "prompt_version": 1,
+      "respondent": "agent",
+      "target": null,
+      "state": "pending",
+      "question_snapshot": "What do you currently know that the ledger does not? One fragment. Reply skip if nothing.",
+      "enqueue_session_id": "test-session",
+      "latency_ms": null,
+      "created_at": "<time>",
+      "delivered_at": null,
+      "resolved_at": null,
+      "expires_at": "<time>",
+      "actor_id": "tester",
+      "actor_kind": "agent",
+      "actor_model": "test-model",
+      "session_id": "test-session"
+    }
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.1",
+    "ledger_schema": 3,
+    "generated_at": "<time>"
+  }
+}

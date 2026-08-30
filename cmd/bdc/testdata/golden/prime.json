@@ -40,7 +40,7 @@
   "error": null,
   "meta": {
     "bdc_version": "1.0.1",
-    "ledger_schema": 2,
+    "ledger_schema": 3,
     "generated_at": "<time>"
   }
 }

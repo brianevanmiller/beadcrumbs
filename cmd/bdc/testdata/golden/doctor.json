@@ -12,7 +12,7 @@
       {
         "name": "schema_version",
         "status": "ok",
-        "detail": "schema version 2"
+        "detail": "schema version 3"
       },
       {
         "name": "journal_size",
@@ -35,14 +35,14 @@
         "detail": "every Insight's head matches its latest revision"
       }
     ],
-    "schema_version": 2,
+    "schema_version": 3,
     "journal_bytes": <size>,
     "ledger_path": "<tmp>/repo/.git/beadcrumbs",
     "beads": null,
     "counts": {
       "crumbs_by_state": {
         "accepted": 2,
-        "candidate": 1
+        "candidate": 4
       },
       "insights": 1,
       "revisions": 2,
@@ -53,7 +53,9 @@
         "applied": 1,
         "failed": 1,
         "rejected": 1
-      }
+      },
+      "prompts": 3,
+      "asks": 4
     },
     "ok": true
   },
@@ -61,7 +63,7 @@
   "error": null,
   "meta": {
     "bdc_version": "1.0.1",
-    "ledger_schema": 2,
+    "ledger_schema": 3,
     "generated_at": "<time>"
   }
 }

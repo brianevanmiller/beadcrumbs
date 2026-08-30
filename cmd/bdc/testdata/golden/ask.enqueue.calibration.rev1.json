@@ -1,0 +1,48 @@
+{
+  "bdc": "1",
+  "command": "ask.enqueue",
+  "ok": true,
+  "data": {
+    "ask": {
+      "id": "<ask_4>",
+      "prompt_id": "<pmt_2>",
+      "prompt_key": "calibration",
+      "prompt_version": 1,
+      "respondent": "human",
+      "target": {
+        "kind": "insight_revision",
+        "id": "<rev_1>"
+      },
+      "state": "pending",
+      "question_snapshot": "I concluded (0.80): Every bdc invocation opens one short-lived engine, performs one bounded transaction, and closes it. Reads state the freshness of anything cached. Right, partly right, or wrong?",
+      "options": [
+        {
+          "id": "right",
+          "label": "Right"
+        },
+        {
+          "id": "partly",
+          "label": "Partly right"
+        },
+        {
+          "id": "wrong",
+          "label": "Wrong"
+        }
+      ],
+      "latency_ms": null,
+      "created_at": "<time>",
+      "delivered_at": null,
+      "resolved_at": null,
+      "expires_at": "<time>",
+      "actor_id": "tester",
+      "actor_kind": "human"
+    }
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.0.1",
+    "ledger_schema": 3,
+    "generated_at": "<time>"
+  }
+}
