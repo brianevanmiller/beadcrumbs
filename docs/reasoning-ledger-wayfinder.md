@@ -6,7 +6,7 @@
 [Beadcrumbs as a Repository-Local Reasoning Ledger](2026-08-27-reasoning-ledger-design.md)
 
 **Plan**:
-[Dolt Reasoning Ledger v1.0.0 Implementation Plan](2026-08-28-dolt-reasoning-ledger-v1-plan.md)
+[Dolt Reasoning Ledger v1.0.0 Implementation Plan](../agent-docs/2026-08-28-dolt-reasoning-ledger-v1-plan.md)
 
 **Purpose**: Preserve the dependency path from the local stealth Beads map in
 Git so another clone can recover the intended sequence without reconstructing
@@ -41,10 +41,10 @@ research decisions also have a dated document in `docs/`.
 | [Define the tracker-neutral reference graph](beads:bdc-7ah.7) | Human decision | Closed | Ticket resolution comment |
 | [Define harvesting privacy and retention policy](beads:bdc-7ah.8) | Human decision | Closed | Ticket resolution comment |
 | [Define Promotion Proposals and receipts](beads:bdc-7ah.9) | Human decision | Closed | Ticket resolution comment |
-| [Prototype the generic harvest-and-promote skill workflow](beads:bdc-7ah.10) | Prototype | Closed on paper | [Implementation plan](2026-08-28-dolt-reasoning-ledger-v1-plan.md) §4 |
-| [Choose the Dolt schema and storage module interface](beads:bdc-7ah.11) | Prototype | Closed on paper | [Implementation plan](2026-08-28-dolt-reasoning-ledger-v1-plan.md) §1.2–1.3, §2 |
-| [Define the first-release product and CLI interface](beads:bdc-7ah.12) | Human decision | Closed | [Implementation plan](2026-08-28-dolt-reasoning-ledger-v1-plan.md) §3 |
-| [Define verification and release readiness](beads:bdc-7ah.13) | Human decision | Closed | [Implementation plan](2026-08-28-dolt-reasoning-ledger-v1-plan.md) §6 |
+| [Prototype the generic harvest-and-promote skill workflow](beads:bdc-7ah.10) | Prototype | Closed on paper | [Implementation plan](../agent-docs/2026-08-28-dolt-reasoning-ledger-v1-plan.md) §4 |
+| [Choose the Dolt schema and storage module interface](beads:bdc-7ah.11) | Prototype | Closed on paper | [Implementation plan](../agent-docs/2026-08-28-dolt-reasoning-ledger-v1-plan.md) §1.2–1.3, §2 |
+| [Define the first-release product and CLI interface](beads:bdc-7ah.12) | Human decision | Closed | [Implementation plan](../agent-docs/2026-08-28-dolt-reasoning-ledger-v1-plan.md) §3 |
+| [Define verification and release readiness](beads:bdc-7ah.13) | Human decision | Closed | [Implementation plan](../agent-docs/2026-08-28-dolt-reasoning-ledger-v1-plan.md) §6 |
 
 Neither prototype was built. The storage seam's risk was retired by the
 executable proof behind the Dolt operating model decision, and the skill's

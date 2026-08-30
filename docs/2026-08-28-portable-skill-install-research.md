@@ -275,4 +275,4 @@ clone with nothing installed. All three call the same command.
 | [Reasoning ledger Wayfinder](reasoning-ledger-wayfinder.md) | Portable decision dependency path |
 | [Beads JSON contract research](2026-08-28-beads-json-contract-research.md) | Optional tracker integration the skill may reference |
 | [Destination model research](2026-08-28-destination-model-research.md) | What the skill's promote step targets |
-| [Dolt reasoning ledger v1 plan](2026-08-28-dolt-reasoning-ledger-v1-plan.md) | Implements the skill package and optional hooks (§4) |
+| [Dolt reasoning ledger v1 plan](../agent-docs/2026-08-28-dolt-reasoning-ledger-v1-plan.md) | Implements the skill package and optional hooks (§4) |

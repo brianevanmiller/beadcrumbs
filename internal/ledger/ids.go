@@ -82,6 +82,19 @@ func ReferenceIDFor(kind, locator, workspace string) ReferenceID {
 	return ReferenceID(PrefixReference + u.String())
 }
 
+// ValidateReferenceIdentity rejects the delimiter used by ReferenceIDFor.
+// Keeping this check beside the canonical form makes legacy-data migration and
+// new write paths agree on which identities can be represented unambiguously.
+func ValidateReferenceIdentity(kind, locator, workspace string) error {
+	if strings.ContainsRune(kind, rune(identitySeparator)) ||
+		strings.ContainsRune(locator, rune(identitySeparator)) ||
+		strings.ContainsRune(workspace, rune(identitySeparator)) {
+		return Fail(ErrInvalidInput, "invalid_reference",
+			"reference kind, locator, and workspace must not contain U+001F")
+	}
+	return nil
+}
+
 // mint panics rather than returning an error. uuid.NewV7 fails only when
 // crypto/rand fails, which is not a condition a ledger write can meaningfully
 // degrade around: crash, don't trash.

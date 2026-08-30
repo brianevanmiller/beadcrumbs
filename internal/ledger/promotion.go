@@ -78,9 +78,8 @@ func (d Destination) validate() error {
 		return Fail(ErrInvalidInput, "invalid_destination", "destination locator is longer than 1024 characters")
 	case len(d.Workspace) > 255:
 		return Fail(ErrInvalidInput, "invalid_destination", "destination workspace is longer than 255 characters")
-	case strings.ContainsRune(d.Kind, rune(identitySeparator)),
-		strings.ContainsRune(d.Locator, rune(identitySeparator)),
-		strings.ContainsRune(d.Workspace, rune(identitySeparator)):
+	}
+	if err := ValidateReferenceIdentity(d.Kind, d.Locator, d.Workspace); err != nil {
 		return Fail(ErrInvalidInput, "invalid_destination",
 			"destination kind, locator, and workspace must not contain U+001F")
 	}
@@ -217,7 +216,7 @@ func (l *Ledger) ProposePromotion(ctx context.Context, c ProposePromotion) (Prop
 		if created {
 			for _, ref := range c.Evidence {
 				refID, _, err := tx.UpsertReference(Reference{
-					ID: ReferenceIDFor(ref.Kind, ref.Locator, ref.Workspace),
+					ID:   ReferenceIDFor(ref.Kind, ref.Locator, ref.Workspace),
 					Kind: ref.Kind, Locator: ref.Locator,
 					Workspace: ref.Workspace, CreatedAt: proposal.CreatedAt,
 				})
@@ -499,7 +498,7 @@ func (l *Ledger) RecordPromotion(ctx context.Context, c RecordPromotion) (Receip
 		// can reach the artifact without anything learning the destination's
 		// locator format.
 		refID, _, err := tx.UpsertReference(Reference{
-			ID: ReferenceIDFor(proposal.DestKind, c.Locator, proposal.DestWorkspace),
+			ID:   ReferenceIDFor(proposal.DestKind, c.Locator, proposal.DestWorkspace),
 			Kind: proposal.DestKind, Locator: c.Locator,
 			Workspace: proposal.DestWorkspace, CreatedAt: at,
 		})

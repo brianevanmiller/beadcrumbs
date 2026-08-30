@@ -7,7 +7,7 @@
 | **[Dolt operating model research](2026-08-28-dolt-operating-model-research.md)** | Why embedded Dolt; where the size and lock constraints came from |
 | **[Reasoning ledger design](2026-08-27-reasoning-ledger-design.md)** | v1 architecture |
 | [Stealth mode guide](guides/stealth-mode.md) | Where the ledger lives today |
-| [Dolt reasoning ledger v1 plan](2026-08-28-dolt-reasoning-ledger-v1-plan.md) | Implementation slices |
+| [Dolt reasoning ledger v1 plan](../agent-docs/2026-08-28-dolt-reasoning-ledger-v1-plan.md) | Implementation slices |
 
 Two questions. Q1: why is `bdc` this big, and is Beads the same. Q2: how do agents on other
 machines and in cloud sandboxes share a ledger.

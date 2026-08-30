@@ -3,6 +3,7 @@ package dolt
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -188,5 +189,15 @@ func TestMigrateV1RewritesReferenceIDsAndLeavesDoctorClean(t *testing.T) {
 	}
 	if again.From != 2 || again.To != 2 || len(again.Applied) != 0 {
 		t.Fatalf("second migrate applied something: %+v", again)
+	}
+}
+
+func TestMigrateV1RejectsAmbiguousReferenceIdentity(t *testing.T) {
+	s := openSchema1(t)
+	seedV1Reference(t, s, uuid7("ref_", "9"), "docs", "internal\u001fparse.go", "")
+
+	_, err := s.Migrate(context.Background())
+	if err == nil || !errors.Is(err, ledger.ErrInvalidInput) {
+		t.Fatalf("migrate error = %v, want invalid reference identity", err)
 	}
 }

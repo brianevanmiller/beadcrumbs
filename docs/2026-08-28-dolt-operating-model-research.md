@@ -192,5 +192,5 @@ Revisit once the contract proof can run on a Windows runner.
 |---|---|
 | **[Reasoning ledger design](2026-08-27-reasoning-ledger-design.md)** | Approved v1 architecture this operating model serves |
 | [Reasoning ledger Wayfinder](reasoning-ledger-wayfinder.md) | Portable decision dependency path |
-| [Dolt reasoning ledger v1 plan](2026-08-28-dolt-reasoning-ledger-v1-plan.md) | Implements this operating model as `internal/store/dolt` (§1.3) |
+| [Dolt reasoning ledger v1 plan](../agent-docs/2026-08-28-dolt-reasoning-ledger-v1-plan.md) | Implements this operating model as `internal/store/dolt` (§1.3) |
 | [Binary size and cloud-agent operating models](2026-08-29-binary-size-and-cloud-agents-research.md) | Measures the size risk above; adds the multi-machine remote model |

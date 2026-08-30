@@ -3,7 +3,7 @@
 **Date**: 2026-08-28
 
 **Scope**: the v1.0.0 release gate "dependency changes get a supply-chain audit"
-([plan §6, Release](2026-08-28-dolt-reasoning-ledger-v1-plan.md)). Measured on the
+([plan §6, Release](../agent-docs/2026-08-28-dolt-reasoning-ledger-v1-plan.md)). Measured on the
 `feat/dolt-reasoning-ledger-v1` branch with go1.27.0 on darwin/arm64.
 
 **Verdict**: ship it. Zero reachable vulnerabilities, no copyleft obligation that

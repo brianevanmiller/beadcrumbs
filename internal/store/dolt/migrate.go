@@ -138,17 +138,30 @@ func applySchema2(ctx context.Context, db *sql.DB, script string) error {
 // is computed from the current (kind, locator, workspace); applying it twice is
 // a no-op once every id already matches.
 func rewriteReferenceIDs(ctx context.Context, db *sql.DB) error {
-	rows, err := db.QueryContext(ctx, `SELECT id, kind, locator, workspace FROM refs`)
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning reference rewrite: %w", err)
+	}
+	rollback := func() {
+		_ = tx.Rollback()
+	}
+	defer rollback()
+
+	rows, err := tx.QueryContext(ctx, `SELECT id, kind, locator, workspace FROM refs`)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
 
 	type mapping struct{ old, neu string }
 	var maps []mapping
 	for rows.Next() {
 		var old, kind, locator, workspace string
 		if err := rows.Scan(&old, &kind, &locator, &workspace); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if err := ledger.ValidateReferenceIdentity(kind, locator, workspace); err != nil {
+			_ = rows.Close()
 			return err
 		}
 		neu := string(ledger.ReferenceIDFor(kind, locator, workspace))
@@ -159,7 +172,13 @@ func rewriteReferenceIDs(ctx context.Context, db *sql.DB) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
 	if len(maps) == 0 {
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("committing reference rewrite: %w", err)
+		}
 		return nil
 	}
 
@@ -168,27 +187,30 @@ func rewriteReferenceIDs(ctx context.Context, db *sql.DB) error {
 	// "tmp_" + 36-character UUID.
 	for _, m := range maps {
 		stage := "tmp_" + m.neu[len(ledger.PrefixReference):]
-		if _, err := db.ExecContext(ctx, `UPDATE refs SET id = ? WHERE id = ?`, stage, m.old); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE refs SET id = ? WHERE id = ?`, stage, m.old); err != nil {
 			return fmt.Errorf("staging refs.id %s: %w", m.old, err)
 		}
-		if _, err := db.ExecContext(ctx, `UPDATE ref_links SET reference_id = ? WHERE reference_id = ?`, stage, m.old); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE ref_links SET reference_id = ? WHERE reference_id = ?`, stage, m.old); err != nil {
 			return fmt.Errorf("staging ref_links.reference_id %s: %w", m.old, err)
 		}
-		if _, err := db.ExecContext(ctx, `UPDATE receipts SET reference_id = ? WHERE reference_id = ?`, stage, m.old); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE receipts SET reference_id = ? WHERE reference_id = ?`, stage, m.old); err != nil {
 			return fmt.Errorf("staging receipts.reference_id %s: %w", m.old, err)
 		}
 	}
 	for _, m := range maps {
 		stage := "tmp_" + m.neu[len(ledger.PrefixReference):]
-		if _, err := db.ExecContext(ctx, `UPDATE refs SET id = ? WHERE id = ?`, m.neu, stage); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE refs SET id = ? WHERE id = ?`, m.neu, stage); err != nil {
 			return fmt.Errorf("rewriting refs.id %s: %w", m.old, err)
 		}
-		if _, err := db.ExecContext(ctx, `UPDATE ref_links SET reference_id = ? WHERE reference_id = ?`, m.neu, stage); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE ref_links SET reference_id = ? WHERE reference_id = ?`, m.neu, stage); err != nil {
 			return fmt.Errorf("rewriting ref_links.reference_id %s: %w", m.old, err)
 		}
-		if _, err := db.ExecContext(ctx, `UPDATE receipts SET reference_id = ? WHERE reference_id = ?`, m.neu, stage); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE receipts SET reference_id = ? WHERE reference_id = ?`, m.neu, stage); err != nil {
 			return fmt.Errorf("rewriting receipts.reference_id %s: %w", m.old, err)
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing reference rewrite: %w", err)
 	}
 	return nil
 }

@@ -2,11 +2,13 @@ package dolt
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/brianevanmiller/beadcrumbs/internal/ledger"
+	"github.com/google/uuid"
 )
 
 // The storage port is the seam the whole product crosses, so it is tested at
@@ -20,7 +22,7 @@ func TestStorePortRoundTrip(t *testing.T) {
 	human := ledger.Provenance{ActorID: "brian", ActorKind: ledger.ActorHuman}
 	agent := ledger.Provenance{
 		ActorID: "claude", ActorKind: ledger.ActorAgent,
-		ActorModel: "claude-opus-5", SessionID: "sess-1",
+		ActorModel: "claude-opus-5", SessionID: "sess-1", Harness: ledger.HarnessClaudeCode,
 	}
 
 	crumbA, crumbB := ledger.NewCrumbID(), ledger.NewCrumbID()
@@ -432,20 +434,40 @@ func TestWriteRollsBackOnError(t *testing.T) {
 	}
 }
 
-	// TestMigrateIsIdempotent: a healthy ledger reports no work. The value of the
-	// check is that a drifted ledger would report some.
-	func TestMigrateIsIdempotent(t *testing.T) {
-		ctx := context.Background()
-		store := schemaFixture(t)
+func TestReferenceIDMatchesSQLHash(t *testing.T) {
+	s := schemaFixture(t)
+	const kind, locator, workspace = "docs", "internal/parse.go", ""
 
-		res, err := store.Migrate(ctx)
-		if err != nil {
-			t.Fatalf("migrate: %v", err)
-		}
-		want := CurrentSchemaVersion()
-		if res.From != want || res.To != want || len(res.Applied) != 0 {
-			t.Fatalf("a current ledger migrated something: %+v", res)
-		}
+	var digest string
+	if err := s.DB().QueryRowContext(context.Background(),
+		`SELECT SHA2(CONCAT(?, CHAR(31), ?, CHAR(31), ?), 256)`,
+		kind, locator, workspace).Scan(&digest); err != nil {
+		t.Fatalf("computing SQL reference hash: %v", err)
+	}
+	raw, err := hex.DecodeString(digest)
+	if err != nil || len(raw) < 16 {
+		t.Fatalf("SQL hash = %q, want a SHA-256 hex digest", digest)
+	}
+	want := ledger.ReferenceID("ref_" + uuid.UUID(raw[:16]).String())
+	if got := ledger.ReferenceIDFor(kind, locator, workspace); got != want {
+		t.Fatalf("ReferenceIDFor = %s, SQL equivalent = %s", got, want)
+	}
+}
+
+// TestMigrateIsIdempotent: a healthy ledger reports no work. The value of the
+// check is that a drifted ledger would report some.
+func TestMigrateIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	store := schemaFixture(t)
+
+	res, err := store.Migrate(ctx)
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	want := CurrentSchemaVersion()
+	if res.From != want || res.To != want || len(res.Applied) != 0 {
+		t.Fatalf("a current ledger migrated something: %+v", res)
+	}
 	if v, err := store.SchemaVersion(ctx); err != nil || v != CurrentSchemaVersion() {
 		t.Fatalf("schema version is %d (err %v), want %d", v, err, CurrentSchemaVersion())
 	}

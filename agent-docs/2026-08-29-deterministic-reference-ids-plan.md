@@ -97,7 +97,7 @@ No match → SQL NULL, omitted from JSON (`json:"harness,omitempty"`). Detection
 
 ### D7. Research docs stay out of the repo
 
-PR #19 is docs-only and stays open. This PR's body quotes the canonicalization, the harness table, and the merge proof. `docs/2026-08-28-dolt-reasoning-ledger-v1-plan.md` §2 (id rule + provenance group) and §6 (new test rows) are the in-repo record.
+PR #19 is docs-only and stays open. This PR's body quotes the canonicalization, the harness table, and the merge proof. `agent-docs/2026-08-28-dolt-reasoning-ledger-v1-plan.md` §2 (id rule + provenance group) and §6 (new test rows) are the in-repo record.
 
 ---
 

@@ -324,4 +324,4 @@ external-ref syntax would make Beads' config (`external_projects`) a dependency.
 | [Reasoning ledger Wayfinder](reasoning-ledger-wayfinder.md) | Portable decision dependency path |
 | [Destination model research](2026-08-28-destination-model-research.md) | Beads as a promotion destination |
 | [Portable skill install research](2026-08-28-portable-skill-install-research.md) | How agents invoke the enriched commands |
-| [Dolt reasoning ledger v1 plan](2026-08-28-dolt-reasoning-ledger-v1-plan.md) | Implements this contract as `internal/beads` (§1.5) |
+| [Dolt reasoning ledger v1 plan](../agent-docs/2026-08-28-dolt-reasoning-ledger-v1-plan.md) | Implements this contract as `internal/beads` (§1.5) |

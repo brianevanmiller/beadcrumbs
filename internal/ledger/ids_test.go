@@ -36,3 +36,9 @@ func TestReferenceIDForIsDeterministicAndFitsParsers(t *testing.T) {
 		t.Fatalf("id %q is missing the ref_ prefix", a)
 	}
 }
+
+func TestValidateReferenceIdentityRejectsCanonicalDelimiter(t *testing.T) {
+	if err := ValidateReferenceIdentity("docs", "internal\u001fparse.go", ""); err == nil {
+		t.Fatal("an identity containing the canonical delimiter was accepted")
+	}
+}
