@@ -138,6 +138,14 @@ func (l *Ledger) AddPrompt(ctx context.Context, c AddPrompt) (Prompt, []Finding,
 	if err := validateTriggerClass(c.TriggerClass); err != nil {
 		return Prompt{}, nil, err
 	}
+	// The key and the trigger class are identity and classification tokens,
+	// never rewritten for the same reason an option id is not.
+	if err := l.rejectSecrets("prompt key", c.Key); err != nil {
+		return Prompt{}, nil, err
+	}
+	if err := l.rejectSecrets("trigger class", c.TriggerClass); err != nil {
+		return Prompt{}, nil, err
+	}
 
 	question := strings.TrimSpace(c.Question)
 	switch {
@@ -155,6 +163,13 @@ func (l *Ledger) AddPrompt(ctx context.Context, c AddPrompt) (Prompt, []Finding,
 
 	options := make([]AskOption, 0, len(c.Options))
 	for _, o := range c.Options {
+		// An option id is an identity value: it is passed back on --choice and
+		// frozen onto every ask minted from this prompt, so redacting it would
+		// silently change which option an answer names. Identity rejects, the
+		// same rule refs.locator follows.
+		if err := l.rejectSecrets("option id", o.ID); err != nil {
+			return Prompt{}, nil, err
+		}
 		label, more, err := l.redactField("option label", strings.TrimSpace(o.Label))
 		if err != nil {
 			return Prompt{}, nil, err

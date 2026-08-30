@@ -302,11 +302,14 @@ func (l *Ledger) DeliverAsks(ctx context.Context, q DeliverQuery) (DeliverResult
 			return err
 		}
 		for _, nudge := range nudges {
-			open, err := openAskExists(tx, nudge)
+			// The same rule the read pass used, re-asked against the
+			// transaction: a concurrent answer between the two would otherwise
+			// let a decided nudge be minted again.
+			asked, err := nudgeAlreadyPut(tx, nudge)
 			if err != nil {
 				return err
 			}
-			if open {
+			if asked {
 				continue
 			}
 			if err := tx.InsertAsk(nudge); err != nil {

@@ -387,6 +387,7 @@ var (
 	rejectColumns = []string{
 		"refs.locator", "authorities.destination_locator", "promotion_proposals.dest_locator",
 		"receipts.locator", "receipts.anchor", "receipts.external_hash",
+		"prompts.prompt_key", "prompts.trigger_class",
 	}
 
 	// notFreeText is every other text column: identities, hashes, versions,
@@ -415,7 +416,6 @@ var (
 		"promotions.actor_id", "promotions.actor_model", "promotions.session_id", "promotions.harness",
 		"receipts.kind",
 		"receipts.actor_id", "receipts.actor_model", "receipts.session_id", "receipts.harness",
-		"prompts.prompt_key", "prompts.trigger_class",
 		"prompts.actor_id", "prompts.actor_model", "prompts.session_id", "prompts.harness",
 		"asks.prompt_key", "asks.choice_id", "asks.enqueue_session_id", "asks.via_session",
 		"asks.actor_id", "asks.actor_model", "asks.session_id", "asks.harness",
@@ -664,6 +664,23 @@ func redactionCases() []redactionCase {
 					{ID: "yes", Label: withSecret("yes, the one naming")},
 					{ID: "no", Label: "no"},
 				},
+				TriggerClass: "manual",
+			})
+			return err
+		},
+	}, {
+		// A prompt key and a trigger class are identity and classification
+		// tokens: a redacted one names a question that does not exist, so a
+		// finding aborts the write rather than rewriting it. Option ids follow
+		// the same rule; TestSecretInAPromptIdentityAbortsTheWrite covers all
+		// three, and this case is what keeps the census from going vacuous.
+		name:     "prompt identity",
+		columns:  []string{"prompts.prompt_key", "prompts.trigger_class"},
+		rejected: true,
+		run: func(f *fixture) error {
+			_, _, err := f.L.AddPrompt(ctx, ledger.AddPrompt{
+				Key: "census-" + locatorSecret, Respondent: ledger.PromptRespondentHuman,
+				Question: "does it hold?", AnswerKind: ledger.AnswerKindShortText,
 				TriggerClass: "manual",
 			})
 			return err

@@ -703,8 +703,73 @@ func TestPruneRefusesACrumbThatAnswersAnAsk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prune: %v", err)
 	}
-	if pruned.Pruned != 0 || len(pruned.Blocked) != 1 || pruned.Blocked[0].Code != "answers_ask" {
+	if pruned.Pruned != 0 || len(pruned.Blocked) != 1 || pruned.Blocked[0].Code != "sampled" {
 		t.Fatalf("prune reported %+v", pruned)
+	}
+
+	// The other direction: a Crumb a question is *about* is a Crumb somebody
+	// followed up on, and asks.target_id is polymorphic — pruning it would
+	// simply dangle, with no foreign key and no orphan scan to notice.
+	subject := f.capture("an aside nobody followed up on", 0.2)
+	if _, _, err := f.L.AddPrompt(ctx, ledger.AddPrompt{
+		Key: "still-true", Respondent: ledger.PromptRespondentAgent,
+		Question: "does {target} still hold?", AnswerKind: ledger.AnswerKindShortText,
+		TriggerClass: "manual",
+	}); err != nil {
+		t.Fatalf("adding: %v", err)
+	}
+	if _, err := f.L.EnqueueAsk(ctx, ledger.EnqueueAsk{
+		PromptKey: "still-true",
+		Target:    ledger.RecordRef{Kind: ledger.KindCrumb, ID: string(subject.ID)},
+	}); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	about, err := f.L.PruneCrumbs(ctx, ledger.PruneCrumbs{
+		IDs: []ledger.CrumbID{subject.ID}, Confirmed: true,
+	})
+	if err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	if about.Pruned != 0 || len(about.Blocked) != 1 || about.Blocked[0].Code != "sampled" {
+		t.Fatalf("prune reported %+v", about)
+	}
+}
+
+// Identity values are never rewritten, so a secret in one aborts the write. An
+// option id is passed back on --choice and frozen onto every ask minted from
+// the prompt; a redacted one would name an option that does not exist.
+func TestSecretInAPromptIdentityAbortsTheWrite(t *testing.T) {
+	f := newFixtureWith(t, nil, humanActor())
+	const locatorSecret = "AKIAIOSFODNN7EXAMPLE"
+	for name, add := range map[string]ledger.AddPrompt{
+		"option id": {
+			Key: "census", Respondent: ledger.PromptRespondentHuman,
+			Question: "which one?", AnswerKind: ledger.AnswerKindChoice,
+			Options: []ledger.AskOption{
+				{ID: locatorSecret, Label: "the first"}, {ID: "b", Label: "the second"},
+			},
+			TriggerClass: "manual",
+		},
+		"prompt key": {
+			Key: locatorSecret, Respondent: ledger.PromptRespondentHuman,
+			Question: "anything?", AnswerKind: ledger.AnswerKindShortText, TriggerClass: "manual",
+		},
+		"trigger class": {
+			Key: "census2", Respondent: ledger.PromptRespondentHuman,
+			Question: "anything?", AnswerKind: ledger.AnswerKindShortText, TriggerClass: locatorSecret,
+		},
+	} {
+		_, _, err := f.L.AddPrompt(context.Background(), add)
+		if !errors.Is(err, ledger.ErrRedaction) {
+			t.Fatalf("%s: expected a redaction abort, got %v", name, err)
+		}
+		if strings.Contains(err.Error(), locatorSecret) {
+			t.Fatalf("%s: the abort quoted the value: %v", name, err)
+		}
+	}
+	if n := f.count(`SELECT COUNT(*) FROM prompts WHERE prompt_key LIKE 'census%' OR prompt_key = ?`,
+		locatorSecret); n != 0 {
+		t.Fatalf("%d refused prompt(s) were written", n)
 	}
 }
 

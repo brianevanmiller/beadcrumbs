@@ -443,19 +443,20 @@ func (l *Ledger) PruneCrumbs(ctx context.Context, c PruneCrumbs) (PruneResult, e
 				out.Blocked = append(out.Blocked, block)
 				continue
 			}
-			// asks.crumb_id is a real foreign key, so unlike lineage this one
-			// would abort the whole transaction rather than answer per id. The
-			// answer a sampled question produced is the record of that answer;
-			// pruning it would leave an Ask that says it was answered and no
-			// trace of what was said.
-			asks, err := tx.Asks(AskQuery{CrumbIDs: []CrumbID{crumb.ID}})
+			// A Crumb a question was asked about, or answered with, is a Crumb
+			// somebody followed up on — which is the opposite of what prune is
+			// for. Both directions are checked here rather than left to the
+			// database: asks.crumb_id is a real foreign key whose violation
+			// would abort the whole transaction and lose the per-id answer,
+			// and asks.target_id is polymorphic and would simply dangle.
+			sampled, err := sampledCrumb(tx, crumb.ID)
 			if err != nil {
 				return err
 			}
-			if len(asks) > 0 {
+			if sampled > 0 {
 				out.Blocked = append(out.Blocked, PruneBlock{
-					CrumbID: crumb.ID, Code: "answers_ask",
-					Reason: fmt.Sprintf("the Crumb is the answer to %d sampled question(s)", len(asks)),
+					CrumbID: crumb.ID, Code: "sampled",
+					Reason: fmt.Sprintf("%d sampled question(s) name this Crumb", sampled),
 				})
 				continue
 			}
@@ -476,6 +477,20 @@ func (l *Ledger) PruneCrumbs(ctx context.Context, c PruneCrumbs) (PruneResult, e
 		return PruneResult{}, err
 	}
 	return out, nil
+}
+
+// sampledCrumb counts the asks that name one Crumb, as the record an answer
+// produced or as the record a question was about.
+func sampledCrumb(snap Snapshot, id CrumbID) (int, error) {
+	answers, err := snap.Asks(AskQuery{CrumbIDs: []CrumbID{id}})
+	if err != nil {
+		return 0, err
+	}
+	about, err := snap.Asks(AskQuery{TargetID: string(id)})
+	if err != nil {
+		return 0, err
+	}
+	return len(answers) + len(about), nil
 }
 
 // CrumbPage is one page of a listing plus the total the filter matched, so a
