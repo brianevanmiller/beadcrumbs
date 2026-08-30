@@ -179,8 +179,10 @@ Append-only. Reviewing again adds an event; it never rewrites one. → `{crumbs[
 
 Retention, not erasure — see [README](README.md#retention-not-erasure). Refuses any state but
 `candidate`, and refuses a Crumb that feeds a Harvest. → `{pruned, pruned_ids[], blocked[]}`,
-where each `blocked` entry is `{crumb_id, reason, code}` with `code` one of `not_candidate` or
-`supports_insight`. A blocked Crumb is also a `prune_blocked` warning; the command still succeeds.
+where each `blocked` entry is `{crumb_id, reason, code}` with `code` one of `not_candidate`,
+`supports_insight`, or `sampled` — a Crumb a sampled question was asked about, or answered with,
+is a Crumb somebody followed up on. A blocked Crumb is also a `prune_blocked` warning; the command
+still succeeds.
 
 ---
 
@@ -349,6 +351,11 @@ statement about the question, not about one wording of it.
 
 `--question` may name `{target}`, `{confidence}`, and `{excerpt}`; they are substituted from the
 record an ask points at, and the substituted string is what the ask freezes.
+
+A key, a trigger class, and an option id are identity values: an option id is passed back on
+`--choice` and frozen onto every ask minted from the prompt, so a redacted one would name an
+option that does not exist. A redaction finding in any of them aborts the write with exit 7, the
+same rule a reference locator follows. Question text and option labels are redacted and stored.
 
 ### Asking
 
