@@ -32,3 +32,6 @@ Thumbs.db
 # Debug/temp files
 *.log
 *.tmp
+
+# Local agent research notes — not part of the published repo
+/agent-docs/

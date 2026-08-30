@@ -212,10 +212,6 @@ static-ICU release artifact.
 | [skills/beadcrumbs/SKILL.md](skills/beadcrumbs/SKILL.md) | The agent-facing contract |
 | [docs/guides/stealth-mode.md](docs/guides/stealth-mode.md) | Ledger location, worktrees, `--visible` |
 | [docs/guides/hooks.md](docs/guides/hooks.md) | Optional git and session hooks |
-| [docs/2026-08-27-reasoning-ledger-design.md](docs/2026-08-27-reasoning-ledger-design.md) | The approved v1 design |
-| [agent-docs/2026-08-28-dolt-reasoning-ledger-v1-plan.md](agent-docs/2026-08-28-dolt-reasoning-ledger-v1-plan.md) | Schema, CLI contract, and the release-gate test matrix |
-| [docs/2026-08-28-dolt-operating-model-research.md](docs/2026-08-28-dolt-operating-model-research.md) | Why embedded Dolt, and what CGO/ICU costs |
-| [docs/2026-08-28-dependency-supply-chain-research.md](docs/2026-08-28-dependency-supply-chain-research.md) | The SQLite→Dolt dependency swap, audited |
 
 ## License
 
