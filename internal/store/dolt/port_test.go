@@ -2,11 +2,13 @@ package dolt
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/brianevanmiller/beadcrumbs/internal/ledger"
+	"github.com/google/uuid"
 )
 
 // The storage port is the seam the whole product crosses, so it is tested at
@@ -20,14 +22,14 @@ func TestStorePortRoundTrip(t *testing.T) {
 	human := ledger.Provenance{ActorID: "brian", ActorKind: ledger.ActorHuman}
 	agent := ledger.Provenance{
 		ActorID: "claude", ActorKind: ledger.ActorAgent,
-		ActorModel: "claude-opus-5", SessionID: "sess-1",
+		ActorModel: "claude-opus-5", SessionID: "sess-1", Harness: ledger.HarnessClaudeCode,
 	}
 
 	crumbA, crumbB := ledger.NewCrumbID(), ledger.NewCrumbID()
 	harvestID := ledger.NewHarvestID()
 	insightID, revision1 := ledger.NewInsightID(), ledger.NewRevisionID()
 	proposalID := ledger.NewProposalID()
-	referenceID := ledger.NewReferenceID()
+	referenceID := ledger.ReferenceIDFor("beads", "bdc-7ah", "")
 
 	if err := store.Write(ctx, func(tx ledger.Tx) error {
 		for i, id := range []ledger.CrumbID{crumbA, crumbB} {
@@ -123,7 +125,7 @@ func TestStorePortRoundTrip(t *testing.T) {
 	}
 
 	if err := store.Write(ctx, func(tx ledger.Tx) error {
-		got, err := tx.UpsertReference(ledger.Reference{
+		got, created, err := tx.UpsertReference(ledger.Reference{
 			ID: referenceID, Kind: "beads", Locator: "bdc-7ah", CreatedAt: at,
 		})
 		if err != nil {
@@ -131,14 +133,16 @@ func TestStorePortRoundTrip(t *testing.T) {
 		}
 		// The same identity a second time is the same Reference, not a
 		// duplicate-key error: that is what makes attaching one idempotent.
-		again, err := tx.UpsertReference(ledger.Reference{
-			ID: ledger.NewReferenceID(), Kind: "beads", Locator: "bdc-7ah",
+		// created is the write result, not an id comparison — the deterministic
+		// id equals the existing one on a hit.
+		again, createdAgain, err := tx.UpsertReference(ledger.Reference{
+			ID: ledger.ReferenceIDFor("beads", "bdc-7ah", ""), Kind: "beads", Locator: "bdc-7ah",
 			Label: "the epic", FetchedAt: at, CreatedAt: at,
 		})
 		if err != nil {
 			return err
 		}
-		if got != referenceID || again != referenceID {
+		if got != referenceID || again != referenceID || !created || createdAgain {
 			return errors.New("upsert minted a second Reference for one identity")
 		}
 		if err := tx.LinkReference(ledger.RecordRef{Kind: ledger.KindRevision, ID: string(revision2)},
@@ -430,8 +434,28 @@ func TestWriteRollsBackOnError(t *testing.T) {
 	}
 }
 
-// TestMigrateIsIdempotent: v1 ships one migration, so a healthy ledger reports
-// no work. The value of the check is that a drifted ledger would report some.
+func TestReferenceIDMatchesSQLHash(t *testing.T) {
+	s := schemaFixture(t)
+	const kind, locator, workspace = "docs", "internal/parse.go", ""
+
+	var digest string
+	if err := s.DB().QueryRowContext(context.Background(),
+		`SELECT SHA2(CONCAT(?, CHAR(31), ?, CHAR(31), ?), 256)`,
+		kind, locator, workspace).Scan(&digest); err != nil {
+		t.Fatalf("computing SQL reference hash: %v", err)
+	}
+	raw, err := hex.DecodeString(digest)
+	if err != nil || len(raw) < 16 {
+		t.Fatalf("SQL hash = %q, want a SHA-256 hex digest", digest)
+	}
+	want := ledger.ReferenceID("ref_" + uuid.UUID(raw[:16]).String())
+	if got := ledger.ReferenceIDFor(kind, locator, workspace); got != want {
+		t.Fatalf("ReferenceIDFor = %s, SQL equivalent = %s", got, want)
+	}
+}
+
+// TestMigrateIsIdempotent: a healthy ledger reports no work. The value of the
+// check is that a drifted ledger would report some.
 func TestMigrateIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	store := schemaFixture(t)
@@ -440,7 +464,8 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if res.From != 1 || res.To != 1 || len(res.Applied) != 0 {
+	want := CurrentSchemaVersion()
+	if res.From != want || res.To != want || len(res.Applied) != 0 {
 		t.Fatalf("a current ledger migrated something: %+v", res)
 	}
 	if v, err := store.SchemaVersion(ctx); err != nil || v != CurrentSchemaVersion() {

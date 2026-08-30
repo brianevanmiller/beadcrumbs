@@ -13,6 +13,7 @@ import (
 // data migration.
 type (
 	ActorKind       string
+	Harness         string
 	ReviewState     string
 	Verdict         string
 	AuthorityLevel  string
@@ -28,6 +29,14 @@ type (
 const (
 	ActorHuman ActorKind = "human"
 	ActorAgent ActorKind = "agent"
+
+	HarnessClaudeCode Harness = "claude-code"
+	HarnessCodex      Harness = "codex"
+	HarnessAmp        Harness = "amp"
+	HarnessConductor  Harness = "conductor"
+	HarnessDelta      Harness = "delta"
+	HarnessOpenCode   Harness = "opencode"
+	HarnessUnknown    Harness = "unknown"
 
 	StateCandidate ReviewState = "candidate"
 	StateAccepted  ReviewState = "accepted"
@@ -113,6 +122,26 @@ func ValidateDestKind(kind string) error {
 	return nil
 }
 
+// Harnesses is the closed vocabulary of agent platforms. Stored as text, not a
+// SQL ENUM: adding one must not be a migration. Empty is the honest gap when
+// nothing was detected.
+var harnesses = []Harness{
+	HarnessClaudeCode, HarnessCodex, HarnessAmp, HarnessConductor,
+	HarnessDelta, HarnessOpenCode, HarnessUnknown,
+}
+
+func ValidateHarness(h Harness) error {
+	if h == "" || slices.Contains(harnesses, h) {
+		return nil
+	}
+	names := make([]string, len(harnesses))
+	for i, v := range harnesses {
+		names[i] = string(v)
+	}
+	return Fail(ErrInvalidInput, "invalid_harness",
+		"%q is not a harness; expected one of %s", h, strings.Join(names, ", "))
+}
+
 // Provenance is denormalised onto every record and event table on purpose: it
 // is immutable, and a join to reconstruct who did something is a join that can
 // go missing.
@@ -121,15 +150,20 @@ type Provenance struct {
 	ActorKind  ActorKind `json:"actor_kind"`
 	ActorModel string    `json:"actor_model,omitempty"`
 	SessionID  string    `json:"session_id,omitempty"`
+	Harness    Harness   `json:"harness,omitempty"`
 }
 
 // Validate mirrors the ck_<t>_prov constraint every table carries. NOT NULL
 // alone is not "provenance present": an agent row with empty-string model and
 // session inserts cleanly under an IS NOT NULL form, which is why both layers
-// check length.
+// check length. Harness is optional and independent of actor_kind: detecting a
+// platform never promotes a run to agent.
 func (p Provenance) Validate() error {
 	if p.ActorID == "" {
 		return Fail(ErrInvalidInput, "invalid_provenance", "an actor id is required")
+	}
+	if err := ValidateHarness(p.Harness); err != nil {
+		return err
 	}
 	switch p.ActorKind {
 	case ActorHuman:

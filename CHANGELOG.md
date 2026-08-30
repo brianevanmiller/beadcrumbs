@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.0.1 — 2026-08-30
+
+Schema 2. A v1.0.0 ledger is readable after `bdc migrate`; `bdc doctor` names that command
+when the schema is behind.
+
+- **Deterministic Reference ids.** `refs.id` is `ref_` plus the first 16 bytes of SHA-256 over
+  `kind || 0x1F || locator || 0x1F || workspace`, formatted as a UUID. Two clones that name the
+  same identity mint the same primary key, so a Dolt merge no longer dies on `uq_refs_identity`.
+  Locators stay opaque and reject-only. Event ids remain UUIDv7.
+- **`harness` provenance.** A nullable `VARCHAR(64)` on every actor-bearing table, populated from
+  `$BDC_HARNESS` or an environment marker (`amp`, `conductor`, `delta`, `claude-code`, `codex`,
+  `opencode`, `unknown`). Additive JSON (`omitempty`); detection never promotes `actor_kind`.
+- **JSON contract.** Envelope `meta.bdc_version` is `1.0.1`, `meta.ledger_schema` is `2`.
+  `bdc reference add` is still `{reference, link}`.
+
 ## v1.0.0 — 2026-08-28
 
 **A clean break. There is no migration from 0.x, no dual write, and no compatibility shim.** A

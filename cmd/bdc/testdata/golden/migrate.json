@@ -3,15 +3,15 @@
   "command": "migrate",
   "ok": true,
   "data": {
-    "from": 1,
-    "to": 1,
+    "from": 2,
+    "to": 2,
     "applied": []
   },
   "warnings": [],
   "error": null,
   "meta": {
-    "bdc_version": "1.0.0",
-    "ledger_schema": 1,
+    "bdc_version": "1.0.1",
+    "ledger_schema": 2,
     "generated_at": "<time>"
   }
 }

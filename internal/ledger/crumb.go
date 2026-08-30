@@ -120,7 +120,7 @@ func (s RefSpec) Validate() error {
 		return Fail(ErrInvalidInput, "invalid_relation",
 			"%q is not a reference relation; expected one of %s", s.Relation, joinNames(relations))
 	}
-	return nil
+	return ValidateReferenceIdentity(s.Kind, s.Locator, s.Workspace)
 }
 
 // CaptureCrumb redacts, then writes. The order is the point: the redactor runs
@@ -250,8 +250,9 @@ func insertCrumb(tx Tx, crumb Crumb, refs []RefSpec) error {
 	}
 	record := RecordRef{Kind: KindCrumb, ID: string(crumb.ID)}
 	for _, ref := range refs {
-		id, err := tx.UpsertReference(Reference{
-			ID: NewReferenceID(), Kind: ref.Kind, Locator: ref.Locator,
+		id, _, err := tx.UpsertReference(Reference{
+			ID:   ReferenceIDFor(ref.Kind, ref.Locator, ref.Workspace),
+			Kind: ref.Kind, Locator: ref.Locator,
 			Workspace: ref.Workspace, CreatedAt: crumb.CapturedAt,
 		})
 		if err != nil {

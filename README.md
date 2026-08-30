@@ -41,7 +41,7 @@ grant `mandatory` authority.
 ### Released binary (recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/brianevanmiller/beadcrumbs/v1.0.0/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/brianevanmiller/beadcrumbs/v1.0.1/scripts/install.sh | bash
 ```
 
 Or through npm:
@@ -68,11 +68,11 @@ brew install icu4c
 CGO_ENABLED=1 \
 CGO_CPPFLAGS="-I$(brew --prefix icu4c)/include" \
 CGO_LDFLAGS="-L$(brew --prefix icu4c)/lib" \
-  go install github.com/brianevanmiller/beadcrumbs/cmd/bdc@v1.0.0
+  go install github.com/brianevanmiller/beadcrumbs/cmd/bdc@v1.0.1
 
 # Debian/Ubuntu — libicu-dev is already on the default search path
 sudo apt install libicu-dev
-CGO_ENABLED=1 go install github.com/brianevanmiller/beadcrumbs/cmd/bdc@v1.0.0
+CGO_ENABLED=1 go install github.com/brianevanmiller/beadcrumbs/cmd/bdc@v1.0.1
 ```
 
 Go 1.26.2 or newer is required. That floor is imposed by `github.com/dolthub/driver`, not chosen.
@@ -147,7 +147,7 @@ without them is refused. Undeclared, a run carrying both is recorded as an agent
 else as a human, and `human` is the value every authority gate is satisfied by.
 
 It installs to `.agents/skills/beadcrumbs` and symlinks each detected agent directory at it. Pin
-the tag (`brianevanmiller/beadcrumbs/tree/v1.0.0/skills/beadcrumbs`) if you need a reproducible
+the tag (`brianevanmiller/beadcrumbs/tree/v1.0.1/skills/beadcrumbs`) if you need a reproducible
 install; the installer tracks a content hash in `skills-lock.json`, not a version.
 
 Optional, and never part of the contract: `bdc hooks install` writes chained `pre-push` and
@@ -166,7 +166,7 @@ hooks. Automatic harvesting is off by default and opted into per repository with
   "warnings": [{"code": "beads_unavailable",
                 "message": "beads references resolve to their locator; bd is unavailable here: not_installed"}],
   "error": null,
-  "meta": {"bdc_version": "1.0.0", "ledger_schema": 1, "generated_at": "2026-08-28T14:00:00.000000Z"}
+  "meta": {"bdc_version": "1.0.1", "ledger_schema": 2, "generated_at": "2026-08-28T14:00:00.000000Z"}
 }
 ```
 
@@ -212,10 +212,6 @@ static-ICU release artifact.
 | [skills/beadcrumbs/SKILL.md](skills/beadcrumbs/SKILL.md) | The agent-facing contract |
 | [docs/guides/stealth-mode.md](docs/guides/stealth-mode.md) | Ledger location, worktrees, `--visible` |
 | [docs/guides/hooks.md](docs/guides/hooks.md) | Optional git and session hooks |
-| [docs/2026-08-27-reasoning-ledger-design.md](docs/2026-08-27-reasoning-ledger-design.md) | The approved v1 design |
-| [docs/2026-08-28-dolt-reasoning-ledger-v1-plan.md](docs/2026-08-28-dolt-reasoning-ledger-v1-plan.md) | Schema, CLI contract, and the release-gate test matrix |
-| [docs/2026-08-28-dolt-operating-model-research.md](docs/2026-08-28-dolt-operating-model-research.md) | Why embedded Dolt, and what CGO/ICU costs |
-| [docs/2026-08-28-dependency-supply-chain-research.md](docs/2026-08-28-dependency-supply-chain-research.md) | The SQLite→Dolt dependency swap, audited |
 
 ## License
 

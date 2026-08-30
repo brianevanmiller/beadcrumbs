@@ -49,7 +49,7 @@ func scanRows[T any](s *snapshot, query string, args []any, scan func(*sql.Rows)
 }
 
 const crumbColumns = `id, content, content_hash, review_state, confidence, captured_at,
-	harvest_id, policy_version, redaction_version, actor_id, actor_kind, actor_model, session_id`
+	harvest_id, policy_version, redaction_version, actor_id, actor_kind, actor_model, session_id, harness`
 
 // Crumbs lists newest first. Descending is the only ordering under which Limit
 // means what a caller expects — the most recent N, not the oldest.
@@ -86,7 +86,7 @@ func scanCrumb(rows *sql.Rows) (ledger.Crumb, error) {
 	)
 	if err := rows.Scan(&c.ID, &c.Content, &c.ContentHash, &state, decimalInto(&c.Confidence),
 		&captured, &harvest, &policy, &c.RedactionVersion,
-		&prov.id, &prov.kind, &prov.model, &prov.session); err != nil {
+		&prov.id, &prov.kind, &prov.model, &prov.session, &prov.harness); err != nil {
 		return c, err
 	}
 	c.ReviewState = ledger.ReviewState(state)
@@ -131,7 +131,7 @@ func (s *snapshot) CrumbLinks(id ledger.CrumbID) (ledger.CrumbLinkRows, error) {
 
 const revisionColumns = `id, insight_id, revision, title, content, content_hash, class,
 	confidence, rationale, harvest_id, parent_revision_id, created_at,
-	actor_id, actor_kind, actor_model, session_id`
+	actor_id, actor_kind, actor_model, session_id, harness`
 
 func scanRevision(rows *sql.Rows) (ledger.InsightRevision, error) {
 	var (
@@ -144,7 +144,7 @@ func scanRevision(rows *sql.Rows) (ledger.InsightRevision, error) {
 	)
 	if err := rows.Scan(&r.ID, &r.InsightID, &r.Revision, &r.Title, &r.Content, &r.ContentHash,
 		&r.Class, decimalInto(&r.Confidence), &rationale, &harvest, &parent, &created,
-		&prov.id, &prov.kind, &prov.model, &prov.session); err != nil {
+		&prov.id, &prov.kind, &prov.model, &prov.session, &prov.harness); err != nil {
 		return r, err
 	}
 	r.Rationale = rationale.String
@@ -182,7 +182,7 @@ func (s *snapshot) Insights(q ledger.InsightQuery) ([]ledger.InsightRow, error) 
 			ORDER BY a.occurred_at DESC, a.id DESC LIMIT 1), 'advisory')`, strs(q.AuthorityLevels))
 	}
 	query := `SELECT i.id, i.head_revision, i.created_at,
-		i.actor_id, i.actor_kind, i.actor_model, i.session_id,
+		i.actor_id, i.actor_kind, i.actor_model, i.session_id, i.harness,
 		r.id, r.title, r.class, r.confidence, r.created_at
 		FROM insights i
 		JOIN insight_revisions r ON r.insight_id = i.id AND r.revision = i.head_revision` +
@@ -197,7 +197,7 @@ func (s *snapshot) Insights(q ledger.InsightQuery) ([]ledger.InsightRow, error) 
 			headRevi string
 		)
 		if err := rows.Scan(&row.ID, &row.HeadRevision, &created,
-			&prov.id, &prov.kind, &prov.model, &prov.session,
+			&prov.id, &prov.kind, &prov.model, &prov.session, &prov.harness,
 			&headRevi, &row.Title, &row.Class, decimalInto(&row.Confidence), &updated); err != nil {
 			return row, err
 		}
@@ -283,7 +283,7 @@ func (s *snapshot) ReferenceLinks(rec ledger.RecordRef) ([]ledger.ReferenceLinkR
 const proposalColumns = `id, insight_id, revision_id, class, dest_kind, dest_locator,
 	dest_workspace, dest_capabilities, content, content_hash, confidence,
 	requested_authority, supersedes_proposal_id, policy_version, redaction_version,
-	created_at, actor_id, actor_kind, actor_model, session_id`
+	created_at, actor_id, actor_kind, actor_model, session_id, harness`
 
 // Proposals filters Statuses on the latest attempt, defaulting to 'proposed'
 // when no attempt exists — a Proposal with no attempt is exactly what "proposed"
@@ -313,7 +313,7 @@ func (s *snapshot) Proposals(q ledger.PromotionQuery) ([]ledger.ProposalRow, err
 			&p.DestLocator, &p.DestWorkspace, &caps, &p.Content, &p.ContentHash,
 			decimalInto(&p.Confidence), &authority, &supersedes, &p.PolicyVersion,
 			&p.RedactionVersion, &created,
-			&prov.id, &prov.kind, &prov.model, &prov.session); err != nil {
+			&prov.id, &prov.kind, &prov.model, &prov.session, &prov.harness); err != nil {
 			return p, err
 		}
 		var err error
@@ -342,7 +342,7 @@ func (s *snapshot) Attempts(ids []ledger.ProposalID) ([]ledger.PromotionRow, []l
 	in := placeholders(len(ids))
 
 	promotions, err := scanRows(s, `SELECT id, proposal_id, attempt, status, detail, occurred_at,
-		actor_id, actor_kind, actor_model, session_id FROM promotions
+		actor_id, actor_kind, actor_model, session_id, harness FROM promotions
 		WHERE proposal_id IN (`+in+`) ORDER BY proposal_id, attempt`, args,
 		func(rows *sql.Rows) (ledger.Promotion, error) {
 			var (
@@ -353,7 +353,7 @@ func (s *snapshot) Attempts(ids []ledger.ProposalID) ([]ledger.PromotionRow, []l
 				prov     provScan
 			)
 			if err := rows.Scan(&p.ID, &p.ProposalID, &p.Attempt, &status, &detail, &occurred,
-				&prov.id, &prov.kind, &prov.model, &prov.session); err != nil {
+				&prov.id, &prov.kind, &prov.model, &prov.session, &prov.harness); err != nil {
 				return p, err
 			}
 			p.Status = ledger.PromotionStatus(status)
@@ -368,7 +368,7 @@ func (s *snapshot) Attempts(ids []ledger.ProposalID) ([]ledger.PromotionRow, []l
 
 	receipts, err := scanRows(s, `SELECT c.id, c.promotion_id, c.kind, c.locator, c.anchor,
 		c.external_hash, c.verified, c.reference_id, c.recorded_at,
-		c.actor_id, c.actor_kind, c.actor_model, c.session_id
+		c.actor_id, c.actor_kind, c.actor_model, c.session_id, c.harness
 		FROM receipts c JOIN promotions m ON m.id = c.promotion_id
 		WHERE m.proposal_id IN (`+in+`) ORDER BY c.recorded_at, c.id`, args,
 		func(rows *sql.Rows) (ledger.Receipt, error) {
@@ -383,7 +383,7 @@ func (s *snapshot) Attempts(ids []ledger.ProposalID) ([]ledger.PromotionRow, []l
 			)
 			if err := rows.Scan(&r.ID, &r.PromotionID, &r.Kind, &r.Locator, &anchor, &extHash,
 				&verified, &ref, &recorded,
-				&prov.id, &prov.kind, &prov.model, &prov.session); err != nil {
+				&prov.id, &prov.kind, &prov.model, &prov.session, &prov.harness); err != nil {
 				return r, err
 			}
 			r.Anchor, r.ExternalHash = anchor.String, extHash.String
@@ -407,19 +407,19 @@ func (s *snapshot) Events(q ledger.EventQuery) ([]ledger.EventRow, error) {
 			NULL AS destination_kind, NULL AS destination_locator,
 			e.rationale AS rationale, e.occurred_at AS occurred_at,
 			e.actor_id AS actor_id, CAST(e.actor_kind AS CHAR) AS actor_kind,
-			e.actor_model AS actor_model, e.session_id AS session_id
+			e.actor_model AS actor_model, e.session_id AS session_id, e.harness AS harness
 		FROM crumb_review_events e
 		UNION ALL
 		SELECT 'validation', v.id, CAST(v.target_kind AS CHAR), v.target_id,
 			CAST(v.verdict AS CHAR), NULL, NULL, NULL,
 			v.rationale, v.occurred_at,
-			v.actor_id, CAST(v.actor_kind AS CHAR), v.actor_model, v.session_id
+			v.actor_id, CAST(v.actor_kind AS CHAR), v.actor_model, v.session_id, v.harness
 		FROM validations v
 		UNION ALL
 		SELECT 'authority', a.id, CAST(a.target_kind AS CHAR), a.target_id,
 			CAST(a.level AS CHAR), a.scope, a.destination_kind, a.destination_locator,
 			a.rationale, a.occurred_at,
-			a.actor_id, CAST(a.actor_kind AS CHAR), a.actor_model, a.session_id
+			a.actor_id, CAST(a.actor_kind AS CHAR), a.actor_model, a.session_id, a.harness
 		FROM authorities a`
 
 	w := newWhere()
@@ -433,7 +433,7 @@ func (s *snapshot) Events(q ledger.EventQuery) ([]ledger.EventRow, error) {
 	}
 	query := `SELECT kind, id, target_kind, target_id, summary, scope,
 		destination_kind, destination_locator, rationale, occurred_at,
-		actor_id, actor_kind, actor_model, session_id FROM (` + union + `) e` +
+		actor_id, actor_kind, actor_model, session_id, harness FROM (` + union + `) e` +
 		w.clause() + ` ORDER BY occurred_at, id`
 
 	return scanRows(s, query, w.args, func(rows *sql.Rows) (ledger.EventRow, error) {
@@ -449,7 +449,7 @@ func (s *snapshot) Events(q ledger.EventQuery) ([]ledger.EventRow, error) {
 		)
 		if err := rows.Scan(&kind, &e.ID, &target, &e.Target.ID, &e.Summary,
 			&scope, &destKind, &destLocator, &e.Rationale, &occurred,
-			&prov.id, &prov.kind, &prov.model, &prov.session); err != nil {
+			&prov.id, &prov.kind, &prov.model, &prov.session, &prov.harness); err != nil {
 			return e, err
 		}
 		e.Kind = ledger.EventKind(kind)
@@ -693,13 +693,14 @@ func strs[T ~string](values []T) []string {
 	return out
 }
 
-// provScan holds the four provenance columns every record and event table
-// carries, so a scan cannot pick up three of them.
+// provScan holds the provenance columns every record and event table carries,
+// so a scan cannot pick up four of five.
 type provScan struct {
 	id      string
 	kind    string
 	model   sql.NullString
 	session sql.NullString
+	harness sql.NullString
 }
 
 func (p provScan) value() ledger.Provenance {
@@ -708,11 +709,12 @@ func (p provScan) value() ledger.Provenance {
 		ActorKind:  ledger.ActorKind(p.kind),
 		ActorModel: p.model.String,
 		SessionID:  p.session.String,
+		Harness:    ledger.Harness(p.harness.String),
 	}
 }
 
 func provArgs(p ledger.Provenance) []any {
-	return []any{p.ActorID, string(p.ActorKind), nullStr(p.ActorModel), nullStr(p.SessionID)}
+	return []any{p.ActorID, string(p.ActorKind), nullStr(p.ActorModel), nullStr(p.SessionID), nullStr(string(p.Harness))}
 }
 
 // utc normalises to DATETIME(6)'s precision. A Go time carries nanoseconds, so

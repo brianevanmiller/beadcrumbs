@@ -12,7 +12,7 @@ import (
 // disappears the first time a write path forgets it, and Dolt keeps committed
 // history forever — there is no cleaning up afterwards.
 
-// schemaFixture is a fresh ledger with schema 1 applied.
+// schemaFixture is a fresh ledger with the current schema applied.
 func schemaFixture(t *testing.T) *Store {
 	t.Helper()
 	return openLedger(t, initLedger(t, fixtureRepo(t), false), Config{})

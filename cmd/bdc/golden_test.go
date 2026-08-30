@@ -438,7 +438,7 @@ func declaredFields() map[string]bool {
 		"bdc", "command", "ok", "data", "warnings", "error", "meta",
 		"code", "message", "details", "bdc_version", "ledger_schema", "generated_at",
 		// provenance, shared by every record and event
-		"actor_id", "actor_kind", "actor_model", "session_id",
+		"actor_id", "actor_kind", "actor_model", "session_id", "harness",
 		// version, init, doctor, maintenance
 		"version", "schema_version", "dolt_driver", "go", "platform",
 		"path", "stealth", "created", "checks", "journal_bytes", "ledger_path", "beads",
@@ -539,6 +539,17 @@ type fixture struct {
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
+	// Harness detection reads the process environment. An inherited AMP_ORB or
+	// CLAUDECODE would add `harness` to every envelope and make the goldens
+	// describe the machine rather than the contract.
+	for _, key := range []string{
+		"BDC_HARNESS", "AMP_ORB", "AMP_THREAD_ID",
+		"CONDUCTOR_SESSION_ID", "CONDUCTOR_IS_LOCAL",
+		"CLAUDE_CODE", "CLAUDECODE", "CODEX_HOME", "CODEX_THREAD_ID",
+		"OPENCODE", "OPENCODE_DIR",
+	} {
+		t.Setenv(key, "")
+	}
 	root := t.TempDir()
 	repo := filepath.Join(root, "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
