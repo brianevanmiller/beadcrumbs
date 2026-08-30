@@ -101,6 +101,7 @@ bdc crumb review <crumb-id> --state accepted --rationale "confirmed by the faili
 bdc harvest --crumb <crumb-id> --title "JWT validation rejects valid tokens" \
   --class learning --content-file notes.md
 bdc context                                  # what this repository has concluded
+bdc ask                                      # the questions the ledger cannot answer itself
 ```
 
 Every command accepts `--json`.
@@ -166,7 +167,7 @@ hooks. Automatic harvesting is off by default and opted into per repository with
   "warnings": [{"code": "beads_unavailable",
                 "message": "beads references resolve to their locator; bd is unavailable here: not_installed"}],
   "error": null,
-  "meta": {"bdc_version": "1.0.1", "ledger_schema": 2, "generated_at": "2026-08-28T14:00:00.000000Z"}
+  "meta": {"bdc_version": "1.0.1", "ledger_schema": 3, "generated_at": "2026-08-28T14:00:00.000000Z"}
 }
 ```
 

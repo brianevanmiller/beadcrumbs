@@ -13,6 +13,11 @@ Two rules hold for every hook below:
 - **Automatic harvesting is opt-in per repository, off by default.** Until you
   run `bdc hooks install --auto-harvest`, every trigger counts what is
   outstanding and writes nothing.
+- **A hook never asks.** A later phase may let one *enqueue* a sampling question
+  (`bdc ask enqueue`); no hook may ever run `bdc ask deliver` or `bdc ask
+  answer`. Presenting a question means waiting for an answer, and a hook that
+  waits is a hook that has failed the first rule. Today no trigger touches
+  sampling at all.
 
 ## Durable completion: git hooks
 
