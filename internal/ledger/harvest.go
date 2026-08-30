@@ -190,7 +190,7 @@ func (l *Ledger) prepareHarvest(run harvestRun, c CompleteHarvest) (preparedHarv
 		capture.HarvestID = run.id
 		capture.PolicyVersion = l.config.PolicyVersion
 		capture.Automatic = capture.Automatic || run.mode == HarvestAutomatic
-		crumb, findings, err := l.prepareCrumb(capture)
+		crumb, findings, err := l.prepareCrumbAs(capture, l.actor)
 		if err != nil {
 			return preparedHarvest{}, err
 		}
@@ -251,7 +251,7 @@ func (l *Ledger) writeHarvest(tx Tx, run *harvestRun, c CompleteHarvest, p prepa
 	captured := make([]Crumb, 0, len(p.crumbs))
 	fresh := make([]int, 0, len(p.crumbs))
 	for i, crumb := range p.crumbs {
-		existing, duplicate, err := l.sessionDuplicate(tx, crumb.ContentHash)
+		existing, duplicate, err := sessionDuplicate(tx, crumb.ContentHash, crumb.SessionID)
 		if err != nil {
 			return err
 		}

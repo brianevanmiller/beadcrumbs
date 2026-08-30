@@ -77,6 +77,17 @@ type Tx interface {
 	AppendValidation(Validation) error
 	AppendAuthority(Authority) error
 
+	InsertPrompt(Prompt) error
+	SetPromptActive(PromptID, bool) error
+
+	InsertAsk(Ask) error
+
+	// UpdateAsk moves an Ask through its states and records what the answer
+	// produced. It never rewrites question_snapshot or options_snapshot: the
+	// words a respondent actually saw are the only thing that makes the answer
+	// interpretable later.
+	UpdateAsk(Ask) error
+
 	// UpsertProposal returns created=false for an idempotent hit on
 	// content_hash. That is not an error; it is the answer.
 	UpsertProposal(Proposal) (ProposalID, bool, error)
@@ -113,6 +124,9 @@ type Snapshot interface {
 	// MAX(revision). The head is a cache, and a cache with no check is a lie
 	// waiting to happen.
 	HeadRevisionDrift() ([]HeadDriftRow, error)
+
+	Prompts(PromptQuery) ([]Prompt, error)
+	Asks(AskQuery) ([]Ask, error)
 
 	Counts(CountQuery) (Counts, error)
 
@@ -260,6 +274,34 @@ type EventQuery struct {
 	Targets []RecordRef
 }
 
+// PromptQuery selects registry rows. ActiveOnly is the filter an enqueue uses;
+// a listing wants the disabled ones too, because "we stopped asking this" is
+// part of what the registry records.
+type PromptQuery struct {
+	IDs        []PromptID
+	Keys       []string
+	ActiveOnly bool
+}
+
+// AskQuery selects asks. States and Respondent together are what a deliver
+// asks for; PromptKey and Target are what the open-ask uniqueness check asks
+// for, and SessionID is the enqueueing session rather than the writing one.
+type AskQuery struct {
+	IDs        []AskID
+	States     []AskState
+	Respondent PromptRespondent
+	PromptKeys []string
+	TargetID   string
+	SessionID  string
+
+	// CrumbIDs is what prune asks: asks.crumb_id is a real foreign key, so a
+	// Crumb an answer produced cannot be deleted, and prune has to report that
+	// per id rather than discover it as a transaction-wide violation.
+	CrumbIDs []CrumbID
+
+	Limit int
+}
+
 type CountQuery struct {
 	Since time.Time
 }
@@ -356,4 +398,6 @@ type Counts struct {
 	References         int                     `json:"references"`
 	Proposals          int                     `json:"proposals"`
 	PromotionsByStatus map[PromotionStatus]int `json:"promotions_by_status"`
+	Prompts            int                     `json:"prompts"`
+	Asks               int                     `json:"asks"`
 }

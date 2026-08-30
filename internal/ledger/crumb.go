@@ -128,14 +128,14 @@ func (s RefSpec) Validate() error {
 // nothing persisted rather than with a rolled-back write that still touched the
 // journal.
 func (l *Ledger) CaptureCrumb(ctx context.Context, c CaptureCrumb) (CaptureResult, error) {
-	crumb, findings, err := l.prepareCrumb(c)
+	crumb, findings, err := l.prepareCrumbAs(c, l.actor)
 	if err != nil {
 		return CaptureResult{}, err
 	}
 
 	result := CaptureResult{References: c.References, Findings: findings}
 	err = l.store.Write(ctx, func(tx Tx) error {
-		existing, duplicate, err := l.sessionDuplicate(tx, crumb.ContentHash)
+		existing, duplicate, err := sessionDuplicate(tx, crumb.ContentHash, crumb.SessionID)
 		if err != nil {
 			return err
 		}
@@ -155,13 +155,18 @@ func (l *Ledger) CaptureCrumb(ctx context.Context, c CaptureCrumb) (CaptureResul
 	return result, nil
 }
 
-// prepareCrumb validates, redacts, and mints one Crumb without writing it.
-// Capture and harvest both go through it, because a Crumb a Harvest captured
-// must pass exactly the same gate as one a human typed — and a second
-// implementation of this sequence is how a write path ends up persisting text
-// the redactor never saw.
-func (l *Ledger) prepareCrumb(c CaptureCrumb) (Crumb, []Finding, error) {
-	if err := l.actor.Validate(); err != nil {
+// prepareCrumbAs validates, redacts, and mints one Crumb without writing it.
+// Capture, harvest, and a sampled answer all go through it, because a Crumb a
+// Harvest captured must pass exactly the same gate as one a human typed — and a
+// second implementation of this sequence is how a write path ends up persisting
+// text the redactor never saw.
+//
+// The provenance is a parameter rather than l.actor because a sampled answer is
+// the respondent's record, not the process actor's: an agent relaying a human's
+// reply writes a human Crumb, and the agent stays on the Ask row. Everything
+// else about the gate is identical, which is exactly why there is one function.
+func (l *Ledger) prepareCrumbAs(c CaptureCrumb, actor Provenance) (Crumb, []Finding, error) {
+	if err := actor.Validate(); err != nil {
 		return Crumb{}, nil, err
 	}
 	if err := ValidateConfidence(c.Confidence); err != nil {
@@ -212,7 +217,7 @@ func (l *Ledger) prepareCrumb(c CaptureCrumb) (Crumb, []Finding, error) {
 		HarvestID:        c.HarvestID,
 		PolicyVersion:    c.PolicyVersion,
 		RedactionVersion: l.redactor.Version(),
-		Provenance:       l.actor,
+		Provenance:       actor,
 	}
 	if crumb.HarvestID != "" && crumb.PolicyVersion == "" {
 		return Crumb{}, nil, Fail(ErrIntegrity, "integrity_harvest_policy",
@@ -226,11 +231,15 @@ func (l *Ledger) prepareCrumb(c CaptureCrumb) (Crumb, []Finding, error) {
 // Repeated automatic capture within one session is a duplicate, and answering
 // with the Crumb already held is what that key is for; letting the insert fail
 // would turn a dedupe into an error the caller has to interpret.
-func (l *Ledger) sessionDuplicate(snap Snapshot, hash string) (Crumb, bool, error) {
-	if l.actor.SessionID == "" {
+//
+// The session is the one on the Crumb being written, which for a relayed human
+// answer is empty — a human carries no session, so the key cannot apply and the
+// answer is always a new row.
+func sessionDuplicate(snap Snapshot, hash, session string) (Crumb, bool, error) {
+	if session == "" {
 		return Crumb{}, false, nil
 	}
-	existing, err := snap.Crumbs(CrumbQuery{SessionID: l.actor.SessionID})
+	existing, err := snap.Crumbs(CrumbQuery{SessionID: session})
 	if err != nil {
 		return Crumb{}, false, err
 	}
@@ -432,6 +441,22 @@ func (l *Ledger) PruneCrumbs(ctx context.Context, c PruneCrumbs) (PruneResult, e
 					block.Revisions = append(block.Revisions, rev.ID)
 				}
 				out.Blocked = append(out.Blocked, block)
+				continue
+			}
+			// asks.crumb_id is a real foreign key, so unlike lineage this one
+			// would abort the whole transaction rather than answer per id. The
+			// answer a sampled question produced is the record of that answer;
+			// pruning it would leave an Ask that says it was answered and no
+			// trace of what was said.
+			asks, err := tx.Asks(AskQuery{CrumbIDs: []CrumbID{crumb.ID}})
+			if err != nil {
+				return err
+			}
+			if len(asks) > 0 {
+				out.Blocked = append(out.Blocked, PruneBlock{
+					CrumbID: crumb.ID, Code: "answers_ask",
+					Reason: fmt.Sprintf("the Crumb is the answer to %d sampled question(s)", len(asks)),
+				})
 				continue
 			}
 			deletable = append(deletable, crumb.ID)

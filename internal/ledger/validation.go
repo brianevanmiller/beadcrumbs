@@ -71,84 +71,18 @@ type ValidationResult struct {
 }
 
 func (l *Ledger) RecordValidation(ctx context.Context, c RecordValidation) (ValidationResult, error) {
-	if err := l.actor.Validate(); err != nil {
-		return ValidationResult{}, err
-	}
-	if err := validateValidationTarget(c.Target); err != nil {
-		return ValidationResult{}, err
-	}
-	if !slices.Contains(verdicts, c.Verdict) {
-		return ValidationResult{}, Fail(ErrInvalidInput, "invalid_verdict",
-			"%q is not a verdict; expected one of %s", c.Verdict, joinNames(verdicts))
-	}
-	if strings.TrimSpace(c.Rationale) == "" {
-		return ValidationResult{}, Fail(ErrInvalidInput, "invalid_rationale",
-			"a verdict needs a rationale; the history is kept so it can be weighed later")
-	}
-	if err := validateSupersession(c.Verdict, c.SupersededBy); err != nil {
-		return ValidationResult{}, err
-	}
-	for _, ref := range c.Evidence {
-		if err := ref.Validate(); err != nil {
-			return ValidationResult{}, err
-		}
-		// refs.locator is a Reject column: redacting a locator would silently
-		// change which record it names.
-		if err := l.rejectSecrets("evidence locator", ref.Locator); err != nil {
-			return ValidationResult{}, err
-		}
-	}
-
-	rationale, findings, err := l.redactField("rationale", strings.TrimSpace(c.Rationale))
+	validation, findings, notices, err := l.prepareValidationAs(c, l.actor)
 	if err != nil {
 		return ValidationResult{}, err
 	}
-	l.assertRedacted("validations.rationale", rationale)
 
-	out := ValidationResult{Findings: findings}
-	if slices.Contains(evidenceExpectedVerdicts, c.Verdict) && len(c.Evidence) == 0 {
-		out.Notices = append(out.Notices, Notice{
-			Code: "validation_without_evidence",
-			Message: fmt.Sprintf(
-				"a %s verdict cites no evidence; attach one with --evidence when evidence exists", c.Verdict),
-		})
-	}
-
-	validation := Validation{
-		ID: NewValidationID(), Target: c.Target, Verdict: c.Verdict, Rationale: rationale,
-		SupersededBy: c.SupersededBy, OccurredAt: l.clock(), Provenance: l.actor,
-	}
+	out := ValidationResult{Findings: findings, Notices: notices}
 	err = l.store.Write(ctx, func(tx Tx) error {
-		// The ledger's half of validations.target_id, which is polymorphic and
-		// carries no foreign key. Checked inside the transaction that writes
-		// the row, because a target that exists at validation time and not at
-		// write time is exactly the orphan this prevents.
-		if err := assertTargetExists(tx, c.Target); err != nil {
+		if err := appendValidation(tx, validation, c.Evidence); err != nil {
 			return err
-		}
-		if !c.SupersededBy.Zero() {
-			if err := assertTargetExists(tx, c.SupersededBy); err != nil {
-				return err
-			}
-		}
-		if err := tx.AppendValidation(validation); err != nil {
-			return err
-		}
-		record := RecordRef{Kind: KindValidation, ID: string(validation.ID)}
-		for _, ref := range c.Evidence {
-			id, _, err := tx.UpsertReference(Reference{
-				ID: ReferenceIDFor(ref.Kind, ref.Locator, ref.Workspace),
-				Kind: ref.Kind, Locator: ref.Locator,
-				Workspace: ref.Workspace, CreatedAt: validation.OccurredAt,
-			})
-			if err != nil {
-				return err
-			}
-			if err := tx.LinkReference(record, id, ref.Relation); err != nil {
-				return err
-			}
 		}
 		out.Validation = validation
+		var err error
 		out.EffectiveVerdict, err = effectiveVerdict(tx, c.Target)
 		return err
 	})
@@ -156,6 +90,98 @@ func (l *Ledger) RecordValidation(ctx context.Context, c RecordValidation) (Vali
 		return ValidationResult{}, err
 	}
 	return out, nil
+}
+
+// prepareValidationAs validates, redacts, and mints one Validation without
+// writing it. The provenance is a parameter for the reason prepareCrumbAs's is:
+// a calibration answer is the respondent's verdict even when an agent typed the
+// command, and composing it into a larger transaction is only safe if the
+// preparation — which includes redaction — has already happened outside one.
+func (l *Ledger) prepareValidationAs(c RecordValidation, actor Provenance) (Validation, []Finding, []Notice, error) {
+	if err := actor.Validate(); err != nil {
+		return Validation{}, nil, nil, err
+	}
+	if err := validateValidationTarget(c.Target); err != nil {
+		return Validation{}, nil, nil, err
+	}
+	if !slices.Contains(verdicts, c.Verdict) {
+		return Validation{}, nil, nil, Fail(ErrInvalidInput, "invalid_verdict",
+			"%q is not a verdict; expected one of %s", c.Verdict, joinNames(verdicts))
+	}
+	if strings.TrimSpace(c.Rationale) == "" {
+		return Validation{}, nil, nil, Fail(ErrInvalidInput, "invalid_rationale",
+			"a verdict needs a rationale; the history is kept so it can be weighed later")
+	}
+	if err := validateSupersession(c.Verdict, c.SupersededBy); err != nil {
+		return Validation{}, nil, nil, err
+	}
+	for _, ref := range c.Evidence {
+		if err := ref.Validate(); err != nil {
+			return Validation{}, nil, nil, err
+		}
+		// refs.locator is a Reject column: redacting a locator would silently
+		// change which record it names.
+		if err := l.rejectSecrets("evidence locator", ref.Locator); err != nil {
+			return Validation{}, nil, nil, err
+		}
+	}
+
+	rationale, findings, err := l.redactField("rationale", strings.TrimSpace(c.Rationale))
+	if err != nil {
+		return Validation{}, nil, nil, err
+	}
+	l.assertRedacted("validations.rationale", rationale)
+
+	var notices []Notice
+	if slices.Contains(evidenceExpectedVerdicts, c.Verdict) && len(c.Evidence) == 0 {
+		notices = append(notices, Notice{
+			Code: "validation_without_evidence",
+			Message: fmt.Sprintf(
+				"a %s verdict cites no evidence; attach one with --evidence when evidence exists", c.Verdict),
+		})
+	}
+
+	return Validation{
+		ID: NewValidationID(), Target: c.Target, Verdict: c.Verdict, Rationale: rationale,
+		SupersededBy: c.SupersededBy, OccurredAt: l.clock(), Provenance: actor,
+	}, findings, notices, nil
+}
+
+// appendValidation writes a prepared Validation and its evidence inside an open
+// transaction, the way insertCrumb does for a Crumb. Both `bdc validate` and a
+// sampled calibration answer go through it, so the target assertion and the
+// evidence links cannot diverge between them.
+func appendValidation(tx Tx, v Validation, evidence []RefSpec) error {
+	// The ledger's half of validations.target_id, which is polymorphic and
+	// carries no foreign key. Checked inside the transaction that writes the
+	// row, because a target that exists at validation time and not at write
+	// time is exactly the orphan this prevents.
+	if err := assertTargetExists(tx, v.Target); err != nil {
+		return err
+	}
+	if !v.SupersededBy.Zero() {
+		if err := assertTargetExists(tx, v.SupersededBy); err != nil {
+			return err
+		}
+	}
+	if err := tx.AppendValidation(v); err != nil {
+		return err
+	}
+	record := RecordRef{Kind: KindValidation, ID: string(v.ID)}
+	for _, ref := range evidence {
+		id, _, err := tx.UpsertReference(Reference{
+			ID:   ReferenceIDFor(ref.Kind, ref.Locator, ref.Workspace),
+			Kind: ref.Kind, Locator: ref.Locator,
+			Workspace: ref.Workspace, CreatedAt: v.OccurredAt,
+		})
+		if err != nil {
+			return err
+		}
+		if err := tx.LinkReference(record, id, ref.Relation); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // effectiveVerdict is the latest verdict for one target, read through the same

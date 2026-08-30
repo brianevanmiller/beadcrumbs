@@ -55,7 +55,7 @@ var humanAuthorityClasses = []string{"policy"}
 // destination from relaxing a strict class.
 //
 // The requested level is in the max because requesting mandatory force is
-// asking for something only a human may grant (see mayGrant): letting an agent
+// asking for something only a human may grant (see mayGrantAs): letting an agent
 // propose it and a second agent apply it would route around that rule.
 func AuthorityRequiredFor(class string, caps []Capability, requested AuthorityLevel) AuthorityRequirement {
 	req := RequireNone
@@ -76,32 +76,39 @@ func AuthorityRequiredFor(class string, caps []Capability, requested AuthorityLe
 	return req
 }
 
-// mayGrant answers whether this invocation's actor may grant a level. The three
+// mayGrantAs answers whether one provenance may grant a level. The three
 // answers are different in kind, so they are three branches rather than a
 // permission table: advisory is always allowed, default is a repository policy
 // decision, and mandatory is a property of the actor.
-func (l *Ledger) mayGrant(level AuthorityLevel) error {
+//
+// The actor is a parameter rather than l.actor because the acting provenance
+// and the process actor are not always the same: a sampled `grant-default` is
+// the human respondent's grant relayed by an agent, so the question is about
+// the human. Note that ck_aut_mandatory_human cannot backstop that path — the
+// row is stamped actor_kind='human' — so on a relay this check is the only
+// gate, which is why AnswerAsk asserts its own caps before it ever gets here.
+func (l *Ledger) mayGrantAs(level AuthorityLevel, actor Provenance) error {
 	switch level {
 	case AuthorityAdvisory:
 		return nil
 	case AuthorityDefault:
-		if l.actor.ActorKind == ActorHuman || l.config.AgentMaySetDefault {
+		if actor.ActorKind == ActorHuman || l.config.AgentMaySetDefault {
 			return nil
 		}
 		return Fail(ErrAuthorityDenied, "authority_denied",
 			"this repository does not permit an agent to grant a working default; "+
 				"set %s=1 in repo_config, or have a human grant it",
 			ConfigAgentMaySetDefault).
-			WithDetails(map[string]any{"level": string(level), "actor_kind": string(l.actor.ActorKind)})
+			WithDetails(map[string]any{"level": string(level), "actor_kind": string(actor.ActorKind)})
 	case AuthorityMandatory:
-		if l.actor.ActorKind == ActorHuman {
+		if actor.ActorKind == ActorHuman {
 			return nil
 		}
 		// Never downgraded to advisory: an agent that asked for mandatory and
 		// silently got advisory would believe it established something binding.
 		return Fail(ErrAuthorityDenied, "authority_denied",
 			"only a human may grant mandatory authority; the request was not downgraded").
-			WithDetails(map[string]any{"level": string(level), "actor_kind": string(l.actor.ActorKind)})
+			WithDetails(map[string]any{"level": string(level), "actor_kind": string(actor.ActorKind)})
 	default:
 		return Fail(ErrInvalidInput, "invalid_authority",
 			"%q is not an authority level; expected advisory, default, or mandatory", level)
