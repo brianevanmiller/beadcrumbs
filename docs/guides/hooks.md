@@ -106,7 +106,7 @@ either way and names what it skipped on stderr.
 Install the plugin, which carries `hooks/hooks.json` alongside the skill:
 
 ```
-npx skills add brianevanmiller/beadcrumbs@v1.0.0 -y
+npx skills add brianevanmiller/beadcrumbs@v1.0.1 -y
 ```
 
 Or wire it by hand in `.claude/settings.json`, using an absolute path to the

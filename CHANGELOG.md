@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.0.1 — 2026-08-29
+## v1.0.1 — 2026-08-30
 
 Schema 2. A v1.0.0 ledger is readable after `bdc migrate`; `bdc doctor` names that command
 when the schema is behind.
