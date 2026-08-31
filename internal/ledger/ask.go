@@ -13,7 +13,7 @@ import (
 // Sampling — asking for the judgement the ledger cannot derive.
 //
 // An Ask is one registered question, frozen at the moment it was minted, aimed
-// at one respondent and optionally at one record. Four rules hold here:
+// at one respondent and optionally at one record. Five rules hold here:
 //
 //   - An answer is a Crumb. There is no second knowledge pipeline: where the
 //     prompt names a revision or a proposal the answer also appends a
@@ -28,6 +28,12 @@ import (
 //     cannot backstop this — the relayed row is stamped human — so the caps in
 //     AnswerAsk are the only gate, and the tests that pin them are named so a
 //     later phase cannot quietly simplify them away.
+//   - A relay is marked, not verified. A genuine relay and a fabricated one
+//     write byte-identical rows, and the actor kind on them is self-asserted
+//     anyway, so this file does not try to tell them apart. It requires the
+//     respondent to be named, announces the write, and leaves the gate reported
+//     in `bdc context` until a human acts on the record directly. A withdrawal
+//     is sticky: a relayed answer cannot reinstate what a human took away.
 //   - Skipping is free and costs nothing. An unanswered question expires; it
 //     never blocks, never retries harder, and never becomes a record.
 //
