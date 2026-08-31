@@ -424,7 +424,7 @@ func TestAnswerAskGrantDefaultIgnoresAgentMaySetDefault(t *testing.T) {
 	ask := f.deliver(t, f.L, ledger.PromptRespondentHuman).Questions[0]
 
 	res, err := f.sampler(relayActor()).AnswerAsk(context.Background(), ledger.AnswerAsk{
-		AskID: ask.ID, ChoiceID: "grant-default",
+		AskID: ask.ID, ChoiceID: "grant-default", RespondentID: "brian",
 	})
 	if err != nil {
 		t.Fatalf("the human's grant was refused because an agent typed it: %v", err)
@@ -442,7 +442,7 @@ func TestAnswerAskDoesNotGrantMandatory(t *testing.T) {
 	ask := f.deliver(t, f.L, ledger.PromptRespondentHuman).Questions[0]
 
 	res, err := f.sampler(relayActor()).AnswerAsk(context.Background(), ledger.AnswerAsk{
-		AskID: ask.ID, ChoiceID: "grant-default",
+		AskID: ask.ID, ChoiceID: "grant-default", RespondentID: "brian",
 	})
 	if err != nil {
 		t.Fatalf("the answer must be recorded even when the grant is capped: %v", err)
@@ -458,7 +458,7 @@ func TestAnswerAskDoesNotGrantPolicyClass(t *testing.T) {
 	ask := f.deliver(t, f.L, ledger.PromptRespondentHuman).Questions[0]
 
 	res, err := f.sampler(relayActor()).AnswerAsk(context.Background(), ledger.AnswerAsk{
-		AskID: ask.ID, ChoiceID: "grant-default",
+		AskID: ask.ID, ChoiceID: "grant-default", RespondentID: "brian",
 	})
 	if err != nil {
 		t.Fatalf("the answer must be recorded even when the grant is capped: %v", err)
@@ -787,4 +787,131 @@ func (f *fixture) askState(t *testing.T, id ledger.AskID) ledger.AskState {
 
 func fixtureText(i int) string {
 	return "a fragment worth keeping, number " + string(rune('a'+i))
+}
+
+// A grant recorded against the literal `human` is nobody's claim, and nobody's
+// claim cannot be checked with anyone later. Naming the person does not stop a
+// fabrication; it turns an anonymous one into a falsifiable one.
+func TestRelayedGrantRequiresANamedRespondent(t *testing.T) {
+	f := newFixtureWith(t, nil, humanActor())
+	f.blockedProposal(t, "learning", ledger.AuthorityAdvisory, ledger.CapRequiresHumanAuthority)
+	ask := f.deliver(t, f.L, ledger.PromptRespondentHuman).Questions[0]
+	relay := f.sampler(relayActor())
+
+	_, err := relay.AnswerAsk(ctx(), ledger.AnswerAsk{AskID: ask.ID, ChoiceID: "grant-default"})
+	var le *ledger.Error
+	if !errors.As(err, &le) || le.Code != "invalid_ask" {
+		t.Fatalf("an unnamed relayed grant returned %v, want invalid_ask", err)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM authorities`); n != 0 {
+		t.Fatalf("the refused relay wrote %d grant(s)", n)
+	}
+	// The other answers are not signatures and keep the default.
+	if _, err := relay.AnswerAsk(ctx(), ledger.AnswerAsk{AskID: ask.ID, ChoiceID: "wait"}); err != nil {
+		t.Fatalf("an unnamed relayed `wait` must be allowed: %v", err)
+	}
+}
+
+// The ledger cannot tell a genuine relay from a fabricated one — the authority
+// rows are byte-identical and the actor kind on them is self-asserted anyway —
+// so it does not try. It marks every relayed grant and keeps marking it until a
+// human acts on the record directly.
+func TestRelayedGrantIsMarkedUntilAHumanActsDirectly(t *testing.T) {
+	f := newFixtureWith(t, nil, humanActor())
+	proposal := f.blockedProposal(t, "learning", ledger.AuthorityAdvisory, ledger.CapRequiresHumanAuthority)
+	ask := f.deliver(t, f.L, ledger.PromptRespondentHuman).Questions[0]
+
+	res, err := f.sampler(relayActor()).AnswerAsk(ctx(), ledger.AnswerAsk{
+		AskID: ask.ID, ChoiceID: "grant-default", RespondentID: "brian",
+	})
+	if err != nil {
+		t.Fatalf("relaying: %v", err)
+	}
+	if res.Authority == nil {
+		t.Fatal("the relay is allowed; marking it is the design, refusing it is not")
+	}
+	if !hasNotice(res.Notices, "ask_answer_relayed") {
+		t.Fatalf("a relayed grant landed unannounced: %+v", res.Notices)
+	}
+
+	marks := func() []ledger.NarrativeQuestion {
+		t.Helper()
+		n, err := f.L.Narrative(ctx(), ledger.NarrativeQuery{Mode: ledger.ModeContext})
+		if err != nil {
+			t.Fatalf("reading context: %v", err)
+		}
+		var out []ledger.NarrativeQuestion
+		for _, q := range n.OpenQuestions {
+			if q.Kind == "relayed_authority" {
+				out = append(out, q)
+			}
+		}
+		return out
+	}
+
+	found := marks()
+	if len(found) != 1 || found[0].Subject.ID != string(proposal) {
+		t.Fatalf("context does not report the relay-held gate: %+v", found)
+	}
+	if !strings.Contains(found[0].Question, "relay-1") || !strings.Contains(found[0].Question, "brian") {
+		t.Fatalf("the mark names neither the session nor the person: %q", found[0].Question)
+	}
+
+	// A confirming grant has no ask pointing at it, so the predicate goes false
+	// on its own — the question clears without anything having to clear it.
+	if _, err := f.L.GrantAuthority(ctx(), ledger.GrantAuthority{
+		Target: ledger.RecordRef{Kind: ledger.KindProposal, ID: string(proposal)},
+		Level:  ledger.AuthorityDefault, Rationale: "confirmed, go ahead",
+	}); err != nil {
+		t.Fatalf("confirming: %v", err)
+	}
+	if found := marks(); len(found) != 0 {
+		t.Fatalf("a direct human confirmation left the mark standing: %+v", found)
+	}
+}
+
+// Repair has to stick. Without this the loop is a treadmill: the human appends
+// advisory, the next relayed answer appends default again, and the gate reopens
+// on the agent's word.
+func TestWithdrawnAuthorityCannotBeReinstatedByARelay(t *testing.T) {
+	f := newFixtureWith(t, nil, humanActor())
+	proposal := f.blockedProposal(t, "learning", ledger.AuthorityAdvisory, ledger.CapRequiresHumanAuthority)
+	target := ledger.RecordRef{Kind: ledger.KindProposal, ID: string(proposal)}
+	first := f.deliver(t, f.L, ledger.PromptRespondentHuman).Questions[0]
+	relay := f.sampler(relayActor())
+
+	if _, err := relay.AnswerAsk(ctx(), ledger.AnswerAsk{
+		AskID: first.ID, ChoiceID: "grant-default", RespondentID: "brian",
+	}); err != nil {
+		t.Fatalf("relaying: %v", err)
+	}
+	if _, err := f.L.GrantAuthority(ctx(), ledger.GrantAuthority{
+		Target: target, Level: ledger.AuthorityAdvisory, Rationale: "I did not approve this",
+	}); err != nil {
+		t.Fatalf("withdrawing: %v", err)
+	}
+
+	// An explicit enqueue is deliberate and allowed; the *grant* is what the
+	// withdrawal forecloses.
+	second, err := relay.EnqueueAsk(ctx(), ledger.EnqueueAsk{
+		PromptKey: "authority-nudge", Target: target, Respondent: ledger.PromptRespondentHuman,
+	})
+	if err != nil {
+		t.Fatalf("re-enqueue: %v", err)
+	}
+	res, err := relay.AnswerAsk(ctx(), ledger.AnswerAsk{
+		AskID: second.ID, ChoiceID: "grant-default", RespondentID: "brian",
+	})
+	if err != nil {
+		t.Fatalf("the answer is still recorded, only the grant is refused: %v", err)
+	}
+	if res.Authority != nil {
+		t.Fatal("a relayed answer reinstated a grant a human had withdrawn")
+	}
+	if !hasNotice(res.Notices, "ask_grant_withdrawn") {
+		t.Fatalf("the refusal was silent: %+v", res.Notices)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM authorities WHERE level = 'default'`); n != 1 {
+		t.Fatalf("%d default grant(s) exist; the withdrawal did not hold", n)
+	}
 }

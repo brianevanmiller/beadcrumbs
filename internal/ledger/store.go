@@ -299,6 +299,12 @@ type AskQuery struct {
 	// per id rather than discover it as a transaction-wide violation.
 	CrumbIDs []CrumbID
 
+	// AuthorityIDs answers "was this grant relayed". A relayed answer and a
+	// direct one produce byte-identical authority rows, so the ask is the only
+	// record that an agent carried it — which is exactly what the plan meant by
+	// keeping via_session on the ask and making that row the join.
+	AuthorityIDs []AuthorityID
+
 	Limit int
 }
 

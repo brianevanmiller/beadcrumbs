@@ -1,6 +1,9 @@
 package ledger
 
-import "slices"
+import (
+	"slices"
+	"sort"
+)
 
 // Authority policy: who may establish what, and what a promotion has to hold
 // before it may be applied.
@@ -150,9 +153,13 @@ func requiresProposalGrant(class string, caps []Capability) bool {
 	return slices.Contains(humanAuthorityClasses, class) || slices.Contains(caps, CapRequiresHumanAuthority)
 }
 
-// humanAuthorityHeld reports whether a human grant covers this promotion. Four
-// rules, each of them a narrowing a human can express and therefore one the
-// gate has to honour:
+// humanAuthorityHeld reports whether a human grant covers this promotion.
+// humanAuthorityGrants is the same question with its working shown: the ids of
+// the grants that answer it, which is what lets a caller ask *who* opened a
+// gate rather than only whether it is open.
+//
+// Five rules, each of them a narrowing a human can express and therefore one
+// the gate has to honour:
 //
 //   - Advisory does not count. It is informational by definition — cite it, do
 //     not act on it as settled — so treating it as approval would make the
@@ -166,33 +173,94 @@ func requiresProposalGrant(class string, caps []Capability) bool {
 //   - A grant on the Insight revision is about the conclusion's standing, not
 //     about writing it somewhere, so it counts only when it names this
 //     destination — and never for a proposalOnly gate.
+//   - The latest grant wins, per target and per narrowing. Authority is
+//     append-only and the current level is the latest row — that is what
+//     `effectiveAuthority` and every reading in the product already mean — so a
+//     human who follows a `default` with an `advisory` has withdrawn it. Before
+//     this fold the gate scanned for *any* qualifying row and could never be
+//     un-satisfied: `bdc authority` reported the level as advisory while the
+//     promotion it guarded still applied, which is the report and the decision
+//     disagreeing in the one direction that matters.
 func humanAuthorityHeld(snap Snapshot, g authorityGate) (bool, error) {
+	grants, err := humanAuthorityGrants(snap, g)
+	return len(grants) > 0, err
+}
+
+// grantScope names one narrowing a grant can carry, so "the latest grant" is
+// asked per narrowing rather than globally: a repo-wide grant and a grant
+// naming one destination are different statements, and a later one of either
+// kind replaces only its own.
+type grantScope struct {
+	target RecordRef
+	dest   string
+}
+
+func humanAuthorityGrants(snap Snapshot, g authorityGate) ([]string, error) {
 	targets := []RecordRef{g.proposal}
 	if !g.proposalOnly {
 		targets = append(targets, g.revision)
 	}
 	events, err := snap.Events(EventQuery{Targets: targets})
 	if err != nil {
-		return false, err
+		return nil, err
 	}
+
+	// Events arrive oldest first, so a later row simply overwrites its scope.
+	type standing struct {
+		id    string
+		level AuthorityLevel
+	}
+	latest := map[grantScope]standing{}
 	for _, e := range events {
 		if e.Kind != EventAuthority || e.ActorKind != ActorHuman || e.Scope != "" {
-			continue
-		}
-		switch AuthorityLevel(e.Summary) {
-		case AuthorityDefault, AuthorityMandatory:
-		default:
 			continue
 		}
 		named := e.DestinationKind != "" || e.DestinationLocator != ""
 		if named && (e.DestinationKind != g.destKind || e.DestinationLocator != g.destLocator) {
 			continue
 		}
-		if e.Target == g.proposal || named {
-			return true, nil
+		if !named && e.Target != g.proposal {
+			continue
+		}
+		scope := grantScope{target: e.Target}
+		if named {
+			scope.dest = g.destKind + "\x1f" + g.destLocator
+		}
+		latest[scope] = standing{id: e.ID, level: AuthorityLevel(e.Summary)}
+	}
+
+	var out []string
+	for _, s := range latest {
+		if s.level == AuthorityDefault || s.level == AuthorityMandatory {
+			out = append(out, s.id)
 		}
 	}
-	return false, nil
+	sort.Strings(out)
+	return out, nil
+}
+
+// latestRepoWideHumanGrant is the standing of one record as a human last left
+// it, repo-wide: the latest unscoped grant naming no destination. It answers
+// "did a human already say no here", which is a different question from "is the
+// gate open" — an advisory is a withdrawal, and a withdrawal has to be able to
+// outlast the next relayed answer or repair is a treadmill.
+func latestRepoWideHumanGrant(snap Snapshot, target RecordRef) (AuthorityLevel, bool, error) {
+	events, err := snap.Events(EventQuery{Targets: []RecordRef{target}})
+	if err != nil {
+		return "", false, err
+	}
+	var level AuthorityLevel
+	found := false
+	for _, e := range events {
+		if e.Kind != EventAuthority || e.ActorKind != ActorHuman || e.Scope != "" {
+			continue
+		}
+		if e.DestinationKind != "" || e.DestinationLocator != "" {
+			continue
+		}
+		level, found = AuthorityLevel(e.Summary), true
+	}
+	return level, found, nil
 }
 
 // Notice is the ledger's non-fatal channel: a condition a caller has to see but

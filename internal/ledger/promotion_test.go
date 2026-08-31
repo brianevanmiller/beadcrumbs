@@ -548,3 +548,70 @@ func TestNarrowedGrantCoversOnlyWhatItNames(t *testing.T) {
 		t.Fatalf("propose err = %v, want authority denied for a destination no grant names", err)
 	}
 }
+
+// Withdrawal has to be a real verb. Authority is append-only and the current
+// level is the latest row — that is what `bdc authority` reports and what every
+// other reading in the product means — so a human who follows a `default` with
+// an `advisory` has withdrawn it, and the gate they were guarding has to agree.
+//
+// Before the fold in humanAuthorityGrants the gate scanned for *any* qualifying
+// row and could never be un-satisfied: the command reported the level as
+// advisory while the promotion it guarded still applied. That is the report and
+// the decision disagreeing in the one direction that matters, and it is what
+// makes "detect it, then repair it" possible rather than aspirational.
+func TestWithdrawnAuthorityClosesThePromotionGate(t *testing.T) {
+	ctx := context.Background()
+	f := newFixtureWith(t, nil, humanActor())
+	crumb := f.capture("the exclusive lock covers the whole command", 0.7)
+	res, err := f.L.CompleteHarvest(ctx, ledger.CompleteHarvest{
+		Mode: ledger.HarvestManual, Crumbs: []ledger.CrumbID{crumb.ID},
+		Title: "lock scope", Content: "body", Class: "learning", Confidence: 0.6,
+	})
+	if err != nil {
+		t.Fatalf("synthesising: %v", err)
+	}
+	proposed, err := f.L.ProposePromotion(ctx, ledger.ProposePromotion{
+		InsightID: res.Insight.ID, Class: "learning",
+		Destination: docsTo("docs/lock.md", ledger.CapRequiresHumanAuthority),
+		Content:     "what would be written", Confidence: 0.6,
+	})
+	if err != nil {
+		t.Fatalf("proposing: %v", err)
+	}
+	target := ledger.RecordRef{Kind: ledger.KindProposal, ID: string(proposed.Proposal.ID)}
+	agent := f.sampler(agentActor())
+
+	grant := func(level ledger.AuthorityLevel, why string) {
+		t.Helper()
+		if _, err := f.L.GrantAuthority(ctx, ledger.GrantAuthority{
+			Target: target, Level: level, Rationale: why,
+		}); err != nil {
+			t.Fatalf("granting %s: %v", level, err)
+		}
+	}
+	blocked := func() bool {
+		t.Helper()
+		_, err := agent.RecordPromotion(ctx, ledger.RecordPromotion{
+			ProposalID: proposed.Proposal.ID, Locator: "docs/lock.md",
+		})
+		return errors.Is(err, ledger.ErrAuthorityDenied)
+	}
+
+	if !blocked() {
+		t.Fatal("a proposal declaring requires-human-authority must start blocked")
+	}
+	grant(ledger.AuthorityDefault, "go ahead")
+	if blocked() {
+		t.Fatal("a human working default must open the gate")
+	}
+	grant(ledger.AuthorityAdvisory, "on reflection, no — I withdraw this")
+	if !blocked() {
+		t.Fatal("a human who withdrew a grant is still being treated as having given it")
+	}
+	// And the withdrawal is not permanent: granting again re-opens it, because
+	// the latest row is the answer in both directions.
+	grant(ledger.AuthorityDefault, "confirmed after all")
+	if blocked() {
+		t.Fatal("a regrant after a withdrawal must open the gate again")
+	}
+}

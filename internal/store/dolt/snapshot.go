@@ -866,6 +866,7 @@ func (s *snapshot) Asks(q ledger.AskQuery) ([]ledger.Ask, error) {
 	w.inStrings("state", strs(q.States))
 	w.inStrings("prompt_key", q.PromptKeys)
 	w.inStrings("crumb_id", strs(q.CrumbIDs))
+	w.inStrings("authority_id", strs(q.AuthorityIDs))
 	w.eq("respondent", string(q.Respondent))
 	w.eq("target_id", q.TargetID)
 	w.eq("enqueue_session_id", q.SessionID)

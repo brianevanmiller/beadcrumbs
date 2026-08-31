@@ -443,10 +443,6 @@ func (l *Ledger) AnswerAsk(ctx context.Context, c AnswerAsk) (AnswerResult, erro
 		return AnswerResult{}, err
 	}
 
-	respondent, err := l.respondentProvenance(ask, c.RespondentID)
-	if err != nil {
-		return AnswerResult{}, err
-	}
 	// The answer is redacted once, here, and the redacted form is what both the
 	// Crumb and asks.answer_text hold. Storing the raw text in the column while
 	// redacting the Crumb would put the secret in the ledger by the back door.
@@ -456,6 +452,19 @@ func (l *Ledger) AnswerAsk(ctx context.Context, c AnswerAsk) (AnswerResult, erro
 	}
 	l.assertRedacted("asks.answer_text", text)
 	answer, choice, err := resolveAnswer(ask, strings.TrimSpace(c.ChoiceID), text)
+	if err != nil {
+		return AnswerResult{}, err
+	}
+	relayed := l.relaying(ask)
+	if relayed && grantsAuthority(ask, choice) && strings.TrimSpace(c.RespondentID) == "" {
+		// A grant recorded against the literal `human` is nobody's claim, and
+		// nobody's claim cannot be checked with anyone later. Naming the person
+		// does not stop a fabrication; it turns an anonymous one into a
+		// falsifiable one, which is the difference between a mark and a shrug.
+		return AnswerResult{}, Fail(ErrInvalidInput, "invalid_ask",
+			"a relayed grant has to name who made it; pass --respondent-id")
+	}
+	respondent, err := l.respondentProvenance(ask, c.RespondentID)
 	if err != nil {
 		return AnswerResult{}, err
 	}
@@ -486,6 +495,9 @@ func (l *Ledger) AnswerAsk(ctx context.Context, c AnswerAsk) (AnswerResult, erro
 	}
 	out.Findings = append(out.Findings, extra...)
 	out.Notices = append(out.Notices, notices...)
+	if n, ok := relayNotice(relayed, l.actor, respondent, ask, validation, authority); ok {
+		out.Notices = append(out.Notices, n)
+	}
 
 	err = l.store.Write(ctx, func(tx Tx) error {
 		now := l.clock()
@@ -721,7 +733,10 @@ func (l *Ledger) prepareAnswerAuthority(ctx context.Context, ask Ask, choice str
 			"%q is not an authority-nudge answer; expected grant-default, reject, or wait", choice)
 	}
 
-	var proposal Proposal
+	var (
+		proposal  Proposal
+		withdrawn bool
+	)
 	if err := l.store.Read(ctx, func(snap Snapshot) error {
 		rows, err := snap.Proposals(PromotionQuery{IDs: []ProposalID{ProposalID(ask.Target.ID)}})
 		if err != nil {
@@ -731,9 +746,26 @@ func (l *Ledger) prepareAnswerAuthority(ctx context.Context, ask Ask, choice str
 			return NotFound("promotion proposal", ask.Target.ID)
 		}
 		proposal = rows[0]
-		return nil
+		if !l.relaying(ask) {
+			return nil
+		}
+		level, found, err := latestRepoWideHumanGrant(snap, ask.Target)
+		withdrawn = found && level == AuthorityAdvisory
+		return err
 	}); err != nil {
 		return nil, nil, nil, err
+	}
+
+	// A human who withdrew a grant has to be able to make it stick. Without
+	// this, repair is a treadmill: the human appends advisory, the next relayed
+	// answer appends default again, and the gate reopens on the agent's word.
+	if withdrawn {
+		return nil, nil, []Notice{{
+			Code: "ask_grant_withdrawn",
+			Message: fmt.Sprintf("a human withdrew authority on %s; a relayed answer cannot "+
+				"reinstate it, so this needs `bdc authority %s --level default --rationale ...` "+
+				"run directly", ask.Target.ID, ask.Target.ID),
+		}}, nil
 	}
 
 	if proposal.Class == "policy" || proposal.RequestedAuthority == AuthorityMandatory {
@@ -755,6 +787,49 @@ func (l *Ledger) prepareAnswerAuthority(ctx context.Context, ask Ask, choice str
 		return nil, nil, nil, err
 	}
 	return &grant, findings, nil, nil
+}
+
+// relaying reports whether this invocation is carrying someone else's answer:
+// an agent process resolving a human-track ask. It is the condition every mark
+// in this file keys on, because a relayed judgement record and a direct one are
+// byte-identical once written.
+func (l *Ledger) relaying(ask Ask) bool {
+	return ask.Respondent == PromptRespondentHuman && l.actor.ActorKind == ActorAgent
+}
+
+// grantsAuthority reports whether this answer would append a grant. It is asked
+// before the caps are applied, because the question is "is a signature being
+// claimed here", not "will one land".
+func grantsAuthority(ask Ask, choice string) bool {
+	return ask.PromptKey == PromptAuthorityNudge && choice == "grant-default"
+}
+
+// relayNotice marks a judgement record written on someone else's word. The
+// ledger cannot tell a genuine relay from a fabricated one — the rows are
+// identical — so it does not try: every relayed judgement is announced, and it
+// stays announced in `bdc context` until a human acts directly on it.
+//
+// The message names the withdrawal command, because a mark nobody can act on is
+// decoration.
+func relayNotice(relayed bool, transport, respondent Provenance, ask Ask,
+	validation *Validation, authority *Authority) (Notice, bool) {
+	if !relayed || (validation == nil && authority == nil) {
+		return Notice{}, false
+	}
+	what := "a verdict"
+	undo := ""
+	if authority != nil {
+		what = "a working default"
+		undo = fmt.Sprintf("; withdraw it with `bdc authority %s --level advisory --rationale ...`",
+			ask.Target.ID)
+	}
+	return Notice{
+		Code: "ask_answer_relayed",
+		Message: fmt.Sprintf(
+			"%s was recorded as %s's, relayed by %s in session %s — the ledger cannot verify "+
+				"that they answered%s", what, respondent.ActorID, transport.ActorID,
+			transport.SessionID, undo),
+	}, true
 }
 
 // respondentProvenance decides whose record the answer is. Three cases, and the

@@ -364,8 +364,13 @@ func (l *Ledger) narrateContext(snap Snapshot, q NarrativeQuery, n *Narrative) e
 	if err != nil {
 		return err
 	}
+	relayed, err := relayedAuthorityQuestions(snap, promotions)
+	if err != nil {
+		return err
+	}
 	n.OpenQuestions = append(openQuestions(insights, promotions, counts.CrumbsByState[StateCandidate]),
-		pendingAskQuestions(asks)...)
+		relayed...)
+	n.OpenQuestions = append(n.OpenQuestions, pendingAskQuestions(asks)...)
 	n.Summary = contextSummary(insights, n.RecentCrumbs, promotions, n.OpenQuestions, q)
 	return nil
 }
@@ -661,6 +666,110 @@ func openQuestions(insights []NarrativeInsight, promotions []NarrativePromotion,
 		})
 	}
 	return out
+}
+
+// relayedAuthorityQuestions reports every promotion whose human-authority gate
+// is open only because of an answer an agent carried.
+//
+// The ledger cannot tell a genuine relay from a fabricated one: the authority
+// rows are byte-identical, and the actor kind on them is self-asserted anyway.
+// So this does not detect wrongdoing. It marks a class of approval that nobody
+// has confirmed face to face, and keeps marking it until a human acts on the
+// record directly — a confirming `bdc authority` has no ask pointing at it, so
+// the predicate goes false on its own and the question clears.
+//
+// An applied promotion is still reported. The mark going quiet at exactly the
+// moment the external write landed would be the wrong time to stop asking.
+func relayedAuthorityQuestions(snap Snapshot, promotions []NarrativePromotion) ([]NarrativeQuestion, error) {
+	var ids []ProposalID
+	for _, p := range promotions {
+		if p.AuthorityRequired == RequireHuman && p.AuthorityHeld &&
+			(isOpen(p.Status) || p.Status == PromotionApplied) {
+			ids = append(ids, p.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	proposals, err := snap.Proposals(PromotionQuery{IDs: ids})
+	if err != nil {
+		return nil, err
+	}
+
+	out := []NarrativeQuestion{}
+	for _, p := range proposals {
+		grants, err := humanAuthorityGrants(snap, gateFor(p))
+		if err != nil {
+			return nil, err
+		}
+		if len(grants) == 0 {
+			continue
+		}
+		relays, err := relayedGrants(snap, grants)
+		if err != nil {
+			return nil, err
+		}
+		// Any grant nobody relayed is a human acting directly, and one of those
+		// settles the question for the whole gate.
+		if len(relays) < len(grants) {
+			continue
+		}
+		attributed, err := grantActor(snap, gateFor(p), grants[0])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, NarrativeQuestion{
+			Kind:    "relayed_authority",
+			Subject: RecordRef{Kind: KindProposal, ID: string(p.ID)},
+			Question: fmt.Sprintf(
+				"promoting to %s:%s was unblocked by an answer relayed through session %s, "+
+					"recorded as %s's", p.DestKind, p.DestLocator, relays[0].ViaSession, attributed),
+			Detail: "confirm it with `bdc authority " + string(p.ID) +
+				" --level default --rationale ...`, or withdraw it with `--level advisory`",
+		})
+	}
+	return out, nil
+}
+
+// grantActor is who one grant is attributed to. It is read from the grant
+// rather than from the ask on purpose: the ask records the agent that carried
+// the answer, and the whole point of the mark is the gap between those two.
+func grantActor(snap Snapshot, g authorityGate, grant string) (string, error) {
+	targets := []RecordRef{g.proposal}
+	if !g.proposalOnly {
+		targets = append(targets, g.revision)
+	}
+	events, err := snap.Events(EventQuery{Targets: targets})
+	if err != nil {
+		return "", err
+	}
+	for _, e := range events {
+		if e.Kind == EventAuthority && e.ID == grant {
+			return e.ActorID, nil
+		}
+	}
+	return "", nil
+}
+
+// relayedGrants returns the asks that produced the named grants and carried a
+// via_session — the only record that an agent relayed the answer, which is why
+// the plan kept that column on the ask and made this row the join.
+func relayedGrants(snap Snapshot, grants []string) ([]Ask, error) {
+	authorities := make([]AuthorityID, 0, len(grants))
+	for _, id := range grants {
+		authorities = append(authorities, AuthorityID(id))
+	}
+	asks, err := snap.Asks(AskQuery{AuthorityIDs: authorities})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Ask, 0, len(asks))
+	for _, a := range asks {
+		if a.ViaSession != "" {
+			out = append(out, a)
+		}
+	}
+	return out, nil
 }
 
 // pendingAskQuestions surfaces the human queue in the same list as everything
