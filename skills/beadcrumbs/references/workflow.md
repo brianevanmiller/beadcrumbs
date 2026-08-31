@@ -253,7 +253,8 @@ bdc ask deliver --respondent human --json
 
 Present it in the plain-text format from `SKILL.md`, then record the reply.
 `--choice` takes the option id or its printed number; `--respondent-id` names
-the person when you are relaying, and your own `BDC_ACTOR_KIND` stays `agent`:
+the person when you are relaying — required for `grant-default` — and your own
+`BDC_ACTOR_KIND` stays `agent`:
 
 ```
 bdc ask answer ask_0199aa11-… --choice grant-default --respondent-id brian --json
@@ -301,6 +302,23 @@ and never grants on a `policy`-class proposal — `data.authority` is `null` and
 the warning is `ask_grant_capped`, naming the `bdc authority` a human runs
 directly. And `reject` records a recommendation rather than closing the
 promotion: the warning is `ask_reject_not_applied`.
+
+The grant above also raises `ask_answer_relayed`, because the ledger cannot
+verify that brian answered — a genuine relay and a fabricated one write
+identical rows. Show that warning to the person. Until someone runs
+`bdc authority` on the proposal directly, `bdc context` keeps reporting it:
+
+```json
+{
+  "kind": "relayed_authority",
+  "subject": {"kind": "promotion_proposal", "id": "pp_0199aa11-…"},
+  "question": "promoting to docs:docs/adr/0007.md was unblocked by an answer relayed through session session-2026-08-30, recorded as brian's",
+  "detail": "confirm it with `bdc authority pp_0199aa11-… --level default --rationale ...`, or withdraw it with `--level advisory`"
+}
+```
+
+Withdrawing re-closes the gate and sticks: a later relayed answer cannot
+reinstate it (`ask_grant_withdrawn`). Only a direct `bdc authority` can.
 
 The agent track is one question and it is cheap:
 

@@ -70,6 +70,8 @@ write.
 | `unharvested_crumbs` | `hooks run` | outstanding candidates this repository harvests manually |
 | `ask_grant_capped` | `ask answer` | a sampled `grant-default` was refused — `policy` class, or the proposal asked for `mandatory`; the answer is still recorded and the message names the direct `bdc authority` |
 | `ask_reject_not_applied` | `ask answer` | `reject` recorded a recommendation; the promotion is untouched and the message names `bdc promote reject` |
+| `ask_answer_relayed` | `ask answer` | a verdict or a grant was written on an answer an agent carried; the ledger cannot verify the person answered, and the message names the withdrawal command |
+| `ask_grant_withdrawn` | `ask answer` | a relayed `grant-default` was refused because a human had already withdrawn authority directly; only a direct grant reinstates it |
 | `hook_not_ours` | `hooks uninstall` | a hook bdc did not write was left exactly as it is |
 | `no_ledger` | `hooks uninstall` | there is no ledger here, so `harvest.auto` was not cleared |
 
@@ -392,10 +394,27 @@ with `--respondent-id`. The Crumb, the validation, and the grant are recorded as
 ask records the agent as the process that carried it, plus `via_session`. That is the whole relay,
 and it is why no provenance table needed a `via_session` column.
 
+`--respondent-id` is **required** for a relayed `grant-default`. A grant recorded against the
+literal `human` is nobody's claim, and nobody's claim cannot be checked with anyone later.
+
 An agent must not export `BDC_ACTOR_KIND=human` to record a relayed tap. `human` is the value every
 authority gate is satisfied by, so that trade grants the agent a signature on everything else it
 does that session. The database cannot catch it either: the relayed row is legitimately stamped
 `actor_kind='human'`, so the caps in `ask answer` are the only gate there is.
+
+### Marked, not prevented
+
+A genuine relay and a fabricated one produce byte-identical rows, so the ledger does not try to
+tell them apart. It marks every relayed judgement and keeps marking it:
+
+- `ask answer` warns `ask_answer_relayed` at the moment it writes.
+- `bdc context` reports a `relayed_authority` open question for any promotion whose human-authority
+  gate is open *only* because of relayed grants — including one that has already been applied,
+  because that is the wrong moment to go quiet. A direct `bdc authority` has no ask pointing at it,
+  so confirming clears the question on its own.
+- Withdrawing is `bdc authority <proposal-id> --level advisory --rationale "…"`. Authority is
+  append-only and the latest grant is the current one, so this closes the gate again — and it
+  sticks: a relayed answer cannot reinstate it (`ask_grant_withdrawn`). Only a direct grant can.
 
 ---
 

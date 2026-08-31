@@ -327,7 +327,7 @@ No SQL in `internal/ledger`. No Dolt types in `cmd/bdc`.
 
 - transport: `asks.actor_*` = `l.actor` (the agent)
 - `asks.via_session` = `l.actor.SessionID` (required when respondent is human and transport is agent)
-- Crumb `actor_kind=human`, `actor_id` from `--respondent-id` (default literal `human`), empty model/session
+- Crumb `actor_kind=human`, `actor_id` from `--respondent-id`, empty model/session. **Amended during implementation:** `--respondent-id` is *required* on a relayed `grant-default` rather than defaulting to the literal `human`. A grant recorded against `human` is nobody's claim, and nobody's claim cannot be checked with anyone later; naming the person does not prevent a fabrication but makes it falsifiable. The literal default stands for `wait`, `reject`, and calibration, none of which claims a signature.
 
 `Provenance.Validate` already allows human without model/session. Do not invent a human session.
 
@@ -398,6 +398,8 @@ func (l *Ledger) SkipAsk(ctx, SkipAsk) (Ask, error)
 
   **`authority-nudge`**:
   - `grant-default`: load the proposal. Refuse the grant **iff** `class == "policy"` OR `requested_authority == mandatory` — exactly those two conditions, no appeal to `AuthorityRequiredFor`. On refusal: record the Crumb, set ask answered, return `data.authority: null` and a warning `ask_grant_capped` naming the direct command (`bdc authority <id> --level …`). Otherwise append a `default`, repo-wide (unscoped — scoped grants are ignored by `humanAuthorityHeld`, and unblocking is the point) grant with respondent human provenance, rationale `sampled authority-nudge`. Store `asks.authority_id`. `authority.agent_may_set_default` does **not** gate this path — the grant is attributed to the human respondent, not the agent transport — and `TestAnswerAskGrantDefaultIgnoresAgentMaySetDefault` pins that reading so it stays a decision, not an accident.
+
+    **Amended during implementation.** Those two caps leave the third route to `RequireHuman` — a destination declaring `requires-human-authority` — grantable by a relay, and that is in fact the *entire* population `prepareNudges` mints for, since the other two are refused. Capping it as well would zero the feature. The decision taken instead is to mark rather than prevent, on the grounds that the boundary is not enforceable anyway (`--actor-kind` is self-asserted, and the capability is declared by the proposer): a relayed `grant-default` requires a named respondent, raises `ask_answer_relayed`, and is reported by `bdc context` as a `relayed_authority` open question until a human grants or withdraws directly. A withdrawal is now sticky — a relayed answer cannot reinstate a grant a human lowered to `advisory` (`ask_grant_withdrawn`).
   - `reject`: Crumb only. Do **not** call `RejectPromotion`. Warning `ask_reject_not_applied` (`run bdc promote reject {id}`). A relayed tap is not a signature on a terminal promotion outcome — which is why the seeded option is worded "Recommend rejection", not "Reject the proposal": the question must not promise an action the answer does not perform.
   - `wait`: treat as skip semantics but state `answered` with `choice_id=wait` (it is an answer, not a skip). No Crumb required? **Yes, still a Crumb** — "keep waiting" is a human-provenance record. Cheap and queryable.
 
@@ -523,6 +525,8 @@ If the harness has a structured question tool, use it for `choice` prompts (1–
 |---|---|
 | `ask_grant_capped` | Relayed grant refused; direct `bdc authority` required |
 | `ask_reject_not_applied` | Relayed reject did not call `promote reject` |
+| `ask_answer_relayed` | A judgement record was written on a relayed answer the ledger cannot verify |
+| `ask_grant_withdrawn` | A relayed `grant-default` was refused because a human had withdrawn authority directly |
 | `validation_without_evidence` | Already exists; calibration disputed/rejected will raise it |
 
 **[docs/guides/hooks.md](guides/hooks.md)** — one sentence under the two rules: hooks may enqueue (`bdc ask enqueue`) in a later phase; they must never run `ask deliver` or `ask answer`. Tracer does not add enqueue to `hooks run`. No `hookTriggers` change.
