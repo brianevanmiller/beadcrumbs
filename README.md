@@ -41,7 +41,7 @@ grant `mandatory` authority.
 ### Released binary (recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/brianevanmiller/beadcrumbs/v1.0.1/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/brianevanmiller/beadcrumbs/v1.1.0/scripts/install.sh | bash
 ```
 
 Or through npm:
@@ -68,11 +68,11 @@ brew install icu4c
 CGO_ENABLED=1 \
 CGO_CPPFLAGS="-I$(brew --prefix icu4c)/include" \
 CGO_LDFLAGS="-L$(brew --prefix icu4c)/lib" \
-  go install github.com/brianevanmiller/beadcrumbs/cmd/bdc@v1.0.1
+  go install github.com/brianevanmiller/beadcrumbs/cmd/bdc@v1.1.0
 
 # Debian/Ubuntu — libicu-dev is already on the default search path
 sudo apt install libicu-dev
-CGO_ENABLED=1 go install github.com/brianevanmiller/beadcrumbs/cmd/bdc@v1.0.1
+CGO_ENABLED=1 go install github.com/brianevanmiller/beadcrumbs/cmd/bdc@v1.1.0
 ```
 
 Go 1.26.2 or newer is required. That floor is imposed by `github.com/dolthub/driver`, not chosen.
@@ -148,7 +148,7 @@ without them is refused. Undeclared, a run carrying both is recorded as an agent
 else as a human, and `human` is the value every authority gate is satisfied by.
 
 It installs to `.agents/skills/beadcrumbs` and symlinks each detected agent directory at it. Pin
-the tag (`brianevanmiller/beadcrumbs/tree/v1.0.1/skills/beadcrumbs`) if you need a reproducible
+the tag (`brianevanmiller/beadcrumbs/tree/v1.1.0/skills/beadcrumbs`) if you need a reproducible
 install; the installer tracks a content hash in `skills-lock.json`, not a version.
 
 Optional, and never part of the contract: `bdc hooks install` writes chained `pre-push` and
@@ -167,7 +167,7 @@ hooks. Automatic harvesting is off by default and opted into per repository with
   "warnings": [{"code": "beads_unavailable",
                 "message": "beads references resolve to their locator; bd is unavailable here: not_installed"}],
   "error": null,
-  "meta": {"bdc_version": "1.0.1", "ledger_schema": 3, "generated_at": "2026-08-28T14:00:00.000000Z"}
+  "meta": {"bdc_version": "1.1.0", "ledger_schema": 3, "generated_at": "2026-08-28T14:00:00.000000Z"}
 }
 ```
 

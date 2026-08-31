@@ -1,6 +1,6 @@
 {
   "name": "@beadcrumbs/bdc",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "bdc - a repository-local reasoning ledger for humans and coding agents",
   "main": "bin/bdc.js",
   "bin": {

@@ -3,7 +3,7 @@
   "command": "version",
   "ok": true,
   "data": {
-    "version": "1.0.1",
+    "version": "1.1.0",
     "schema_version": 3,
     "dolt_driver": "<build>",
     "go": "<build>",
@@ -12,7 +12,7 @@
   "warnings": [],
   "error": null,
   "meta": {
-    "bdc_version": "1.0.1",
+    "bdc_version": "1.1.0",
     "ledger_schema": 3,
     "generated_at": "<time>"
   }

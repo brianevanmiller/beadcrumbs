@@ -131,4 +131,4 @@ INSERT INTO repo_config (k, v, updated_at) VALUES
   ('ask.expire_after',    '168h', UTC_TIMESTAMP(6));
 
 REPLACE INTO schema_meta (id, version, bdc_version, applied_at)
-VALUES (1, 3, '1.0.1', UTC_TIMESTAMP(6));
+VALUES (1, 3, '1.1.0', UTC_TIMESTAMP(6));

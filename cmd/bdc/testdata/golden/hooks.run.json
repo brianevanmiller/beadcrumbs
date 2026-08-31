@@ -15,7 +15,7 @@
   ],
   "error": null,
   "meta": {
-    "bdc_version": "1.0.1",
+    "bdc_version": "1.1.0",
     "ledger_schema": 3,
     "generated_at": "<time>"
   }

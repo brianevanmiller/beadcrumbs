@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.1.0 — 2026-08-31
+
+Schema 3. A v1.0.1 ledger is readable after `bdc migrate`; `bdc doctor` names that command
+when the schema is behind.
+
+- **Experience sampling.** `bdc ask` and `bdc prompts` turn blocked proposals, unvalidated
+  Insights, and dying session context into skippable micro-questions. Answers are Crumbs.
+  `calibration` also appends a validation; `authority-nudge` may append a working default.
+  Relayed human answers never grant `mandatory` and never reject a proposal.
+- **JSON contract.** Envelope `meta.bdc_version` is `1.1.0`, `meta.ledger_schema` is `3`.
+  `bdc prime` keys are unchanged. Empty `ask deliver` is `ok: true`, `data.questions: []`.
+
 ## v1.0.1 — 2026-08-30
 
 Schema 2. A v1.0.0 ledger is readable after `bdc migrate`; `bdc doctor` names that command

@@ -18,7 +18,7 @@ import (
 )
 
 // version is the bdc release version reported in every envelope's meta.
-const version = "1.0.1"
+const version = "1.1.0"
 
 // ledgerMode declares what a command needs before its body runs. Cobra has no
 // typed per-command metadata, so it travels as an annotation; an unrecognised

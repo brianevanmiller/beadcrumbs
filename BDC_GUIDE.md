@@ -21,7 +21,7 @@ one error.
   "warnings": [{"code": "beads_unavailable",
                 "message": "beads references resolve to their locator; bd is unavailable here: not_installed"}],
   "error": null,
-  "meta": {"bdc_version": "1.0.1", "ledger_schema": 3, "generated_at": "2026-08-28T14:00:00.000000Z"}
+  "meta": {"bdc_version": "1.1.0", "ledger_schema": 3, "generated_at": "2026-08-28T14:00:00.000000Z"}
 }
 ```
 

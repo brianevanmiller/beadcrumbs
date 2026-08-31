@@ -2,7 +2,7 @@
 #
 # Install bdc from a GitHub release.
 #
-#   curl -fsSL https://raw.githubusercontent.com/brianevanmiller/beadcrumbs/v1.0.1/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/brianevanmiller/beadcrumbs/v1.1.0/scripts/install.sh | bash
 #
 # Downloads the prebuilt static-ICU archive for this platform, verifies its
 # SHA-256 against the release's checksums.txt, and installs one binary.
