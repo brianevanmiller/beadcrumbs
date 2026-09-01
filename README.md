@@ -44,16 +44,10 @@ grant `mandatory` authority.
 curl -fsSL https://raw.githubusercontent.com/brianevanmiller/beadcrumbs/v1.1.0/scripts/install.sh | bash
 ```
 
-Or through npm:
-
-```bash
-npm install -g @beadcrumbs/bdc
-```
-
-Both fetch the prebuilt `-tags icu_static` archive for your platform from the GitHub release,
-verify its SHA-256 against the release's `checksums.txt`, and install one binary. Neither falls
-back to a source build: on an unsupported platform they fail with the manual instructions
-rather than starting a compile that will not finish.
+The installer fetches the prebuilt `-tags icu_static` archive for your platform from the GitHub
+release, verifies its SHA-256 against the release's `checksums.txt`, and installs one binary. It
+does not fall back to a source build: on an unsupported platform it fails with the manual
+instructions rather than starting a compile that will not finish.
 
 ### From source
 
