@@ -404,3 +404,115 @@ func (t *tx) execN(query string, args ...any) (int, error) {
 	}
 	return int(n), nil
 }
+
+func (t *tx) InsertPrompt(p ledger.Prompt) error {
+	if err := assertID(ledger.PrefixPrompt, string(p.ID)); err != nil {
+		return err
+	}
+	options, err := ledger.EncodeOptions(p.Options)
+	if err != nil {
+		return err
+	}
+	return t.exec(`INSERT INTO prompts
+		(id, prompt_key, version, respondent, question_template, answer_kind, options_json,
+		 trigger_class, origin, active, created_at,
+		 actor_id, actor_kind, actor_model, session_id, harness)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		append([]any{
+			string(p.ID), p.Key, p.Version, string(p.Respondent), p.QuestionTemplate,
+			string(p.AnswerKind), nullStr(options), p.TriggerClass, string(p.Origin),
+			boolBit(p.Active), utc(p.CreatedAt),
+		}, provArgs(p.Provenance)...)...)
+}
+
+// SetPromptActive is the only write that touches a registered prompt, and it
+// moves one flag. Editing a question is adding a version, never a rewrite: an
+// ask already minted has to stay interpretable beside the exact words that
+// produced it.
+func (t *tx) SetPromptActive(id ledger.PromptID, active bool) error {
+	n, err := t.execN(`UPDATE prompts SET active = ? WHERE id = ?`, boolBit(active), string(id))
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		exists, err := t.exists(`SELECT COUNT(*) FROM prompts WHERE id = ?`, string(id))
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return ledger.NotFound("prompt", string(id))
+		}
+	}
+	return nil
+}
+
+func (t *tx) InsertAsk(a ledger.Ask) error {
+	if err := assertID(ledger.PrefixAsk, string(a.ID)); err != nil {
+		return err
+	}
+	options, err := ledger.EncodeOptions(a.Options)
+	if err != nil {
+		return err
+	}
+	return t.exec(`INSERT INTO asks
+		(id, prompt_id, prompt_key, prompt_version, respondent, target_kind, target_id, state,
+		 question_snapshot, options_snapshot, enqueue_session_id, via_session,
+		 crumb_id, validation_id, authority_id, choice_id, answer_text, skip_reason, latency_ms,
+		 created_at, delivered_at, resolved_at, expires_at,
+		 actor_id, actor_kind, actor_model, session_id, harness)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		append([]any{
+			string(a.ID), string(a.PromptID), a.PromptKey, a.PromptVersion, string(a.Respondent),
+			nullStr(string(a.Target.Kind)), nullStr(a.Target.ID), string(a.State),
+			a.QuestionSnapshot, nullStr(options), nullStr(a.EnqueueSessionID), nullStr(a.ViaSession),
+			nullStr(string(a.CrumbID)), nullStr(string(a.ValidationID)), nullStr(string(a.AuthorityID)),
+			nullStr(a.ChoiceID), nullStr(a.AnswerText), nullStr(a.SkipReason), nullInt(a.LatencyMS),
+			utc(a.CreatedAt), nullTimePtr(a.DeliveredAt), nullTimePtr(a.ResolvedAt), nullTime(a.ExpiresAt),
+		}, provArgs(a.Provenance)...)...)
+}
+
+// UpdateAsk moves the mutable half of an Ask. The question, its options, the
+// prompt it came from, and the provenance that minted it are not in the SET
+// list: an ask whose words could change after delivery would make every answer
+// unreadable in hindsight.
+func (t *tx) UpdateAsk(a ledger.Ask) error {
+	n, err := t.execN(`UPDATE asks SET
+		state = ?, crumb_id = ?, validation_id = ?, authority_id = ?,
+		choice_id = ?, answer_text = ?, skip_reason = ?, via_session = ?,
+		latency_ms = ?, delivered_at = ?, resolved_at = ?
+		WHERE id = ?`,
+		string(a.State), nullStr(string(a.CrumbID)), nullStr(string(a.ValidationID)),
+		nullStr(string(a.AuthorityID)), nullStr(a.ChoiceID), nullStr(a.AnswerText),
+		nullStr(a.SkipReason), nullStr(a.ViaSession), nullInt(a.LatencyMS),
+		nullTimePtr(a.DeliveredAt), nullTimePtr(a.ResolvedAt), string(a.ID))
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		// An UPDATE that changed nothing and an UPDATE that matched nothing are
+		// the same row count, so the distinction has to be asked for.
+		exists, err := t.exists(`SELECT COUNT(*) FROM asks WHERE id = ?`, string(a.ID))
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return ledger.NotFound("ask", string(a.ID))
+		}
+	}
+	return nil
+}
+
+func (t *tx) exists(query string, args ...any) (bool, error) {
+	var n int
+	if err := t.row(query, args...).Scan(&n); err != nil {
+		return false, translate(err, query)
+	}
+	return n > 0, nil
+}
+
+func boolBit(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}

@@ -1,6 +1,9 @@
 package ledger
 
-import "slices"
+import (
+	"slices"
+	"sort"
+)
 
 // Authority policy: who may establish what, and what a promotion has to hold
 // before it may be applied.
@@ -55,7 +58,7 @@ var humanAuthorityClasses = []string{"policy"}
 // destination from relaxing a strict class.
 //
 // The requested level is in the max because requesting mandatory force is
-// asking for something only a human may grant (see mayGrant): letting an agent
+// asking for something only a human may grant (see mayGrantAs): letting an agent
 // propose it and a second agent apply it would route around that rule.
 func AuthorityRequiredFor(class string, caps []Capability, requested AuthorityLevel) AuthorityRequirement {
 	req := RequireNone
@@ -76,32 +79,39 @@ func AuthorityRequiredFor(class string, caps []Capability, requested AuthorityLe
 	return req
 }
 
-// mayGrant answers whether this invocation's actor may grant a level. The three
+// mayGrantAs answers whether one provenance may grant a level. The three
 // answers are different in kind, so they are three branches rather than a
 // permission table: advisory is always allowed, default is a repository policy
 // decision, and mandatory is a property of the actor.
-func (l *Ledger) mayGrant(level AuthorityLevel) error {
+//
+// The actor is a parameter rather than l.actor because the acting provenance
+// and the process actor are not always the same: a sampled `grant-default` is
+// the human respondent's grant relayed by an agent, so the question is about
+// the human. Note that ck_aut_mandatory_human cannot backstop that path — the
+// row is stamped actor_kind='human' — so on a relay this check is the only
+// gate, which is why AnswerAsk asserts its own caps before it ever gets here.
+func (l *Ledger) mayGrantAs(level AuthorityLevel, actor Provenance) error {
 	switch level {
 	case AuthorityAdvisory:
 		return nil
 	case AuthorityDefault:
-		if l.actor.ActorKind == ActorHuman || l.config.AgentMaySetDefault {
+		if actor.ActorKind == ActorHuman || l.config.AgentMaySetDefault {
 			return nil
 		}
 		return Fail(ErrAuthorityDenied, "authority_denied",
 			"this repository does not permit an agent to grant a working default; "+
 				"set %s=1 in repo_config, or have a human grant it",
 			ConfigAgentMaySetDefault).
-			WithDetails(map[string]any{"level": string(level), "actor_kind": string(l.actor.ActorKind)})
+			WithDetails(map[string]any{"level": string(level), "actor_kind": string(actor.ActorKind)})
 	case AuthorityMandatory:
-		if l.actor.ActorKind == ActorHuman {
+		if actor.ActorKind == ActorHuman {
 			return nil
 		}
 		// Never downgraded to advisory: an agent that asked for mandatory and
 		// silently got advisory would believe it established something binding.
 		return Fail(ErrAuthorityDenied, "authority_denied",
 			"only a human may grant mandatory authority; the request was not downgraded").
-			WithDetails(map[string]any{"level": string(level), "actor_kind": string(l.actor.ActorKind)})
+			WithDetails(map[string]any{"level": string(level), "actor_kind": string(actor.ActorKind)})
 	default:
 		return Fail(ErrInvalidInput, "invalid_authority",
 			"%q is not an authority level; expected advisory, default, or mandatory", level)
@@ -143,9 +153,13 @@ func requiresProposalGrant(class string, caps []Capability) bool {
 	return slices.Contains(humanAuthorityClasses, class) || slices.Contains(caps, CapRequiresHumanAuthority)
 }
 
-// humanAuthorityHeld reports whether a human grant covers this promotion. Four
-// rules, each of them a narrowing a human can express and therefore one the
-// gate has to honour:
+// humanAuthorityHeld reports whether a human grant covers this promotion.
+// humanAuthorityGrants is the same question with its working shown: the ids of
+// the grants that answer it, which is what lets a caller ask *who* opened a
+// gate rather than only whether it is open.
+//
+// Five rules, each of them a narrowing a human can express and therefore one
+// the gate has to honour:
 //
 //   - Advisory does not count. It is informational by definition — cite it, do
 //     not act on it as settled — so treating it as approval would make the
@@ -159,33 +173,94 @@ func requiresProposalGrant(class string, caps []Capability) bool {
 //   - A grant on the Insight revision is about the conclusion's standing, not
 //     about writing it somewhere, so it counts only when it names this
 //     destination — and never for a proposalOnly gate.
+//   - The latest grant wins, per target and per narrowing. Authority is
+//     append-only and the current level is the latest row — that is what
+//     `effectiveAuthority` and every reading in the product already mean — so a
+//     human who follows a `default` with an `advisory` has withdrawn it. Before
+//     this fold the gate scanned for *any* qualifying row and could never be
+//     un-satisfied: `bdc authority` reported the level as advisory while the
+//     promotion it guarded still applied, which is the report and the decision
+//     disagreeing in the one direction that matters.
 func humanAuthorityHeld(snap Snapshot, g authorityGate) (bool, error) {
+	grants, err := humanAuthorityGrants(snap, g)
+	return len(grants) > 0, err
+}
+
+// grantScope names one narrowing a grant can carry, so "the latest grant" is
+// asked per narrowing rather than globally: a repo-wide grant and a grant
+// naming one destination are different statements, and a later one of either
+// kind replaces only its own.
+type grantScope struct {
+	target RecordRef
+	dest   string
+}
+
+func humanAuthorityGrants(snap Snapshot, g authorityGate) ([]string, error) {
 	targets := []RecordRef{g.proposal}
 	if !g.proposalOnly {
 		targets = append(targets, g.revision)
 	}
 	events, err := snap.Events(EventQuery{Targets: targets})
 	if err != nil {
-		return false, err
+		return nil, err
 	}
+
+	// Events arrive oldest first, so a later row simply overwrites its scope.
+	type standing struct {
+		id    string
+		level AuthorityLevel
+	}
+	latest := map[grantScope]standing{}
 	for _, e := range events {
 		if e.Kind != EventAuthority || e.ActorKind != ActorHuman || e.Scope != "" {
-			continue
-		}
-		switch AuthorityLevel(e.Summary) {
-		case AuthorityDefault, AuthorityMandatory:
-		default:
 			continue
 		}
 		named := e.DestinationKind != "" || e.DestinationLocator != ""
 		if named && (e.DestinationKind != g.destKind || e.DestinationLocator != g.destLocator) {
 			continue
 		}
-		if e.Target == g.proposal || named {
-			return true, nil
+		if !named && e.Target != g.proposal {
+			continue
+		}
+		scope := grantScope{target: e.Target}
+		if named {
+			scope.dest = g.destKind + "\x1f" + g.destLocator
+		}
+		latest[scope] = standing{id: e.ID, level: AuthorityLevel(e.Summary)}
+	}
+
+	var out []string
+	for _, s := range latest {
+		if s.level == AuthorityDefault || s.level == AuthorityMandatory {
+			out = append(out, s.id)
 		}
 	}
-	return false, nil
+	sort.Strings(out)
+	return out, nil
+}
+
+// latestRepoWideHumanGrant is the standing of one record as a human last left
+// it, repo-wide: the latest unscoped grant naming no destination. It answers
+// "did a human already say no here", which is a different question from "is the
+// gate open" — an advisory is a withdrawal, and a withdrawal has to be able to
+// outlast the next relayed answer or repair is a treadmill.
+func latestRepoWideHumanGrant(snap Snapshot, target RecordRef) (AuthorityLevel, bool, error) {
+	events, err := snap.Events(EventQuery{Targets: []RecordRef{target}})
+	if err != nil {
+		return "", false, err
+	}
+	var level AuthorityLevel
+	found := false
+	for _, e := range events {
+		if e.Kind != EventAuthority || e.ActorKind != ActorHuman || e.Scope != "" {
+			continue
+		}
+		if e.DestinationKind != "" || e.DestinationLocator != "" {
+			continue
+		}
+		level, found = AuthorityLevel(e.Summary), true
+	}
+	return level, found, nil
 }
 
 // Notice is the ledger's non-fatal channel: a condition a caller has to see but

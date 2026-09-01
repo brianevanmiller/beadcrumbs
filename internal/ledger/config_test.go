@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The seeds the schema migration writes must parse. If this drifts, every
@@ -17,6 +18,8 @@ func TestParseRepoConfigReadsTheSeededValues(t *testing.T) {
 		ConfigRedactionVersion:   "1",
 		ConfigRedactPatterns:     "[]",
 		ConfigCreatedAt:          "2026-08-28 12:00:00.000000",
+		ConfigAskMaxPerDeliver:   "0",
+		ConfigAskExpireAfter:     "168h",
 	})
 	if err != nil {
 		t.Fatalf("the seeded configuration must parse: %v", err)
@@ -29,6 +32,12 @@ func TestParseRepoConfigReadsTheSeededValues(t *testing.T) {
 	}
 	if cfg.PolicyVersion != "1" || cfg.RedactionVersion != "1" {
 		t.Fatalf("versions parsed as %q/%q", cfg.PolicyVersion, cfg.RedactionVersion)
+	}
+	if cfg.AskMaxPerDeliver != 0 {
+		t.Fatal("sampling must ship with no presentation cap beyond the batch cap")
+	}
+	if cfg.AskExpireAfter != 168*time.Hour {
+		t.Fatalf("ask.expire_after parsed as %v", cfg.AskExpireAfter)
 	}
 }
 
@@ -44,6 +53,20 @@ func TestParseRepoConfigRefusesToGuess(t *testing.T) {
 		"absent flag": {
 			ConfigPolicyVersion: "1", ConfigRedactionVersion: "1",
 			ConfigHarvestAuto: "0",
+		},
+		"absent sampling keys": {
+			ConfigPolicyVersion: "1", ConfigRedactionVersion: "1",
+			ConfigHarvestAuto: "0", ConfigAgentMaySetDefault: "0",
+		},
+		"sampling cap is not a count": {
+			ConfigPolicyVersion: "1", ConfigRedactionVersion: "1",
+			ConfigHarvestAuto: "0", ConfigAgentMaySetDefault: "0",
+			ConfigAskMaxPerDeliver: "lots", ConfigAskExpireAfter: "168h",
+		},
+		"expiry is not a duration": {
+			ConfigPolicyVersion: "1", ConfigRedactionVersion: "1",
+			ConfigHarvestAuto: "0", ConfigAgentMaySetDefault: "0",
+			ConfigAskMaxPerDeliver: "0", ConfigAskExpireAfter: "a week",
 		},
 		"patterns are not a JSON array": {
 			ConfigPolicyVersion: "1", ConfigRedactionVersion: "1",

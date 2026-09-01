@@ -48,60 +48,18 @@ type AuthorityResult struct {
 }
 
 func (l *Ledger) GrantAuthority(ctx context.Context, c GrantAuthority) (AuthorityResult, error) {
-	if err := l.actor.Validate(); err != nil {
-		return AuthorityResult{}, err
-	}
-	if err := validateAuthorityTarget(c.Target); err != nil {
-		return AuthorityResult{}, err
-	}
-	if !slices.Contains(authorityLevels, c.Level) {
-		return AuthorityResult{}, Fail(ErrInvalidInput, "invalid_authority",
-			"%q is not an authority level; expected advisory, default, or mandatory", c.Level)
-	}
-	if err := l.mayGrant(c.Level); err != nil {
-		return AuthorityResult{}, err
-	}
-	if strings.TrimSpace(c.Rationale) == "" {
-		return AuthorityResult{}, Fail(ErrInvalidInput, "invalid_rationale",
-			"a grant needs a rationale; what an actor established has to be explainable later")
-	}
-	if len(c.Scope) > 255 {
-		return AuthorityResult{}, Fail(ErrInvalidInput, "invalid_scope",
-			"an authority scope is at most 255 characters")
-	}
-	if err := validateOptionalDestination(c.DestinationKind, c.DestinationLocator); err != nil {
-		return AuthorityResult{}, err
-	}
-	// authorities.destination_locator is a Reject column: an identity value is
-	// never rewritten, because a redacted locator names a different place.
-	if err := l.rejectSecrets("destination locator", c.DestinationLocator); err != nil {
-		return AuthorityResult{}, err
-	}
-
-	rationale, findings, err := l.redactField("rationale", strings.TrimSpace(c.Rationale))
+	grant, findings, err := l.prepareAuthorityAs(c, l.actor)
 	if err != nil {
 		return AuthorityResult{}, err
 	}
-	l.assertRedacted("authorities.rationale", rationale)
 
-	grant := Authority{
-		ID: NewAuthorityID(), Target: c.Target, Level: c.Level, Scope: c.Scope,
-		DestinationKind: c.DestinationKind, DestinationLocator: c.DestinationLocator,
-		Rationale: rationale, OccurredAt: l.clock(), Provenance: l.actor,
-	}
 	out := AuthorityResult{Findings: findings}
 	err = l.store.Write(ctx, func(tx Tx) error {
-		// authorities.target_id is polymorphic and carries no foreign key. It
-		// cannot dangle today — revisions and proposals are never deleted — and
-		// the check runs anyway, so adding a target kind does not silently open
-		// a gap that `bdc doctor` then has to find.
-		if err := assertTargetExists(tx, c.Target); err != nil {
-			return err
-		}
-		if err := tx.AppendAuthority(grant); err != nil {
+		if err := appendAuthority(tx, grant); err != nil {
 			return err
 		}
 		out.Authority = grant
+		var err error
 		out.EffectiveLevel, err = effectiveAuthority(tx, c.Target)
 		return err
 	})
@@ -109,6 +67,67 @@ func (l *Ledger) GrantAuthority(ctx context.Context, c GrantAuthority) (Authorit
 		return AuthorityResult{}, err
 	}
 	return out, nil
+}
+
+// prepareAuthorityAs validates, redacts, and mints one grant without writing it.
+// The provenance is a parameter because a sampled `grant-default` is the human
+// respondent's grant even when an agent relayed it — which is also why
+// mayGrantAs is asked about that provenance and not about the process actor.
+func (l *Ledger) prepareAuthorityAs(c GrantAuthority, actor Provenance) (Authority, []Finding, error) {
+	if err := actor.Validate(); err != nil {
+		return Authority{}, nil, err
+	}
+	if err := validateAuthorityTarget(c.Target); err != nil {
+		return Authority{}, nil, err
+	}
+	if !slices.Contains(authorityLevels, c.Level) {
+		return Authority{}, nil, Fail(ErrInvalidInput, "invalid_authority",
+			"%q is not an authority level; expected advisory, default, or mandatory", c.Level)
+	}
+	if err := l.mayGrantAs(c.Level, actor); err != nil {
+		return Authority{}, nil, err
+	}
+	if strings.TrimSpace(c.Rationale) == "" {
+		return Authority{}, nil, Fail(ErrInvalidInput, "invalid_rationale",
+			"a grant needs a rationale; what an actor established has to be explainable later")
+	}
+	if len(c.Scope) > 255 {
+		return Authority{}, nil, Fail(ErrInvalidInput, "invalid_scope",
+			"an authority scope is at most 255 characters")
+	}
+	if err := validateOptionalDestination(c.DestinationKind, c.DestinationLocator); err != nil {
+		return Authority{}, nil, err
+	}
+	// authorities.destination_locator is a Reject column: an identity value is
+	// never rewritten, because a redacted locator names a different place.
+	if err := l.rejectSecrets("destination locator", c.DestinationLocator); err != nil {
+		return Authority{}, nil, err
+	}
+
+	rationale, findings, err := l.redactField("rationale", strings.TrimSpace(c.Rationale))
+	if err != nil {
+		return Authority{}, nil, err
+	}
+	l.assertRedacted("authorities.rationale", rationale)
+
+	return Authority{
+		ID: NewAuthorityID(), Target: c.Target, Level: c.Level, Scope: c.Scope,
+		DestinationKind: c.DestinationKind, DestinationLocator: c.DestinationLocator,
+		Rationale: rationale, OccurredAt: l.clock(), Provenance: actor,
+	}, findings, nil
+}
+
+// appendAuthority writes a prepared grant inside an open transaction, so
+// `bdc authority` and a sampled answer share one target assertion.
+func appendAuthority(tx Tx, a Authority) error {
+	// authorities.target_id is polymorphic and carries no foreign key. It
+	// cannot dangle today — revisions and proposals are never deleted — and
+	// the check runs anyway, so adding a target kind does not silently open
+	// a gap that `bdc doctor` then has to find.
+	if err := assertTargetExists(tx, a.Target); err != nil {
+		return err
+	}
+	return tx.AppendAuthority(a)
 }
 
 // effectiveAuthority is the latest level for one target, read through the same

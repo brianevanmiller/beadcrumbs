@@ -3,11 +3,11 @@
   "command": "handoff",
   "ok": true,
   "data": {
-    "summary": "1 Insight(s) over 2 revision(s), 1 mandatory, 0 unusable. 2 Crumb(s) awaiting review, 1 open proposal(s). No enricher is configured: every reference label is its own locator, never live tracker state.",
+    "summary": "1 Insight(s) over 2 revision(s), 1 mandatory, 0 unusable. 5 Crumb(s) awaiting review, 1 open proposal(s). No enricher is configured: every reference label is its own locator, never live tracker state.",
     "state": {
       "crumbs": {
         "accepted": 2,
-        "candidate": 2
+        "candidate": 5
       },
       "insights": 1,
       "revisions": 2,
@@ -23,7 +23,7 @@
       "unusable": 0,
       "last_activity_at": "<time>"
     },
-    "unreviewed_crumbs": 2,
+    "unreviewed_crumbs": 5,
     "open_proposals": [
       {
         "id": "<pp_2>",
@@ -59,8 +59,8 @@
   "warnings": [],
   "error": null,
   "meta": {
-    "bdc_version": "1.0.1",
-    "ledger_schema": 2,
+    "bdc_version": "1.1.0",
+    "ledger_schema": 3,
     "generated_at": "<time>"
   }
 }

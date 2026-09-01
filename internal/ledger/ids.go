@@ -34,6 +34,8 @@ const (
 	PrefixProposal    = "pp_"
 	PrefixPromotion   = "prm_"
 	PrefixReceipt     = "rcp_"
+	PrefixPrompt      = "pmt_"
+	PrefixAsk         = "ask_"
 )
 
 // The id types are distinct so the compiler catches a Crumb id passed where a
@@ -51,6 +53,8 @@ type (
 	ProposalID    string
 	PromotionID   string
 	ReceiptID     string
+	PromptID      string
+	AskID         string
 )
 
 func NewCrumbID() CrumbID             { return CrumbID(mint(PrefixCrumb)) }
@@ -63,6 +67,8 @@ func NewAuthorityID() AuthorityID     { return AuthorityID(mint(PrefixAuthority)
 func NewProposalID() ProposalID       { return ProposalID(mint(PrefixProposal)) }
 func NewPromotionID() PromotionID     { return PromotionID(mint(PrefixPromotion)) }
 func NewReceiptID() ReceiptID         { return ReceiptID(mint(PrefixReceipt)) }
+func NewPromptID() PromptID           { return PromptID(mint(PrefixPrompt)) }
+func NewAskID() AskID                 { return AskID(mint(PrefixAsk)) }
 
 // identitySeparator is the unit separator between the three fields of a
 // Reference's natural key. Kind, locator, and workspace must not contain it —

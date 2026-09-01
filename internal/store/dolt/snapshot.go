@@ -582,6 +582,8 @@ func (s *snapshot) Counts(q ledger.CountQuery) (ledger.Counts, error) {
 		{"harvests", &c.Harvests},
 		{"refs", &c.References},
 		{"promotion_proposals", &c.Proposals},
+		{"prompts", &c.Prompts},
+		{"asks", &c.Asks},
 	} {
 		if err := s.row(`SELECT COUNT(*) FROM ` + t.table).Scan(t.into); err != nil {
 			return c, storageErr(err, "cannot count %s", t.table)
@@ -795,4 +797,162 @@ func translate(err error, query string) error {
 			"a record with that identity already exists")
 	}
 	return storageErr(err, "%s", firstLine(query))
+}
+
+// Every ENUM is CAST to CHAR, as everywhere else in this file: the driver hands
+// back an enum's internal ordinal, and a NULL one panics a scan that expected it.
+const promptColumns = `id, prompt_key, version, CAST(respondent AS CHAR), question_template,
+	CAST(answer_kind AS CHAR), options_json, trigger_class, CAST(origin AS CHAR), active, created_at,
+	actor_id, CAST(actor_kind AS CHAR), actor_model, session_id, harness`
+
+// Prompts lists the registry oldest key first and, within a key, oldest version
+// first. Ordering by version rather than by id is what lets a caller read the
+// history of a question as the sequence of edits it was.
+func (s *snapshot) Prompts(q ledger.PromptQuery) ([]ledger.Prompt, error) {
+	w := newWhere()
+	w.inStrings("id", strs(q.IDs))
+	w.inStrings("prompt_key", q.Keys)
+	if q.ActiveOnly {
+		w.conds = append(w.conds, `active = 1`)
+	}
+	query := `SELECT ` + promptColumns + ` FROM prompts` + w.clause() +
+		` ORDER BY prompt_key ASC, version ASC`
+	return scanRows(s, query, w.args, scanPrompt)
+}
+
+func scanPrompt(rows *sql.Rows) (ledger.Prompt, error) {
+	var (
+		p          ledger.Prompt
+		respondent string
+		answerKind string
+		origin     string
+		options    sql.NullString
+		active     int
+		created    time.Time
+		prov       provScan
+	)
+	if err := rows.Scan(&p.ID, &p.Key, &p.Version, &respondent, &p.QuestionTemplate,
+		&answerKind, &options, &p.TriggerClass, &origin, &active, &created,
+		&prov.id, &prov.kind, &prov.model, &prov.session, &prov.harness); err != nil {
+		return p, err
+	}
+	decoded, err := ledger.DecodeOptions(options.String)
+	if err != nil {
+		return p, err
+	}
+	p.Respondent = ledger.PromptRespondent(respondent)
+	p.AnswerKind = ledger.AnswerKind(answerKind)
+	p.Origin = ledger.PromptOrigin(origin)
+	p.Options = decoded
+	p.Active = active != 0
+	p.CreatedAt = created.UTC()
+	p.Provenance = prov.value()
+	return p, nil
+}
+
+const askColumns = `id, prompt_id, prompt_key, prompt_version, CAST(respondent AS CHAR),
+	CAST(target_kind AS CHAR), target_id, CAST(state AS CHAR),
+	question_snapshot, options_snapshot, enqueue_session_id, via_session,
+	crumb_id, validation_id, authority_id, choice_id, answer_text, skip_reason, latency_ms,
+	created_at, delivered_at, resolved_at, expires_at,
+	actor_id, CAST(actor_kind AS CHAR), actor_model, session_id, harness`
+
+// Asks lists oldest first: every reading of the queue wants the question that
+// has waited longest, and the deliver that reconciles merge duplicates depends
+// on that order being the answer rather than a coincidence.
+func (s *snapshot) Asks(q ledger.AskQuery) ([]ledger.Ask, error) {
+	w := newWhere()
+	w.inStrings("id", strs(q.IDs))
+	w.inStrings("state", strs(q.States))
+	w.inStrings("prompt_key", q.PromptKeys)
+	w.inStrings("crumb_id", strs(q.CrumbIDs))
+	w.inStrings("authority_id", strs(q.AuthorityIDs))
+	w.eq("respondent", string(q.Respondent))
+	w.eq("target_id", q.TargetID)
+	w.eq("enqueue_session_id", q.SessionID)
+	query := `SELECT ` + askColumns + ` FROM asks` + w.clause() +
+		` ORDER BY created_at ASC, id ASC` + limitOffset(q.Limit, 0)
+	return scanRows(s, query, w.args, scanAsk)
+}
+
+func scanAsk(rows *sql.Rows) (ledger.Ask, error) {
+	var (
+		a          ledger.Ask
+		respondent string
+		state      string
+		targetKind sql.NullString
+		targetID   sql.NullString
+		options    sql.NullString
+		enqueueSes sql.NullString
+		via        sql.NullString
+		crumb      sql.NullString
+		validation sql.NullString
+		authority  sql.NullString
+		choice     sql.NullString
+		answer     sql.NullString
+		skip       sql.NullString
+		latency    sql.NullInt64
+		created    time.Time
+		delivered  sql.NullTime
+		resolved   sql.NullTime
+		expires    sql.NullTime
+		prov       provScan
+	)
+	if err := rows.Scan(&a.ID, &a.PromptID, &a.PromptKey, &a.PromptVersion, &respondent,
+		&targetKind, &targetID, &state, &a.QuestionSnapshot, &options, &enqueueSes, &via,
+		&crumb, &validation, &authority, &choice, &answer, &skip, &latency,
+		&created, &delivered, &resolved, &expires,
+		&prov.id, &prov.kind, &prov.model, &prov.session, &prov.harness); err != nil {
+		return a, err
+	}
+	decoded, err := ledger.DecodeOptions(options.String)
+	if err != nil {
+		return a, err
+	}
+	a.Respondent = ledger.PromptRespondent(respondent)
+	a.State = ledger.AskState(state)
+	a.Target = ledger.RecordRef{Kind: ledger.RecordKind(targetKind.String), ID: targetID.String}
+	a.Options = decoded
+	a.EnqueueSessionID = enqueueSes.String
+	a.ViaSession = via.String
+	a.CrumbID = ledger.CrumbID(crumb.String)
+	a.ValidationID = ledger.ValidationID(validation.String)
+	a.AuthorityID = ledger.AuthorityID(authority.String)
+	a.ChoiceID = choice.String
+	a.AnswerText = answer.String
+	a.SkipReason = skip.String
+	if latency.Valid {
+		ms := int(latency.Int64)
+		a.LatencyMS = &ms
+	}
+	a.CreatedAt = created.UTC()
+	a.DeliveredAt = timePtr(delivered)
+	a.ResolvedAt = timePtr(resolved)
+	if expires.Valid {
+		a.ExpiresAt = expires.Time.UTC()
+	}
+	a.Provenance = prov.value()
+	return a, nil
+}
+
+func timePtr(t sql.NullTime) *time.Time {
+	if !t.Valid {
+		return nil
+	}
+	utc := t.Time.UTC()
+	return &utc
+}
+
+func nullTimePtr(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return nullTime(*t)
+}
+
+func nullInt(n *int) any {
+	if n == nil {
+		return nil
+	}
+	return *n
 }

@@ -1,0 +1,42 @@
+{
+  "bdc": "1",
+  "command": "ask.deliver",
+  "ok": true,
+  "data": {
+    "questions": [
+      {
+        "id": "<ask_1>",
+        "prompt_key": "authority-nudge",
+        "respondent": "human",
+        "question": "Proposal <pp_2> has waited for a human authority grant. Grant a working default, recommend rejection, or keep waiting?",
+        "answer_kind": "choice",
+        "options": [
+          {
+            "id": "grant-default",
+            "label": "Grant a working default"
+          },
+          {
+            "id": "reject",
+            "label": "Recommend rejection"
+          },
+          {
+            "id": "wait",
+            "label": "Keep waiting"
+          }
+        ],
+        "target": {
+          "kind": "promotion_proposal",
+          "id": "<pp_2>"
+        },
+        "expires_at": "<time>"
+      }
+    ]
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.1.0",
+    "ledger_schema": 3,
+    "generated_at": "<time>"
+  }
+}

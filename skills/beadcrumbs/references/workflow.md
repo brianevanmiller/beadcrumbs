@@ -12,7 +12,7 @@ JSON goes to stdout, prose goes to stderr, and warnings survive a failure.
   "warnings": [{"code": "beads_unavailable",
                 "message": "beads references resolve to their locator; bd is unavailable here: not_installed"}],
   "error": null,
-  "meta": {"bdc_version": "1.0.1", "ledger_schema": 2, "generated_at": "2026-08-28T14:00:00.000000Z"}
+  "meta": {"bdc_version": "1.1.0", "ledger_schema": 3, "generated_at": "2026-08-28T14:00:00.000000Z"}
 }
 ```
 
@@ -206,6 +206,136 @@ All three take `--budget` in approximate tokens, default 4000, `0` for
 everything. Truncation is reported as a `budget_truncated` warning naming what
 was dropped; `prime` never drops a mandatory Insight and warns
 `budget_exceeded` instead.
+
+## 9. Sampling
+
+Optional, skippable, and never blocking. After `bdc prime`, ask the human queue;
+before compaction, flush your own context. An empty queue is success:
+
+```json
+{
+  "bdc": "1",
+  "command": "ask.deliver",
+  "ok": true,
+  "data": {"questions": []},
+  "warnings": [],
+  "error": null,
+  "meta": {"bdc_version": "1.1.0", "ledger_schema": 3, "generated_at": "2026-08-28T14:00:00.000000Z"}
+}
+```
+
+A proposal blocked on a human decision materialises one question, once:
+
+```
+bdc ask deliver --respondent human --json
+```
+
+```json
+{
+  "questions": [
+    {
+      "id": "ask_0199aa11-2233-7444-8555-000000000001",
+      "prompt_key": "authority-nudge",
+      "respondent": "human",
+      "question": "Proposal pp_0199aa11-2233-7444-8555-000000000002 has waited for a human authority grant. Grant a working default, recommend rejection, or keep waiting?",
+      "answer_kind": "choice",
+      "options": [
+        {"id": "grant-default", "label": "Grant a working default"},
+        {"id": "reject", "label": "Recommend rejection"},
+        {"id": "wait", "label": "Keep waiting"}
+      ],
+      "target": {"kind": "promotion_proposal", "id": "pp_0199aa11-2233-7444-8555-000000000002"},
+      "expires_at": "2026-09-04T14:00:00.000000Z"
+    }
+  ]
+}
+```
+
+Present it in the plain-text format from `SKILL.md`, then record the reply.
+`--choice` takes the option id or its printed number; `--respondent-id` names
+the person when you are relaying — required for `grant-default` — and your own
+`BDC_ACTOR_KIND` stays `agent`:
+
+```
+bdc ask answer ask_0199aa11-… --choice grant-default --respondent-id brian --json
+```
+
+```json
+{
+  "ask": {
+    "id": "ask_0199aa11-2233-7444-8555-000000000001",
+    "prompt_key": "authority-nudge",
+    "respondent": "human",
+    "state": "answered",
+    "choice_id": "grant-default",
+    "crumb_id": "crb_0199aa11-2233-7444-8555-000000000003",
+    "authority_id": "aut_0199aa11-2233-7444-8555-000000000004",
+    "via_session": "session-2026-08-30",
+    "actor_id": "agent",
+    "actor_kind": "agent"
+  },
+  "crumb": {
+    "id": "crb_0199aa11-2233-7444-8555-000000000003",
+    "content": "[ask authority-nudge] Proposal pp_0199aa11-… has waited for a human authority grant. Grant a working default, recommend rejection, or keep waiting?\n→ Grant a working default",
+    "confidence": 0.9,
+    "actor_id": "brian",
+    "actor_kind": "human"
+  },
+  "validation": null,
+  "authority": {
+    "id": "aut_0199aa11-2233-7444-8555-000000000004",
+    "level": "default",
+    "rationale": "sampled authority-nudge",
+    "actor_id": "brian",
+    "actor_kind": "human"
+  }
+}
+```
+
+Read the provenance carefully, because it is the point: the Crumb and the grant
+are **brian's**, the ask records the **agent** that carried the reply plus its
+`via_session`, and no provenance table needed a `via_session` column to make
+that reconstructible.
+
+Two things a sampled answer never does. It never establishes `mandatory` force
+and never grants on a `policy`-class proposal — `data.authority` is `null` and
+the warning is `ask_grant_capped`, naming the `bdc authority` a human runs
+directly. And `reject` records a recommendation rather than closing the
+promotion: the warning is `ask_reject_not_applied`.
+
+The grant above also raises `ask_answer_relayed`, because the ledger cannot
+verify that brian answered — a genuine relay and a fabricated one write
+identical rows. Show that warning to the person. Until someone runs
+`bdc authority` on the proposal directly, `bdc context` keeps reporting it:
+
+```json
+{
+  "kind": "relayed_authority",
+  "subject": {"kind": "promotion_proposal", "id": "pp_0199aa11-…"},
+  "question": "promoting to docs:docs/adr/0007.md was unblocked by an answer relayed through session session-2026-08-30, recorded as brian's",
+  "detail": "confirm it with `bdc authority pp_0199aa11-… --level default --rationale ...`, or withdraw it with `--level advisory`"
+}
+```
+
+Withdrawing re-closes the gate and sticks: a later relayed answer cannot
+reinstate it (`ask_grant_withdrawn`). Only a direct `bdc authority` can.
+
+The agent track is one question and it is cheap:
+
+```
+bdc ask enqueue --prompt context-flush --json
+bdc ask deliver --respondent agent --json
+bdc ask answer <id> --text "the exclusive lock is held for the whole command, not only the write" --json
+bdc ask skip <id> --reason "nothing the ledger does not hold" --json
+```
+
+An agent answer is a Crumb at confidence 0.6 with agent provenance. It writes no
+validation and no grant, ever: a hypothesis about your own work is not a review
+of it. A skip writes nothing at all.
+
+`bdc prompts list --json` shows the registry, including versions no longer
+asked. `bdc prompts add` registers a question — but not a human-track one from
+an agent actor, which the ledger refuses with `invalid_ask`.
 
 ## References to a tracker
 

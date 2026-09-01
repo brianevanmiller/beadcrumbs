@@ -21,7 +21,7 @@ one error.
   "warnings": [{"code": "beads_unavailable",
                 "message": "beads references resolve to their locator; bd is unavailable here: not_installed"}],
   "error": null,
-  "meta": {"bdc_version": "1.0.1", "ledger_schema": 2, "generated_at": "2026-08-28T14:00:00.000000Z"}
+  "meta": {"bdc_version": "1.1.0", "ledger_schema": 3, "generated_at": "2026-08-28T14:00:00.000000Z"}
 }
 ```
 
@@ -68,6 +68,10 @@ write.
 | `enrichment_disabled` | `reference list --refresh` | `--no-enrich` was given, so `--refresh` observed nothing |
 | `hook_skipped` | `hooks run` | the trigger did nothing, and why |
 | `unharvested_crumbs` | `hooks run` | outstanding candidates this repository harvests manually |
+| `ask_grant_capped` | `ask answer` | a sampled `grant-default` was refused — `policy` class, or the proposal asked for `mandatory`; the answer is still recorded and the message names the direct `bdc authority` |
+| `ask_reject_not_applied` | `ask answer` | `reject` recorded a recommendation; the promotion is untouched and the message names `bdc promote reject` |
+| `ask_answer_relayed` | `ask answer` | a verdict or a grant was written on an answer an agent carried; the ledger cannot verify the person answered, and the message names the withdrawal command |
+| `ask_grant_withdrawn` | `ask answer` | a relayed `grant-default` was refused because a human had already withdrawn authority directly; only a direct grant reinstates it |
 | `hook_not_ours` | `hooks uninstall` | a hook bdc did not write was left exactly as it is |
 | `no_ledger` | `hooks uninstall` | there is no ledger here, so `harvest.auto` was not cleared |
 
@@ -177,8 +181,10 @@ Append-only. Reviewing again adds an event; it never rewrites one. → `{crumbs[
 
 Retention, not erasure — see [README](README.md#retention-not-erasure). Refuses any state but
 `candidate`, and refuses a Crumb that feeds a Harvest. → `{pruned, pruned_ids[], blocked[]}`,
-where each `blocked` entry is `{crumb_id, reason, code}` with `code` one of `not_candidate` or
-`supports_insight`. A blocked Crumb is also a `prune_blocked` warning; the command still succeeds.
+where each `blocked` entry is `{crumb_id, reason, code}` with `code` one of `not_candidate`,
+`supports_insight`, or `sampled` — a Crumb a sampled question was asked about, or answered with,
+is a Crumb somebody followed up on. A blocked Crumb is also a `prune_blocked` warning; the command
+still succeeds.
 
 ---
 
@@ -307,6 +313,108 @@ emits a `budget_exceeded` warning instead, so a thin-looking `prime` is a warnin
 | `bdc prime` | `--budget` | `{summary, working_defaults[], mandatory[], cautions[]}` |
 | `bdc context` | `--since` `--insight` `--limit` `--budget` | `{summary, insights[], open_questions[], recent_crumbs[], promotions[]}` |
 | `bdc handoff` | `--since` `--budget` | `{summary, state, unreviewed_crumbs, open_proposals[], workspace}` |
+
+---
+
+## Sampling
+
+The questions the ledger cannot answer for itself, put to a human or to an agent. Optional,
+skippable, and never blocking: an empty queue is `ok: true` with `data.questions: []`. Hooks may
+never present a question or record an answer — see [docs/guides/hooks.md](docs/guides/hooks.md).
+
+An answer is a **Crumb**, always, at confidence 0.9 for a human and 0.6 for an agent. Where the
+prompt names a record it may also append one more thing, and no more than that: `calibration`
+appends a validation, and `authority-nudge` answered `grant-default` may append a repository-wide
+working default. It never establishes `mandatory` force, never grants on a `policy`-class
+proposal, and never closes a promotion. `asks.crumb_id` is the join back; there is no second
+knowledge pipeline.
+
+### The registry
+
+Three curated questions ship with schema 3. Enqueue names a key; it never carries prose, and an
+agent may not register a human-track question at all.
+
+| Key | Respondent | Kind | About |
+|---|---|---|---|
+| `authority-nudge` | human | choice | a promotion proposal waiting on a human decision |
+| `calibration` | human | choice | whether an Insight revision held up, quoted verbatim |
+| `context-flush` | agent | short-text | what the agent knows that the ledger does not |
+
+| Command | Flags | `data` |
+|---|---|---|
+| `bdc prompts list` | `--respondent` `--active` | `{prompts[]}` |
+| `bdc prompts show <key-or-id>` | — | `{prompt}` |
+| `bdc prompts add` | `--key` `--respondent` `--question` `--answer-kind` `--option id:label` (repeatable) `--trigger-class` | `{prompt}` |
+| `bdc prompts disable <key-or-id>` | — | `{prompt}` |
+
+`add` appends a version and rewrites nothing, so an answer stays interpretable beside the words
+that produced it. `disable` deactivates every version of the key: "stop asking this" is a
+statement about the question, not about one wording of it.
+
+`--question` may name `{target}`, `{confidence}`, and `{excerpt}`; they are substituted from the
+record an ask points at, and the substituted string is what the ask freezes.
+
+A key, a trigger class, and an option id are identity values: an option id is passed back on
+`--choice` and frozen onto every ask minted from the prompt, so a redacted one would name an
+option that does not exist. A redaction finding in any of them aborts the write with exit 7, the
+same rule a reference locator follows. Question text and option labels are redacted and stored.
+
+### Asking
+
+| Command | Flags | `data` |
+|---|---|---|
+| `bdc ask enqueue` | `--prompt` `--target` `--respondent` | `{ask}` |
+| `bdc ask deliver` | `--respondent` | `{questions[]}` |
+| `bdc ask` | `--respondent` | `{questions[]}` — delivers, prints the first |
+| `bdc ask answer <ask-id>` | `--choice` `--text` `--note` `--respondent-id` | `{ask, crumb, validation, authority}` |
+| `bdc ask skip <ask-id>` | `--reason` | `{ask}` |
+
+`--respondent` defaults to the process `--actor-kind`. `--choice` takes an option id or its
+1-based number as printed. `validation` and `authority` are `null` when the answer produced
+neither, which is most of the time.
+
+At most one ask is open per question and target, whatever the session: a blocked decision does not
+become more pending because a new session started. `deliver` presents at most four, oldest first —
+`ask.max_per_deliver` in `repo_config` lowers that, and `0` means the batch cap alone. It also
+sweeps: expiry is lazy (`ask.expire_after`, seeded `168h`), so `deliver` is where a stale question
+becomes `expired`, and answering one past its expiry expires it and refuses.
+
+Delivering to a **human** first services the dead letters: every proposal reported as
+`authority_required` gets one nudge. One, ever — a nudge that was answered or skipped is not
+re-minted, because a question put once and decided is not a question to ask every session. Only an
+expired nudge comes back.
+
+`bdc context` reports the open human queue as `pending_ask` entries in `open_questions`, beside
+everything else the ledger is waiting on. `bdc prime`'s JSON is unchanged.
+
+### Relaying a human's answer
+
+When an agent carries a person's reply, the agent keeps `--actor-kind agent` and names the person
+with `--respondent-id`. The Crumb, the validation, and the grant are recorded as **theirs**; the
+ask records the agent as the process that carried it, plus `via_session`. That is the whole relay,
+and it is why no provenance table needed a `via_session` column.
+
+`--respondent-id` is **required** for a relayed `grant-default`. A grant recorded against the
+literal `human` is nobody's claim, and nobody's claim cannot be checked with anyone later.
+
+An agent must not export `BDC_ACTOR_KIND=human` to record a relayed tap. `human` is the value every
+authority gate is satisfied by, so that trade grants the agent a signature on everything else it
+does that session. The database cannot catch it either: the relayed row is legitimately stamped
+`actor_kind='human'`, so the caps in `ask answer` are the only gate there is.
+
+### Marked, not prevented
+
+A genuine relay and a fabricated one produce byte-identical rows, so the ledger does not try to
+tell them apart. It marks every relayed judgement and keeps marking it:
+
+- `ask answer` warns `ask_answer_relayed` at the moment it writes.
+- `bdc context` reports a `relayed_authority` open question for any promotion whose human-authority
+  gate is open *only* because of relayed grants — including one that has already been applied,
+  because that is the wrong moment to go quiet. A direct `bdc authority` has no ask pointing at it,
+  so confirming clears the question on its own.
+- Withdrawing is `bdc authority <proposal-id> --level advisory --rationale "…"`. Authority is
+  append-only and the latest grant is the current one, so this closes the gate again — and it
+  sticks: a relayed answer cannot reinstate it (`ask_grant_withdrawn`). Only a direct grant can.
 
 ---
 

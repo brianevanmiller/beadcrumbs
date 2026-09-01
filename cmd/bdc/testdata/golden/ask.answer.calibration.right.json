@@ -1,0 +1,76 @@
+{
+  "bdc": "1",
+  "command": "ask.answer",
+  "ok": true,
+  "data": {
+    "ask": {
+      "id": "<ask_2>",
+      "prompt_id": "<pmt_2>",
+      "prompt_key": "calibration",
+      "prompt_version": 1,
+      "respondent": "human",
+      "target": {
+        "kind": "insight_revision",
+        "id": "<rev_2>"
+      },
+      "state": "answered",
+      "question_snapshot": "I concluded (0.80): Every bdc invocation opens one short-lived engine and closes it before it returns. Reads state the freshness of anything cached, and a handoff never refreshes. Right, partly right, or wrong?",
+      "options": [
+        {
+          "id": "right",
+          "label": "Right"
+        },
+        {
+          "id": "partly",
+          "label": "Partly right"
+        },
+        {
+          "id": "wrong",
+          "label": "Wrong"
+        }
+      ],
+      "crumb_id": "<crb_6>",
+      "validation_id": "<val_2>",
+      "choice_id": "right",
+      "latency_ms": null,
+      "created_at": "<time>",
+      "delivered_at": null,
+      "resolved_at": "<time>",
+      "expires_at": "<time>",
+      "actor_id": "tester",
+      "actor_kind": "human"
+    },
+    "crumb": {
+      "id": "<crb_6>",
+      "content": "[ask calibration] I concluded (0.80): Every bdc invocation opens one short-lived engine and closes it before it returns. Reads state the freshness of anything cached, and a handoff never refreshes. Right, partly right, or wrong?\n→ Right",
+      "content_hash": "<sha256>",
+      "review_state": "candidate",
+      "confidence": 0.9,
+      "captured_at": "<time>",
+      "redaction_version": "1",
+      "actor_id": "tester",
+      "actor_kind": "human"
+    },
+    "validation": {
+      "id": "<val_2>",
+      "target": {
+        "kind": "insight_revision",
+        "id": "<rev_2>"
+      },
+      "verdict": "supported",
+      "rationale": "sampled calibration",
+      "superseded_by": null,
+      "occurred_at": "<time>",
+      "actor_id": "tester",
+      "actor_kind": "human"
+    },
+    "authority": null
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.1.0",
+    "ledger_schema": 3,
+    "generated_at": "<time>"
+  }
+}

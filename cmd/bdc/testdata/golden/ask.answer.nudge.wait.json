@@ -1,0 +1,63 @@
+{
+  "bdc": "1",
+  "command": "ask.answer",
+  "ok": true,
+  "data": {
+    "ask": {
+      "id": "<ask_1>",
+      "prompt_id": "<pmt_1>",
+      "prompt_key": "authority-nudge",
+      "prompt_version": 1,
+      "respondent": "human",
+      "target": {
+        "kind": "promotion_proposal",
+        "id": "<pp_2>"
+      },
+      "state": "answered",
+      "question_snapshot": "Proposal <pp_2> has waited for a human authority grant. Grant a working default, recommend rejection, or keep waiting?",
+      "options": [
+        {
+          "id": "grant-default",
+          "label": "Grant a working default"
+        },
+        {
+          "id": "reject",
+          "label": "Recommend rejection"
+        },
+        {
+          "id": "wait",
+          "label": "Keep waiting"
+        }
+      ],
+      "crumb_id": "<crb_5>",
+      "choice_id": "wait",
+      "latency_ms": <size>,
+      "created_at": "<time>",
+      "delivered_at": "<time>",
+      "resolved_at": "<time>",
+      "expires_at": "<time>",
+      "actor_id": "tester",
+      "actor_kind": "human"
+    },
+    "crumb": {
+      "id": "<crb_5>",
+      "content": "[ask authority-nudge] Proposal <pp_2> has waited for a human authority grant. Grant a working default, recommend rejection, or keep waiting?\n→ Keep waiting",
+      "content_hash": "<sha256>",
+      "review_state": "candidate",
+      "confidence": 0.9,
+      "captured_at": "<time>",
+      "redaction_version": "1",
+      "actor_id": "tester",
+      "actor_kind": "human"
+    },
+    "validation": null,
+    "authority": null
+  },
+  "warnings": [],
+  "error": null,
+  "meta": {
+    "bdc_version": "1.1.0",
+    "ledger_schema": 3,
+    "generated_at": "<time>"
+  }
+}

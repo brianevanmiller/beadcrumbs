@@ -4,14 +4,14 @@
   "ok": true,
   "data": {
     "restored": "<tmp>/repo/.git/beadcrumbs",
-    "schema_version": 2,
-    "records": 36
+    "schema_version": 3,
+    "records": 49
   },
   "warnings": [],
   "error": null,
   "meta": {
-    "bdc_version": "1.0.1",
-    "ledger_schema": 2,
+    "bdc_version": "1.1.0",
+    "ledger_schema": 3,
     "generated_at": "<time>"
   }
 }

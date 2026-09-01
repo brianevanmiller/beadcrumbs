@@ -13,6 +13,11 @@ Two rules hold for every hook below:
 - **Automatic harvesting is opt-in per repository, off by default.** Until you
   run `bdc hooks install --auto-harvest`, every trigger counts what is
   outstanding and writes nothing.
+- **A hook never asks.** A later phase may let one *enqueue* a sampling question
+  (`bdc ask enqueue`); no hook may ever run `bdc ask deliver` or `bdc ask
+  answer`. Presenting a question means waiting for an answer, and a hook that
+  waits is a hook that has failed the first rule. Today no trigger touches
+  sampling at all.
 
 ## Durable completion: git hooks
 
@@ -106,7 +111,7 @@ either way and names what it skipped on stderr.
 Install the plugin, which carries `hooks/hooks.json` alongside the skill:
 
 ```
-npx skills add brianevanmiller/beadcrumbs@v1.0.1 -y
+npx skills add brianevanmiller/beadcrumbs@v1.1.0 -y
 ```
 
 Or wire it by hand in `.claude/settings.json`, using an absolute path to the

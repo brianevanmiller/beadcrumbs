@@ -3,6 +3,8 @@ package ledger
 import (
 	"context"
 	"encoding/json"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -15,6 +17,8 @@ const (
 	ConfigRedactionVersion   = "redaction.version"
 	ConfigRedactPatterns     = "redact.patterns"
 	ConfigCreatedAt          = "ledger.created_at"
+	ConfigAskMaxPerDeliver   = "ask.max_per_deliver"
+	ConfigAskExpireAfter     = "ask.expire_after"
 )
 
 // RepoConfig is the per-repository policy the ledger enforces. It is data, not
@@ -26,6 +30,14 @@ type RepoConfig struct {
 	HarvestAuto        bool     `json:"harvest_auto"`
 	AgentMaySetDefault bool     `json:"agent_may_set_default"`
 	RedactPatterns     []string `json:"redact_patterns,omitempty"`
+
+	// AskMaxPerDeliver caps one presentation batch. It is not a session or a
+	// daily budget: no table records "delivered by session", so a running
+	// budget would be a fact Go invented. 0 means no cap beyond maxDeliverBatch.
+	AskMaxPerDeliver int `json:"ask_max_per_deliver"`
+
+	// AskExpireAfter is how long a pending or delivered ask stays answerable.
+	AskExpireAfter time.Duration `json:"ask_expire_after"`
 }
 
 // ParseRepoConfig reads the raw key/value rows. A value that is missing or does
@@ -47,6 +59,12 @@ func ParseRepoConfig(kv map[string]string) (RepoConfig, error) {
 		return c, err
 	}
 	if c.AgentMaySetDefault, err = parseFlag(kv, ConfigAgentMaySetDefault); err != nil {
+		return c, err
+	}
+	if c.AskMaxPerDeliver, err = parseCount(kv, ConfigAskMaxPerDeliver); err != nil {
+		return c, err
+	}
+	if c.AskExpireAfter, err = parseDuration(kv, ConfigAskExpireAfter); err != nil {
 		return c, err
 	}
 	if raw := kv[ConfigRedactPatterns]; raw != "" {
@@ -76,6 +94,39 @@ func parseFlag(kv map[string]string, key string) (bool, error) {
 		return false, Fail(ErrIntegrity, "integrity_config_invalid",
 			"repo_config %s is %q, which is not 0 or 1", key, raw)
 	}
+}
+
+// parseCount reads one non-negative integer policy key, under the same rule as
+// parseFlag: an absent key means this is not a ledger this build initialised.
+func parseCount(kv map[string]string, key string) (int, error) {
+	raw, ok := kv[key]
+	if !ok {
+		return 0, Fail(ErrIntegrity, "integrity_config_missing",
+			"repo_config is missing %s; the ledger was not initialised by this build", key)
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || n < 0 {
+		return 0, Fail(ErrIntegrity, "integrity_config_invalid",
+			"repo_config %s is %q, which is not a count", key, raw)
+	}
+	return n, nil
+}
+
+// parseDuration reads one Go-duration policy key. Stored as text because a
+// duration is a policy a human edits, and "168h" survives a `dolt sql` session
+// in a way a column of nanoseconds does not.
+func parseDuration(kv map[string]string, key string) (time.Duration, error) {
+	raw, ok := kv[key]
+	if !ok {
+		return 0, Fail(ErrIntegrity, "integrity_config_missing",
+			"repo_config is missing %s; the ledger was not initialised by this build", key)
+	}
+	d, err := time.ParseDuration(strings.TrimSpace(raw))
+	if err != nil || d <= 0 {
+		return 0, Fail(ErrIntegrity, "integrity_config_invalid",
+			"repo_config %s is %q, which is not a positive Go duration such as 168h", key, raw)
+	}
+	return d, nil
 }
 
 // LoadRepoConfig reads the configuration from its own snapshot. It exists

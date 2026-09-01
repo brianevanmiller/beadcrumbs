@@ -3,7 +3,7 @@
   "command": "context",
   "ok": true,
   "data": {
-    "summary": "1 Insight(s) from the ledger: 1 mandatory, 0 unusable. 4 recent Crumb(s), 3 proposal(s), 2 open question(s).",
+    "summary": "1 Insight(s) from the ledger: 1 mandatory, 0 unusable. 7 recent Crumb(s), 3 proposal(s), 3 open question(s).",
     "insights": [
       {
         "id": "<ins_1>",
@@ -26,13 +26,13 @@
   "warnings": [
     {
       "code": "budget_truncated",
-      "message": "context was trimmed to ~200 tokens; dropped 2 open question(s), 3 promotion(s), 4 recent crumb(s). Raise --budget, or pass --budget 0, for the whole answer"
+      "message": "context was trimmed to ~200 tokens; dropped 3 open question(s), 3 promotion(s), 7 recent crumb(s). Raise --budget, or pass --budget 0, for the whole answer"
     }
   ],
   "error": null,
   "meta": {
-    "bdc_version": "1.0.1",
-    "ledger_schema": 2,
+    "bdc_version": "1.1.0",
+    "ledger_schema": 3,
     "generated_at": "<time>"
   }
 }
